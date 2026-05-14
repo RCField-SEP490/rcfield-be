@@ -11,6 +11,8 @@
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/config/database.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/config/database.ts",
     "migration:create": "typeorm-ts-node-commonjs migration:create",
+    "setup": "npm run migration:run && npm run seed",
+    "seed": "ts-node --transpile-only src/seeds/seed-users.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"

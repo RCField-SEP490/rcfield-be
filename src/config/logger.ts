@@ -4,8 +4,12 @@ import { env } from './env';
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
 const devFormat = printf(({ level, message, timestamp: ts, stack, ...meta }) => {
-  const metaStr = Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
-  return `[${ts}] ${level}: ${stack ?? message}${metaStr}`;
+  const hasMeta = Object.keys(meta).length > 0;
+  if (hasMeta) {
+    const entry: Record<string, unknown> = { event: stack ?? message, ...meta };
+    return `[${ts}] ${level}:\n` + JSON.stringify(entry, null, 2);
+  }
+  return `[${ts}] ${level}: ${stack ?? message}`;
 });
 
 const logger = winston.createLogger({
