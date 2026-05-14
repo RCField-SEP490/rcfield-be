@@ -31,6 +31,10 @@ export const env = {
     apiSecret: process.env.CLOUDINARY_API_SECRET ?? '',
   },
 
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+  },
+
   platform: {
     feePct: parseFloat(process.env.PLATFORM_FEE_PCT ?? '0.15'),
     paymentWindowMinutes: parseInt(process.env.PAYMENT_WINDOW_MINUTES ?? '30', 10),

@@ -6,22 +6,38 @@ import { UserRole } from '../../types';
 
 // ── Users ────────────────────────────────────────────────────────────────────
 
+export const DEFAULT_PASSWORD = 'Test@123456';
+
+export async function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, 10);
+}
+
 interface CreateUserOptions {
   email?: string;
   role?: UserRole;
   full_name?: string;
+  password?: string;
+  is_active?: boolean;
+  auth_provider?: 'LOCAL' | 'GOOGLE';
 }
 
 export async function createTestUser(options: CreateUserOptions = {}) {
-  const { email, role = UserRole.CUSTOMER, full_name = 'Test User' } = options;
+  const {
+    email,
+    role = UserRole.CUSTOMER,
+    full_name = 'Test User',
+    password = DEFAULT_PASSWORD,
+    is_active = true,
+    auth_provider = 'LOCAL',
+  } = options;
   const uniqueEmail = email ?? `test_${Date.now()}_${Math.random().toString(36).slice(2)}@test.com`;
-  const password_hash = await bcrypt.hash('Test@123456', 10);
+  const password_hash = await bcrypt.hash(password, 10);
 
   const [user] = await AppDataSource.query(
-    `INSERT INTO users (email, full_name, password_hash, role)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (email, full_name, password_hash, role, is_active, auth_provider)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [uniqueEmail, full_name, password_hash, role],
+    [uniqueEmail, full_name, password_hash, role, is_active, auth_provider],
   );
   return user;
 }

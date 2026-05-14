@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { AppDataSource } from '../config/database';
+import { redis } from '../config/redis';
 
 // Kết nối DB trước khi test file chạy
 beforeAll(async () => {
@@ -45,5 +46,10 @@ beforeEach(async () => {
 afterAll(async () => {
   if (AppDataSource.isInitialized) {
     await AppDataSource.destroy();
+  }
+  try {
+    await redis.quit();
+  } catch {
+    // ignore
   }
 });
