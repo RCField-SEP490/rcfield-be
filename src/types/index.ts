@@ -1,3 +1,5 @@
+// ── User ─────────────────────────────────────────────────────────────────────
+
 export enum UserRole {
   CUSTOMER = 'CUSTOMER',
   PROVIDER = 'PROVIDER',
@@ -10,13 +12,31 @@ export enum AuthProvider {
   GOOGLE = 'GOOGLE',
 }
 
+export enum TrustScoreReason {
+  NO_SHOW = 'NO_SHOW',
+  DAMAGE_CONFIRMED = 'DAMAGE_CONFIRMED',
+  DISPUTE_LOST = 'DISPUTE_LOST',
+  BOOKING_STREAK = 'BOOKING_STREAK',
+  ADMIN_ADJUSTMENT = 'ADMIN_ADJUSTMENT',
+}
+
+// ── Cafe ─────────────────────────────────────────────────────────────────────
+
 export enum CafeStatus {
   PENDING = 'PENDING',
   ACTIVE = 'ACTIVE',
   SUSPENDED = 'SUSPENDED',
 }
 
-export enum VehicleTier {
+export enum TrackType {
+  DRIFT = 'DRIFT',
+  OBSTACLE = 'OBSTACLE',
+  HILL_CLIMB = 'HILL_CLIMB',
+}
+
+// ── Vehicle ───────────────────────────────────────────────────────────────────
+
+export enum AssetTier {
   STANDARD = 'STANDARD',
   PREMIUM = 'PREMIUM',
   RESTRICTED = 'RESTRICTED',
@@ -28,6 +48,8 @@ export enum VehicleStatus {
   MAINTENANCE = 'MAINTENANCE',
   RETIRED = 'RETIRED',
 }
+
+// ── Booking ───────────────────────────────────────────────────────────────────
 
 export enum BookingMode {
   RENTAL = 'RENTAL',
@@ -50,6 +72,8 @@ export enum BookingStatus {
   CANCELLED = 'CANCELLED',
 }
 
+// ── Payment ───────────────────────────────────────────────────────────────────
+
 export enum PaymentComponentType {
   SLOT_FEE = 'SLOT_FEE',
   RENTAL_FEE = 'RENTAL_FEE',
@@ -67,10 +91,27 @@ export enum PaymentComponentStatus {
   PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
 }
 
+export enum DiscountType {
+  PERCENT = 'PERCENT',
+  FIXED = 'FIXED',
+}
+
+// ── Inspection ────────────────────────────────────────────────────────────────
+
 export enum InspectionType {
   CHECK_IN = 'CHECK_IN',
   CHECK_OUT = 'CHECK_OUT',
 }
+
+// ── Dispute ───────────────────────────────────────────────────────────────────
+
+export enum DisputeStatus {
+  OPEN = 'OPEN',
+  UNDER_REVIEW = 'UNDER_REVIEW',
+  RESOLVED = 'RESOLVED',
+}
+
+// ── F&B ───────────────────────────────────────────────────────────────────────
 
 export enum FnbOrderType {
   PRE_ORDER = 'PRE_ORDER',
@@ -84,26 +125,16 @@ export enum FnbOrderStatus {
   CANCELLED = 'CANCELLED',
 }
 
+// ── Notification ──────────────────────────────────────────────────────────────
+
 export enum NotificationChannel {
   PUSH = 'PUSH',
   SMS = 'SMS',
   EMAIL = 'EMAIL',
 }
 
-export enum TrustScoreReason {
-  NO_SHOW = 'NO_SHOW',
-  DAMAGE_CONFIRMED = 'DAMAGE_CONFIRMED',
-  DISPUTE_LOST = 'DISPUTE_LOST',
-  BOOKING_STREAK = 'BOOKING_STREAK',
-  ADMIN_ADJUSTMENT = 'ADMIN_ADJUSTMENT',
-}
+// ── Express extensions ────────────────────────────────────────────────────────
 
-export enum DiscountType {
-  PERCENT = 'PERCENT',
-  FIXED = 'FIXED',
-}
-
-// Express request extension
 import { Request } from 'express';
 
 export interface AuthPayload {
@@ -116,7 +147,8 @@ export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
 
-// AppError
+// ── Error ─────────────────────────────────────────────────────────────────────
+
 export class AppError extends Error {
   constructor(
     public message: string,
