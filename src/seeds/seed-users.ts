@@ -13,7 +13,7 @@ const USERS = [
 
 async function seed() {
   await AppDataSource.initialize();
-  logger.info('[Seed] Connected to DB');
+  logger.database('Connected');
 
   for (const u of USERS) {
     const [existing] = await AppDataSource.query(
@@ -22,7 +22,7 @@ async function seed() {
     );
 
     if (existing) {
-      logger.warn(`[Seed] Skip — already exists: ${u.email}`);
+      logger.warn('Seed', `Skip — already exists: ${u.email}`);
       continue;
     }
 
@@ -33,14 +33,14 @@ async function seed() {
       [u.email, u.full_name, password_hash, u.role],
     );
 
-    logger.info(`[Seed] Created ${u.role.padEnd(8)} — ${u.email}  (pw: ${u.password})`);
+    logger.info('Seed', `Created ${u.role.padEnd(8)} — ${u.email}`);
   }
 
   await AppDataSource.destroy();
-  logger.info('[Seed] Done');
+  logger.info('Seed', 'Done');
 }
 
 seed().catch((err) => {
-  logger.error('[Seed] Failed', { error: err });
+  logger.error('Seed', 'Failed', err);
   process.exit(1);
 });

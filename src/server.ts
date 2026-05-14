@@ -8,16 +8,16 @@ import { logger } from './config/logger';
 async function bootstrap() {
   try {
     await AppDataSource.initialize();
-    logger.info(`[DB] PostgreSQL connected on port ${env.db.port}`);
+    logger.database(`PostgreSQL connected on port ${env.db.port}`);
 
     await redis.connect();
-    logger.info(`[Redis] Connected to Redis on port ${env.redis.port}`);
+    logger.info('Redis', `Connected on port ${env.redis.port}`);
 
     app.listen(env.PORT, () => {
-      logger.info(`[Server] Running on http://localhost:${env.PORT}`);
+      logger.server(`Running on http://localhost:${env.PORT}`);
     });
   } catch (err) {
-    logger.error('[Bootstrap] Failed to start', { error: err });
+    logger.error('Bootstrap', 'Failed to start', err);
     process.exit(1);
   }
 }

@@ -1,27 +1,91 @@
-import winston from 'winston';
-import { env } from './env';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
-const { combine, timestamp, printf, colorize, errors } = winston.format;
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  debug: 3,
+}
 
-const devFormat = printf(({ level, message, timestamp: ts, stack, ...meta }) => {
-  const hasMeta = Object.keys(meta).length > 0;
-  if (hasMeta) {
-    const entry: Record<string, unknown> = { event: stack ?? message, ...meta };
-    return `[${ts}] ${level}:\n` + JSON.stringify(entry, null, 2);
-  }
-  return `[${ts}] ${level}: ${stack ?? message}`;
-});
+const currentLevel = (process.env.LOG_LEVEL || 'info') as LogLevel
+const currentPriority = LOG_LEVEL_PRIORITY[currentLevel]
 
-const logger = winston.createLogger({
-  level: env.NODE_ENV === 'production' ? 'info' : 'debug',
-  format: combine(
-    errors({ stack: true }),
-    timestamp({ format: 'HH:mm:ss' }),
-    env.NODE_ENV === 'production'
-      ? winston.format.json()
-      : combine(colorize(), devFormat),
-  ),
-  transports: [new winston.transports.Console()],
-});
+const shouldLog = (level: LogLevel) => LOG_LEVEL_PRIORITY[level] <= currentPriority
 
-export { logger };
+const formatTimestamp = () => {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date()).replace('T', ' ')
+}
+
+export const logger = {
+  http: (method: string, path: string, status: number, duration: number) => {
+    if (!shouldLog('info')) return
+    console.log(`[${formatTimestamp()}] ${method} ${path} ${status} ${duration}ms`)
+  },
+
+  server: (message: string) => {
+    console.log(`[SERVER] ${message}`)
+  },
+
+  database: (message: string, details?: unknown) => {
+    if (!shouldLog('debug')) return
+    if (details !== undefined) {
+      console.log(`[DATABASE] ${message}`, details)
+    } else {
+      console.log(`[DATABASE] ${message}`)
+    }
+  },
+
+  auth: (message: string, details?: unknown) => {
+    if (!shouldLog('info')) return
+    if (details !== undefined) {
+      console.log(`[AUTH] ${message}`, details)
+    } else {
+      console.log(`[AUTH] ${message}`)
+    }
+  },
+
+  debug: (source: string, message: string, data?: unknown) => {
+    if (!shouldLog('debug')) return
+    if (data !== undefined) {
+      console.log(`[${source}] ${message}`, data)
+    } else {
+      console.log(`[${source}] ${message}`)
+    }
+  },
+
+  info: (source: string, message: string, details?: unknown) => {
+    if (!shouldLog('info')) return
+    if (details !== undefined) {
+      console.log(`[${source}] ${message}`, details)
+    } else {
+      console.log(`[${source}] ${message}`)
+    }
+  },
+
+  warn: (source: string, message: string, details?: unknown) => {
+    if (!shouldLog('warn')) return
+    if (details !== undefined) {
+      console.warn(`[${source}] WARNING: ${message}`, details)
+    } else {
+      console.warn(`[${source}] WARNING: ${message}`)
+    }
+  },
+
+  error: (source: string, message: string, details?: unknown) => {
+    if (details !== undefined) {
+      console.error(`[${source}] ERROR: ${message}`, details)
+    } else {
+      console.error(`[${source}] ERROR: ${message}`)
+    }
+  },
+}
+
+export default logger

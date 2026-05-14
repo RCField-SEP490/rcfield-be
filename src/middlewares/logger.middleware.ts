@@ -20,28 +20,21 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
     req.body &&
     Object.keys(req.body).length > 0;
 
+  if (hasBody) {
+    logger.debug('HTTP', `${req.method} ${req.path} body`, maskBody(req.body));
+  }
+
   const originalJson = res.json.bind(res);
   res.json = (body: unknown) => {
     const ms = Date.now() - start;
     const status = res.statusCode;
 
-    const entry: Record<string, unknown> = {
-      method: req.method,
-      path: req.path,
-      status,
-    };
-
-    if (hasBody) entry.body = maskBody(req.body);
+    logger.http(req.method, req.path, status, ms);
 
     if (status >= 400 && body && typeof body === 'object') {
       const b = body as Record<string, unknown>;
-      entry.error = { code: b.code, message: b.message };
-      if (b.errors) entry.errors = b.errors;
+      logger.warn('HTTP', `${req.method} ${req.path}`, { code: b.code, message: b.message });
     }
-
-    if (status >= 500)      logger.error('request', entry);
-    else if (status >= 400) logger.warn('request', entry);
-    else                    logger.http('request', entry);
 
     return originalJson(body);
   };

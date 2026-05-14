@@ -27,7 +27,7 @@ export function errorMiddleware(
     return;
   }
 
-  logger.error('[Unhandled Error]', { error: err });
+  logger.error('Server', 'Unhandled error', err);
   res.status(500).json({
     success: false,
     code: 'INTERNAL_SERVER_ERROR',
