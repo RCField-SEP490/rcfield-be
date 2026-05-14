@@ -43,11 +43,9 @@ export async function createTestUser(options: CreateUserOptions = {}) {
 }
 
 export function generateToken(user: { id: string; email: string; role: UserRole }) {
-  return jwt.sign(
-    { userId: user.id, email: user.email, role: user.role },
-    env.jwt.secret,
-    { expiresIn: '1h' },
-  );
+  return jwt.sign({ userId: user.id, email: user.email, role: user.role }, env.jwt.secret, {
+    expiresIn: '1h',
+  });
 }
 
 // ── Cafes ────────────────────────────────────────────────────────────────────
@@ -60,15 +58,9 @@ interface CreateCafeOptions {
 }
 
 export async function createTestCafe(options: CreateCafeOptions = {}) {
-  const {
-    status = 'ACTIVE',
-    track_types = ['DRIFT', 'CIRCUIT'],
-    byoc_capacity = 5,
-  } = options;
+  const { status = 'ACTIVE', track_types = ['DRIFT', 'CIRCUIT'], byoc_capacity = 5 } = options;
 
-  const provider_id =
-    options.provider_id ??
-    (await createTestUser({ role: UserRole.PROVIDER })).id;
+  const provider_id = options.provider_id ?? (await createTestUser({ role: UserRole.PROVIDER })).id;
 
   const slug = `test-cafe-${Date.now()}`;
 
@@ -106,12 +98,7 @@ interface CreateVehicleOptions {
 }
 
 export async function createTestVehicle(options: CreateVehicleOptions) {
-  const {
-    cafe_id,
-    tier = 'STANDARD',
-    status = 'AVAILABLE',
-    compatible_track_types = [],
-  } = options;
+  const { cafe_id, tier = 'STANDARD', status = 'AVAILABLE', compatible_track_types = [] } = options;
 
   const [vehicle] = await AppDataSource.query(
     `INSERT INTO vehicles

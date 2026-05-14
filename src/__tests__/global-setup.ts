@@ -23,9 +23,9 @@ export default async function globalSetup() {
   });
 
   await adminDS.initialize();
-  await adminDS
-    .query(`CREATE DATABASE rcfeild_test`)
-    .catch(() => { /* DB đã tồn tại — bỏ qua */ });
+  await adminDS.query(`CREATE DATABASE rcfeild_test`).catch(() => {
+    /* DB đã tồn tại — bỏ qua */
+  });
   await adminDS.destroy();
 
   // Bước 2: Kết nối vào rcfeild_test và chạy migration

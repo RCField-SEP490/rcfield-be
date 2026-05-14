@@ -5,6 +5,7 @@ import { logger } from '../config/logger';
 import { LoginSchema, GoogleSchema, RefreshSchema, LogoutSchema } from '../validate';
 
 export const authController = {
+  // POST /api/v1/auth/login
   async login(req: Request, res: Response, next: NextFunction) {
     try {
       const { email, password } = LoginSchema.parse(req.body);
@@ -16,6 +17,7 @@ export const authController = {
     }
   },
 
+  // POST /api/v1/auth/google
   async googleLogin(req: Request, res: Response, next: NextFunction) {
     try {
       const { id_token } = GoogleSchema.parse(req.body);
@@ -27,6 +29,7 @@ export const authController = {
     }
   },
 
+  // POST /api/v1/auth/refresh
   async refresh(req: Request, res: Response, next: NextFunction) {
     try {
       const { refresh_token } = RefreshSchema.parse(req.body);
@@ -37,6 +40,7 @@ export const authController = {
     }
   },
 
+  // POST /api/v1/auth/logout  [auth]
   async logout(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const { refresh_token } = LogoutSchema.parse(req.body);

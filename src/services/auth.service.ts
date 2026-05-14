@@ -47,7 +47,11 @@ class AuthService {
     expiresAt.setDate(expiresAt.getDate() + REFRESH_EXPIRY_DAYS);
 
     await this.tokenRepo.save(
-      this.tokenRepo.create({ user_id: user.id, token: this.hashToken(raw), expires_at: expiresAt }),
+      this.tokenRepo.create({
+        user_id: user.id,
+        token: this.hashToken(raw),
+        expires_at: expiresAt,
+      }),
     );
 
     return { access_token, refresh_token: raw };
@@ -56,7 +60,7 @@ class AuthService {
   async loginWithPassword(email: string, password: string): Promise<LoginResult> {
     const failKey = `auth:failed:${email}`;
 
-    const fails = Number(await redis.get(failKey) ?? 0);
+    const fails = Number((await redis.get(failKey)) ?? 0);
     if (fails >= BRUTE_FORCE_MAX) {
       throw new AppError('Tài khoản bị khoá', 403, 'ACCOUNT_LOCKED');
     }
@@ -129,7 +133,11 @@ class AuthService {
 
     if (!row || row.expires_at <= new Date()) {
       if (row) await this.tokenRepo.delete(row.id);
-      throw new AppError('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại', 401, 'INVALID_REFRESH_TOKEN');
+      throw new AppError(
+        'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại',
+        401,
+        'INVALID_REFRESH_TOKEN',
+      );
     }
 
     await this.tokenRepo.delete(row.id);

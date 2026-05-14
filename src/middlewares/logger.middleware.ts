@@ -16,9 +16,7 @@ function maskBody(body: unknown): unknown {
 export function requestLogger(req: Request, res: Response, next: NextFunction): void {
   const start = Date.now();
   const hasBody =
-    ['POST', 'PUT', 'PATCH'].includes(req.method) &&
-    req.body &&
-    Object.keys(req.body).length > 0;
+    ['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length > 0;
 
   if (hasBody) {
     logger.debug('HTTP', `${req.method} ${req.path} body`, maskBody(req.body));

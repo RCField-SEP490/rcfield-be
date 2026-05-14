@@ -73,9 +73,7 @@ describe('POST /api/v1/auth/login', () => {
   });
 
   it('thiếu email → 400 VALIDATION_ERROR', async () => {
-    const res = await request(app)
-      .post('/api/v1/auth/login')
-      .send({ password: DEFAULT_PASSWORD });
+    const res = await request(app).post('/api/v1/auth/login').send({ password: DEFAULT_PASSWORD });
 
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('VALIDATION_ERROR');
@@ -120,9 +118,7 @@ function mockGoogleFailure() {
 describe('POST /api/v1/auth/google', () => {
   it('email mới → tạo tài khoản CUSTOMER + trả về tokens', async () => {
     mockGoogleSuccess('newgoogle@gmail.com');
-    const res = await request(app)
-      .post('/api/v1/auth/google')
-      .send({ id_token: 'fake-id-token' });
+    const res = await request(app).post('/api/v1/auth/google').send({ id_token: 'fake-id-token' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.user.role).toBe(UserRole.CUSTOMER);
@@ -130,10 +126,9 @@ describe('POST /api/v1/auth/google', () => {
     expect(res.body.data.access_token).toBeDefined();
 
     // Verify user created in DB
-    const [row] = await AppDataSource.query(
-      `SELECT auth_provider FROM users WHERE email = $1`,
-      ['newgoogle@gmail.com'],
-    );
+    const [row] = await AppDataSource.query(`SELECT auth_provider FROM users WHERE email = $1`, [
+      'newgoogle@gmail.com',
+    ]);
     expect(row.auth_provider).toBe('GOOGLE');
   });
 
@@ -141,9 +136,7 @@ describe('POST /api/v1/auth/google', () => {
     const user = await createTestUser({ email: 'existing@gmail.com' });
     mockGoogleSuccess('existing@gmail.com');
 
-    const res = await request(app)
-      .post('/api/v1/auth/google')
-      .send({ id_token: 'fake-id-token' });
+    const res = await request(app).post('/api/v1/auth/google').send({ id_token: 'fake-id-token' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.user.id).toBe(user.id);
@@ -158,9 +151,7 @@ describe('POST /api/v1/auth/google', () => {
 
   it('Google token không hợp lệ → 401 GOOGLE_AUTH_FAILED', async () => {
     mockGoogleFailure();
-    const res = await request(app)
-      .post('/api/v1/auth/google')
-      .send({ id_token: 'bad-token' });
+    const res = await request(app).post('/api/v1/auth/google').send({ id_token: 'bad-token' });
 
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('GOOGLE_AUTH_FAILED');
@@ -170,9 +161,7 @@ describe('POST /api/v1/auth/google', () => {
     await createTestUser({ email: 'locked@gmail.com', is_active: false, auth_provider: 'GOOGLE' });
     mockGoogleSuccess('locked@gmail.com');
 
-    const res = await request(app)
-      .post('/api/v1/auth/google')
-      .send({ id_token: 'fake-id-token' });
+    const res = await request(app).post('/api/v1/auth/google').send({ id_token: 'fake-id-token' });
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('ACCOUNT_LOCKED');
@@ -261,9 +250,7 @@ describe('POST /api/v1/auth/logout', () => {
     expect(res.body.success).toBe(true);
 
     // Refresh token cũ bị từ chối
-    const retry = await request(app)
-      .post('/api/v1/auth/refresh')
-      .send({ refresh_token });
+    const retry = await request(app).post('/api/v1/auth/refresh').send({ refresh_token });
     expect(retry.status).toBe(401);
   });
 

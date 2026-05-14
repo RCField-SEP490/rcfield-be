@@ -5,10 +5,15 @@ import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 
 const USERS = [
-  { email: 'admin@gmail.com',    full_name: 'Admin RCField',  role: 'ADMIN',    password: '123456' },
-  { email: 'provider@gmail.com', full_name: 'Provider Owner', role: 'PROVIDER', password: '123456' },
-  { email: 'staff@gmail.com',    full_name: 'Staff Member',   role: 'STAFF',    password: '123456' },
-  { email: 'customer@gmail.com', full_name: 'Khách Hàng',     role: 'CUSTOMER', password: '123456' },
+  { email: 'admin@gmail.com', full_name: 'Admin RCField', role: 'ADMIN', password: '123456' },
+  {
+    email: 'provider@gmail.com',
+    full_name: 'Provider Owner',
+    role: 'PROVIDER',
+    password: '123456',
+  },
+  { email: 'staff@gmail.com', full_name: 'Staff Member', role: 'STAFF', password: '123456' },
+  { email: 'customer@gmail.com', full_name: 'Khách Hàng', role: 'CUSTOMER', password: '123456' },
 ];
 
 async function seed() {
@@ -16,10 +21,9 @@ async function seed() {
   logger.database('Connected');
 
   for (const u of USERS) {
-    const [existing] = await AppDataSource.query(
-      `SELECT id FROM users WHERE email = $1`,
-      [u.email],
-    );
+    const [existing] = await AppDataSource.query(`SELECT id FROM users WHERE email = $1`, [
+      u.email,
+    ]);
 
     if (existing) {
       logger.warn('Seed', `Skip — already exists: ${u.email}`);
