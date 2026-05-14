@@ -1,5 +1,6 @@
 import Redis from 'ioredis';
 import { env } from './env';
+import { logger } from './logger';
 
 export const redis = new Redis({
   host: env.redis.host,
@@ -9,5 +10,5 @@ export const redis = new Redis({
 });
 
 redis.on('error', (err) => {
-  console.error('[Redis] Connection error:', err.message);
+  logger.error('[Redis] Connection error', { message: err.message });
 });
