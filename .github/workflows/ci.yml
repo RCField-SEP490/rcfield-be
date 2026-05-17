@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+        env:
+          NODE_ENV: test
+          PORT: 3001
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: rcfeild_test
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
+          JWT_SECRET: ci-jwt-secret
+          JWT_EXPIRES_IN: 1h
+          JWT_REFRESH_SECRET: ci-refresh-secret
+          JWT_REFRESH_EXPIRES_IN: 7d
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          REDIS_PASSWORD: ""
+          PLATFORM_FEE_PCT: "0.15"
+          PAYMENT_WINDOW_MINUTES: "30"
+          SLOT_LOCK_TTL_SECONDS: "1800"
+          GOOGLE_CLIENT_ID: ci-google-client-id
