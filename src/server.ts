@@ -1,9 +1,11 @@
 import 'dotenv/config';
+import { createServer } from 'http';
 import { app } from './app';
 import { AppDataSource } from './config/database';
 import { redis } from './config/redis';
 import { env } from './config/env';
 import { logger } from './config/logger';
+import { wsService } from './services/websocket.service';
 
 async function bootstrap() {
   try {
@@ -13,7 +15,10 @@ async function bootstrap() {
     await redis.connect();
     logger.info('Redis', `Connected on port ${env.redis.port}`);
 
-    app.listen(env.PORT, () => {
+    const httpServer = createServer(app);
+    wsService.init(httpServer);
+
+    httpServer.listen(env.PORT, () => {
       logger.server(`Running on http://localhost:${env.PORT}`);
     });
   } catch (err) {

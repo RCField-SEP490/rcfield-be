@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KB Debug — RCField</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #232637;
+      --border: #2e3148;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+    }
+
+    /* ── Top bar ─────────────────────────────────────────────── */
+    .topbar {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-title { font-size: 14px; font-weight: 700; color: var(--blue); white-space: nowrap; }
+
+    .topbar input {
+      flex: 1;
+      min-width: 260px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    .topbar input:focus { border-color: var(--blue); }
+    .topbar input::placeholder { color: var(--muted); }
+
+    .btn {
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn:hover { opacity: .85; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .btn-ghost:hover { border-color: var(--text); color: var(--text); opacity: 1; }
+
+    /* ── Sidebar ─────────────────────────────────────────────── */
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    .stat-value { font-size: 22px; font-weight: 700; line-height: 1; }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .stat-green .stat-value { color: var(--green); }
+    .stat-yellow .stat-value { color: var(--yellow); }
+    .stat-red .stat-value { color: var(--red); }
+    .stat-blue .stat-value { color: var(--blue); }
+
+    /* doc list */
+    .doc-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color .15s;
+      margin-bottom: 6px;
+    }
+    .doc-item:hover { border-color: var(--blue); }
+    .doc-item.active { border-color: var(--blue); background: #1e2a3f; }
+
+    .doc-title { font-weight: 600; color: var(--text); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doc-meta { display: flex; gap: 8px; align-items: center; }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 20px;
+      text-transform: uppercase;
+    }
+    .badge-green  { background: #14532d; color: var(--green); }
+    .badge-yellow { background: #451a03; color: var(--yellow); }
+    .badge-red    { background: #450a0a; color: var(--red); }
+    .badge-gray   { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+
+    .doc-chunks { color: var(--muted); font-size: 11px; }
+
+    /* upload area */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color .15s;
+    }
+    .upload-zone:hover, .upload-zone.drag { border-color: var(--blue); color: var(--text); }
+    .upload-zone input { display: none; }
+
+    .upload-form { display: flex; flex-direction: column; gap: 8px; }
+    .upload-form input[type=text], .upload-form select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      width: 100%;
+    }
+    .upload-form input:focus, .upload-form select:focus { border-color: var(--blue); }
+
+    /* ── Main ────────────────────────────────────────────────── */
+    .main {
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* query bar */
+    .query-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .query-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    .query-input:focus { border-color: var(--blue); }
+    .query-input::placeholder { color: var(--muted); }
+
+    .top-select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 10px;
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+
+    /* verdict banner */
+    .verdict {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: 1px solid;
+    }
+    .verdict-good   { background: #052e16; border-color: #166534; }
+    .verdict-weak   { background: #1c1400; border-color: #854d0e; }
+    .verdict-no_match { background: #1c0a0a; border-color: #7f1d1d; }
+
+    .verdict-icon { font-size: 22px; }
+    .verdict-text { flex: 1; }
+    .verdict-title { font-weight: 700; font-size: 14px; }
+    .verdict-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .verdict-score { font-size: 22px; font-weight: 700; }
+    .verdict-good .verdict-score   { color: var(--green); }
+    .verdict-weak .verdict-score   { color: var(--yellow); }
+    .verdict-no_match .verdict-score { color: var(--red); }
+
+    /* chunk cards */
+    .chunk-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .chunk-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color .15s;
+    }
+    .chunk-card:hover { border-color: var(--blue); }
+
+    .chunk-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+
+    .chunk-rank {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      width: 24px;
+      flex-shrink: 0;
+    }
+
+    .score-wrap { display: flex; align-items: center; gap: 8px; flex: 1; }
+    .score-bar-bg {
+      flex: 1;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .score-bar-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+    .score-num { font-weight: 700; font-size: 13px; width: 40px; text-align: right; flex-shrink: 0; }
+
+    .chunk-doc { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+    .chunk-index-badge { font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
+
+    .chunk-body { padding: 12px 14px; }
+    .chunk-text {
+      color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.6;
+      max-height: 120px;
+      overflow: hidden;
+      transition: max-height .3s;
+    }
+    .chunk-text.expanded { max-height: 800px; }
+    .btn-expand {
+      font-size: 11px;
+      color: var(--blue);
+      background: none;
+      border: none;
+      cursor: pointer;
+      margin-top: 6px;
+      padding: 0;
+      font-family: inherit;
+    }
+
+    /* empty state */
+    .empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 60px 20px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .empty-icon { font-size: 40px; }
+
+    /* spinner */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-row { display: flex; align-items: center; gap: 8px; color: var(--muted); padding: 20px; }
+
+    /* toast */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      z-index: 9999;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity .2s, transform .2s;
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast-ok  { border-color: var(--green); color: var(--green); }
+    .toast-err { border-color: var(--red);   color: var(--red); }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-title">🔍 KB Debug</div>
+    <input id="cafe-id" type="text" placeholder="Cafe ID..." />
+    <button class="btn" onclick="loadCafe()">Load</button>
+    <button class="btn btn-ghost" onclick="clearAll()">Clear</button>
+    <span id="cafe-name" style="color:var(--muted);font-size:12px"></span>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+
+    <!-- Stats -->
+    <div>
+      <div class="section-label">KB Summary</div>
+      <div class="stat-grid" id="stats">
+        <div class="stat-card stat-blue"><div class="stat-value" id="s-docs">—</div><div class="stat-label">Documents</div></div>
+        <div class="stat-card stat-blue"><div class="stat-value" id="s-chunks">—</div><div class="stat-label">Chunks</div></div>
+        <div class="stat-card stat-green"><div class="stat-value" id="s-indexed">—</div><div class="stat-label">Indexed</div></div>
+        <div class="stat-card stat-red"><div class="stat-value" id="s-failed">—</div><div class="stat-label">Failed</div></div>
+      </div>
+    </div>
+
+    <!-- Doc list -->
+    <div>
+      <div class="section-label">Documents</div>
+      <div id="doc-list"><div class="empty"><div class="empty-icon">📂</div><div>Load cafe trước</div></div></div>
+    </div>
+
+    <!-- Login -->
+    <div>
+      <div class="section-label">Đăng nhập Provider</div>
+      <div class="upload-form" id="login-section">
+        <input type="email" id="login-email" placeholder="Email..." value="provider@gmail.com" />
+        <input type="password" id="login-password" placeholder="Password..." value="123456" />
+        <button class="btn" onclick="doLogin()">Đăng nhập</button>
+        <div id="login-status" style="font-size:11px;color:var(--muted)">Chưa đăng nhập</div>
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div>
+      <div class="section-label">Upload Document</div>
+      <div class="upload-form">
+        <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()"
+             ondragover="event.preventDefault();this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="handleDrop(event)">
+          <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" onchange="handleFile(event)" />
+          <div id="file-label">📎 Chọn file hoặc kéo thả<br/><span style="font-size:11px;color:var(--muted)">PDF · DOCX · TXT · MD · max 10MB</span></div>
+        </div>
+        <input type="text" id="doc-title" placeholder="Tiêu đề tài liệu..." />
+        <select id="doc-type">
+          <option value="FAQ">FAQ</option>
+          <option value="POLICY">Quy định</option>
+          <option value="ANNOUNCEMENT">Thông báo</option>
+          <option value="CUSTOM">Khác</option>
+        </select>
+        <button class="btn" id="btn-upload" onclick="uploadDoc()" disabled>Upload & Index</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Query bar -->
+    <div class="query-bar">
+      <input class="query-input" id="query-input" type="text"
+             placeholder="Nhập câu hỏi để test retrieval..."
+             onkeydown="if(event.key==='Enter') runQuery()" />
+      <select class="top-select" id="top-select">
+        <option value="3">Top 3</option>
+        <option value="5" selected>Top 5</option>
+        <option value="10">Top 10</option>
+      </select>
+      <button class="btn" id="btn-query" onclick="runQuery()">Run</button>
+    </div>
+
+    <!-- Results -->
+    <div id="results">
+      <div class="empty">
+        <div class="empty-icon">🧪</div>
+        <div>Load cafe ID và nhập câu hỏi để test KB retrieval</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────
+  let cafeId = '';
+  let selectedFile = null;
+  let authToken = '';
+
+  // ── Init ───────────────────────────────────────────────────
+  window.onload = () => {
+    const saved = localStorage.getItem('kb_debug_cafe_id');
+    if (saved) {
+      document.getElementById('cafe-id').value = saved;
+      loadCafe();
+    }
+    const token = localStorage.getItem('kb_debug_token');
+    if (token) {
+      authToken = token;
+      document.getElementById('login-status').textContent = '✓ Đã đăng nhập (từ cache)';
+      document.getElementById('login-status').style.color = 'var(--green)';
+    }
+  };
+
+  // ── Login ──────────────────────────────────────────────────
+  async function doLogin() {
+    const email    = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    const status   = document.getElementById('login-status');
+    status.textContent = 'Đang đăng nhập…';
+    status.style.color = 'var(--muted)';
+    try {
+      const r = await fetch('http://localhost:3000/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.data?.access_token) {
+        status.textContent = `✗ ${d.message || 'Sai email/password'}`;
+        status.style.color = 'var(--red)';
+        return;
+      }
+      authToken = d.data.access_token;
+      localStorage.setItem('kb_debug_token', authToken);
+      status.textContent = `✓ ${d.data.user.email} (${d.data.user.role})`;
+      status.style.color = 'var(--green)';
+      toast('Đăng nhập thành công', 'ok');
+    } catch {
+      status.textContent = '✗ Không kết nối được server';
+      status.style.color = 'var(--red)';
+    }
+  };
+
+  // ── Load cafe ──────────────────────────────────────────────
+  async function loadCafe() {
+    cafeId = document.getElementById('cafe-id').value.trim();
+    if (!cafeId) return;
+    localStorage.setItem('kb_debug_cafe_id', cafeId);
+
+    // Fetch cafe name
+    try {
+      const r = await fetch(`http://localhost:3000/api/v1/cafes/${cafeId}`);
+      if (r.ok) {
+        const d = await r.json();
+        document.getElementById('cafe-name').textContent = d.name ?? '';
+      }
+    } catch (_) {}
+
+    await refreshSummary();
+  }
+
+  async function refreshSummary() {
+    if (!cafeId) return;
+    try {
+      const r = await fetch(`http://localhost:3000/api/v1/cafes/${cafeId}/kb/debug`);
+      const d = await r.json();
+      renderSummary(d.summary, d.documents);
+    } catch (e) {
+      toast('Không kết nối được server', 'err');
+    }
+  }
+
+  function renderSummary(summary, docs) {
+    document.getElementById('s-docs').textContent    = summary.doc_count;
+    document.getElementById('s-chunks').textContent  = summary.chunk_count;
+    document.getElementById('s-indexed').textContent = summary.indexed;
+    document.getElementById('s-failed').textContent  = summary.failed;
+
+    const list = document.getElementById('doc-list');
+    if (!docs.length) {
+      list.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px 0">Chưa có tài liệu nào.</div>`;
+      return;
+    }
+
+    list.innerHTML = docs.map(d => `
+      <div class="doc-item" onclick="filterDoc('${d.id}', this)">
+        <div class="doc-title">${esc(d.title)}</div>
+        <div class="doc-meta">
+          <span class="badge ${statusBadge(d.status)}">${d.status}</span>
+          <span class="doc-chunks">${d.chunk_count} chunks</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function statusBadge(s) {
+    return s === 'INDEXED' ? 'badge-green' : s === 'FAILED' ? 'badge-red' : 'badge-yellow';
+  }
+
+  // ── Run query ──────────────────────────────────────────────
+  async function runQuery() {
+    const query = document.getElementById('query-input').value.trim();
+    const top   = document.getElementById('top-select').value;
+    if (!query) return;
+    if (!cafeId) { toast('Load cafe ID trước', 'err'); return; }
+
+    const btn = document.getElementById('btn-query');
+    btn.disabled = true;
+    document.getElementById('results').innerHTML = `
+      <div class="loading-row"><div class="spinner"></div> Đang embed query và tìm chunks...</div>`;
+
+    try {
+      const r = await fetch(
+        `http://localhost:3000/api/v1/cafes/${cafeId}/kb/debug?query=${encodeURIComponent(query)}&top=${top}`
+      );
+      const d = await r.json();
+      renderResults(d);
+    } catch (e) {
+      document.getElementById('results').innerHTML =
+        `<div class="empty"><div class="empty-icon">❌</div><div>Lỗi kết nối server</div></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderResults(d) {
+    const el = document.getElementById('results');
+
+    if (!d.chunks || !d.chunks.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">🪹</div><div>Không có chunks nào. Upload tài liệu trước.</div></div>`;
+      return;
+    }
+
+    const best = d.chunks[0].score;
+    const verdictCfg = {
+      good:     { icon: '✅', title: 'Good match', sub: 'KB có thông tin liên quan. LLM sẽ trả lời được.', color: 'var(--green)' },
+      weak:     { icon: '⚠️', title: 'Weak match', sub: 'LLM có thể trả lời mơ hồ. Cân nhắc thêm tài liệu chi tiết hơn.', color: 'var(--yellow)' },
+      no_match: { icon: '❌', title: 'No match',   sub: 'KB không có thông tin này. LLM sẽ nói "không biết".', color: 'var(--red)' },
+    }[d.verdict];
+
+    el.innerHTML = `
+      <div class="verdict verdict-${d.verdict}">
+        <div class="verdict-icon">${verdictCfg.icon}</div>
+        <div class="verdict-text">
+          <div class="verdict-title">${verdictCfg.title}</div>
+          <div class="verdict-sub">${verdictCfg.sub}</div>
+          <div class="verdict-sub" style="margin-top:4px;color:var(--muted)">
+            Query embedded → ${d.embedding_dims} dims · Top ${d.chunks.length} chunks retrieved
+          </div>
+        </div>
+        <div class="verdict-score">${best.toFixed(3)}</div>
+      </div>
+
+      <div class="chunk-list">
+        ${d.chunks.map((c, i) => renderChunk(c, i)).join('')}
+      </div>
+    `;
+  }
+
+  function renderChunk(c, i) {
+    const score = Number(c.score);
+    const color = score >= 0.7 ? 'var(--green)' : score >= 0.4 ? 'var(--yellow)' : 'var(--red)';
+    const pct   = Math.round(score * 100);
+    const id    = `chunk-text-${i}`;
+
+    return `
+      <div class="chunk-card">
+        <div class="chunk-header">
+          <div class="chunk-rank">#${i + 1}</div>
+          <div class="score-wrap">
+            <div class="score-bar-bg">
+              <div class="score-bar-fill" style="width:${pct}%;background:${color}"></div>
+            </div>
+            <div class="score-num" style="color:${color}">${score.toFixed(3)}</div>
+          </div>
+          <div class="chunk-doc" title="${esc(c.doc_title)}">${esc(c.doc_title)}</div>
+          <div class="chunk-index-badge">chunk #${c.chunk_index}</div>
+        </div>
+        <div class="chunk-body">
+          <div class="chunk-text" id="${id}">${esc(c.chunk_text)}</div>
+          ${c.chunk_text.length > 300
+            ? `<button class="btn-expand" onclick="toggleExpand('${id}', this)">▼ Xem thêm</button>`
+            : ''}
+        </div>
+      </div>`;
+  }
+
+  function toggleExpand(id, btn) {
+    const el = document.getElementById(id);
+    el.classList.toggle('expanded');
+    btn.textContent = el.classList.contains('expanded') ? '▲ Thu lại' : '▼ Xem thêm';
+  }
+
+  // ── Upload ─────────────────────────────────────────────────
+  function handleFile(e) {
+    selectedFile = e.target.files[0];
+    if (selectedFile) {
+      document.getElementById('file-label').textContent = `📄 ${selectedFile.name}`;
+      document.getElementById('btn-upload').disabled = false;
+      if (!document.getElementById('doc-title').value)
+        document.getElementById('doc-title').value = selectedFile.name.replace(/\.[^.]+$/, '');
+    }
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('upload-zone').classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) {
+      selectedFile = f;
+      document.getElementById('file-label').textContent = `📄 ${f.name}`;
+      document.getElementById('btn-upload').disabled = false;
+      if (!document.getElementById('doc-title').value)
+        document.getElementById('doc-title').value = f.name.replace(/\.[^.]+$/, '');
+    }
+  }
+
+  async function uploadDoc() {
+    if (!selectedFile || !cafeId) return;
+    const title = document.getElementById('doc-title').value.trim() || selectedFile.name;
+    const type  = document.getElementById('doc-type').value;
+    if (!authToken) { toast('Đăng nhập trước', 'err'); return; }
+
+    const btn = document.getElementById('btn-upload');
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+
+    const fd = new FormData();
+    fd.append('file', selectedFile);
+    fd.append('title', title);
+    fd.append('contentType', type);
+
+    try {
+      const r = await fetch(`http://localhost:3000/api/v1/cafes/${cafeId}/kb/documents`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: fd,
+      });
+      const d = await r.json();
+      if (!r.ok) { toast(d.message || 'Upload failed', 'err'); return; }
+
+      toast(`✓ Uploaded — ID: ${d.id.slice(0,8)}… (indexing…)`, 'ok');
+      selectedFile = null;
+      document.getElementById('file-label').innerHTML = '📎 Chọn file hoặc kéo thả<br/><span style="font-size:11px;color:var(--muted)">PDF · DOCX · TXT · MD · max 10MB</span>';
+      document.getElementById('doc-title').value = '';
+
+      // Poll until indexed
+      pollDocStatus(d.id, token);
+    } catch (e) {
+      toast('Lỗi kết nối', 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Upload & Index';
+    }
+  }
+
+  async function pollDocStatus(docId, token) {
+    for (let i = 0; i < 30; i++) {
+      await sleep(2000);
+      try {
+        const r = await fetch(`http://localhost:3000/api/v1/cafes/${cafeId}/kb/documents`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (r.ok) {
+          const d = await r.json();
+          const doc = d.data.find(x => x.id === docId);
+          if (doc?.status === 'INDEXED') { toast(`✅ Indexed! ${doc.chunk_count} chunks`, 'ok'); await refreshSummary(); return; }
+          if (doc?.status === 'FAILED')  { toast('❌ Indexing failed', 'err'); await refreshSummary(); return; }
+        }
+      } catch (_) {}
+    }
+  }
+
+  // ── Utils ──────────────────────────────────────────────────
+  function clearAll() {
+    cafeId = '';
+    document.getElementById('cafe-id').value = '';
+    document.getElementById('cafe-name').textContent = '';
+    document.getElementById('query-input').value = '';
+    document.getElementById('results').innerHTML = `<div class="empty"><div class="empty-icon">🧪</div><div>Load cafe ID và nhập câu hỏi để test KB retrieval</div></div>`;
+    document.getElementById('s-docs').textContent = document.getElementById('s-chunks').textContent =
+    document.getElementById('s-indexed').textContent = document.getElementById('s-failed').textContent = '—';
+    document.getElementById('doc-list').innerHTML = `<div class="empty"><div class="empty-icon">📂</div><div>Load cafe trước</div></div>`;
+  }
+
+  function filterDoc(id, el) {
+    document.querySelectorAll('.doc-item').forEach(e => e.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  function toast(msg, type = 'ok') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `toast toast-${type} show`;
+    setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>

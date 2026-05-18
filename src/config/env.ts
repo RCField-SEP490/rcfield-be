@@ -40,4 +40,11 @@ export const env = {
     paymentWindowMinutes: parseInt(process.env.PAYMENT_WINDOW_MINUTES ?? '30', 10),
     slotLockTtlSeconds: parseInt(process.env.SLOT_LOCK_TTL_SECONDS ?? '1800', 10),
   },
+
+  ai: {
+    googleApiKey: process.env.GOOGLE_API_KEY ?? '',
+    embeddingModel: process.env.GOOGLE_EMBEDDING_MODEL ?? 'gemini-embedding-001',
+    model: process.env.GOOGLE_MODEL ?? 'gemini-2.5-pro',
+    supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.0-flash',
+  },
 } as const;

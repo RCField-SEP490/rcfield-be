@@ -32,6 +32,26 @@ services:
       timeout: 5s
       retries: 5
 
+  nlu-service:
+    build:
+      context: ./nlu-service
+      dockerfile: Dockerfile
+    container_name: rcfeild_nlu
+    restart: unless-stopped
+    environment:
+      INTENTS_FILE: /app/intents/rcfield.json
+    volumes:
+      - ./nlu-service/intents:/app/intents:ro
+    # Internal network only — not exposed on host ports
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 volumes:
   postgres_data:
   redis_data:

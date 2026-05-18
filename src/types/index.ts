@@ -147,6 +147,58 @@ export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
 
+// ── AI Chat ───────────────────────────────────────────────────────────────────
+
+export enum KbDocumentStatus {
+  PENDING = 'PENDING',
+  INDEXED = 'INDEXED',
+  FAILED = 'FAILED',
+}
+
+export enum KbContentType {
+  POLICY = 'POLICY',
+  FAQ = 'FAQ',
+  ANNOUNCEMENT = 'ANNOUNCEMENT',
+  CUSTOM = 'CUSTOM',
+}
+
+export enum WidgetPosition {
+  BOTTOM_RIGHT = 'BOTTOM_RIGHT',
+  BOTTOM_LEFT = 'BOTTOM_LEFT',
+}
+
+export type ChatResponseType =
+  | 'greeting'
+  | 'thanks'
+  | 'farewell'
+  | 'text'
+  | 'slot_list'
+  | 'vehicle_list';
+
+export interface SlotItem {
+  time: string;
+  availableCount: number;
+}
+
+export interface VehicleItem {
+  name: string;
+  tier: string;
+  hourlyRate: number;
+  status: string;
+}
+
+export interface ChatResponse {
+  answer: string;
+  responseType: ChatResponseType;
+  data?: {
+    date?: string;
+    slots?: SlotItem[];
+    vehicles?: VehicleItem[];
+  };
+  sources?: string[];
+  quickReplies?: string[];
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export class AppError extends Error {
