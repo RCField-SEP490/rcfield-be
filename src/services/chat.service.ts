@@ -222,15 +222,42 @@ export async function slotCheck(cafeId: string, message: string): Promise<ChatRe
 // Generates 3 contextual quick-reply suggestions using Flash (called in parallel with main stream)
 async function generateQuickReplies(message: string, cafeName: string): Promise<string[]> {
   try {
+    const prompt = `You are the AI assistant for "${cafeName}" — a cafe that combines coffee with remote-controlled car racing.
+
+TASK: Read the customer's question, then create EXACTLY 3 follow-up questions that the CUSTOMER might want to ask naturally.
+
+RULES:
+- Each question is a short inquiry, from the customer's perspective (not the staff's).
+- Maximum 6 words, natural English.
+- Must be directly related and follow-up to the customer's topic, helping them move closer to booking/using the service.
+- Do not repeat the original question. The three questions must differ in direction.
+
+EXAMPLES:
+Customer asks: "Do you have RC cars for rent?"
+Suggestions: ["How much does renting cost?", "What types of cars do you have?", "Do I need to book in advance?"]
+
+Customer asks: "What are your opening hours?"
+Suggestions: ["Are you open on weekends?", "What's your address?", "Do I need to reserve a table?"]
+
+---
+Customer's question: "${message}"
+
+Return only a pure JSON array, no markdown, no explanation:
+["question 1", "question 2", "question 3"]
+# If user ask with vietnamese, return quick replies in vietnamese, if user ask with english, return quick replies in english.`;
+
     const response = await ai.models.generateContent({
       model: env.ai.model,
-      contents: `Khách hỏi cafe xe RC "${cafeName}": "${message}"
-Tạo đúng 3 câu hỏi gợi ý ngắn (tối đa 8 từ tiếng Việt) liên quan mà khách có thể muốn hỏi tiếp.
-Chỉ trả về JSON array, không markdown: ["câu 1", "câu 2", "câu 3"]`,
+      contents: prompt,
     });
+
     const text = (response.text ?? '').trim().replace(/^```json\n?|```\n?$/g, '');
     const parsed = JSON.parse(text);
-    if (Array.isArray(parsed) && parsed.length >= 2) return parsed.slice(0, 3);
+    if (Array.isArray(parsed) && parsed.length >= 2) {
+      return parsed
+        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        .slice(0, 3);
+    }
   } catch {
     // fall through to defaults
   }
@@ -462,6 +489,7 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
     logger.info('RAG', `Stream complete  ${t()}`, { cafeId });
     const quickReplies = await quickRepliesPromise;
     ragCache.set(cafeId, message, queryEmbedding, fullAnswer, sources, quickReplies);
+    logger.info('RAG', 'Answer: ', fullAnswer);
   }
 
   return { stream: tokenStream(), sources, quickRepliesPromise };

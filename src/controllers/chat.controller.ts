@@ -141,17 +141,14 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
       send('chunk', { text: token });
     }
 
-    // quickReplies ran in parallel — should already be resolved by the time stream finishes
-    const quickReplies = await quickRepliesPromise;
+    // Send done immediately so FE unlocks input — quick replies arrive separately
+    send('done', { response_type: 'text', sources, full_answer: fullAnswer });
+
     await incrementQuota(cafeId);
     logger.info('Chat', `stream done in ${Date.now() - t0}ms`, { cafeId });
 
-    send('done', {
-      response_type: 'text',
-      sources,
-      quick_replies: quickReplies,
-      full_answer: fullAnswer,
-    });
+    const quickReplies = await quickRepliesPromise;
+    send('quick_replies', { quick_replies: quickReplies });
     res.end();
   } catch (err) {
     next(err);
