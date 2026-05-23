@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import {
@@ -15,6 +15,16 @@ import {
 } from '../controllers/kb.controller';
 import { UserRole } from '../types';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const validateCafeId = (req: Request, res: Response, next: NextFunction) => {
+  if (!UUID_RE.test(req.params.cafeId)) {
+    res.status(400).json({ success: false, message: 'Invalid cafeId format' });
+    return;
+  }
+  next();
+};
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -22,6 +32,8 @@ const upload = multer({
 
 // mergeParams: true so :cafeId from parent router is accessible
 const router = Router({ mergeParams: true });
+
+router.use(validateCafeId);
 
 // ── Public chat endpoints ──────────────────────────────────────────────────────
 

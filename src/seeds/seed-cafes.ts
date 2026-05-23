@@ -421,11 +421,99 @@ async function seed() {
     quick_replies: ['Giá thuê xe', 'Slot hôm nay', 'Lịch giải tháng này', 'Nội quy'],
   });
 
+  // ─── System Cafe (Landing Page Demo) ──────────────────────────────────────
+
+  const [existingSystem] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM cafes WHERE slug = 'rcfield-system'`,
+  );
+
+  let systemCafeId: string;
+
+  if (existingSystem) {
+    systemCafeId = existingSystem.id;
+    logger.warn('Seed', 'Skip system cafe — already exists: rcfield-system');
+  } else {
+    const [sc] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO cafes (
+        provider_id, name, slug, description, phone, status,
+        address, district, city,
+        operating_hours, track_types,
+        slot_duration_minutes, slot_fee_rate, max_concurrent_bookings,
+        min_booking_notice_minutes, byoc_capacity
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      RETURNING id`,
+      [
+        provider.id,
+        'RCField Platform',
+        'rcfield-system',
+        'Nền tảng quản lý sân xe RC chuyên nghiệp cho toàn quốc.',
+        '',
+        'ACTIVE',
+        'Việt Nam',
+        '',
+        'Toàn quốc',
+        JSON.stringify({
+          mon: { open: '00:00', close: '23:59' },
+          tue: { open: '00:00', close: '23:59' },
+          wed: { open: '00:00', close: '23:59' },
+          thu: { open: '00:00', close: '23:59' },
+          fri: { open: '00:00', close: '23:59' },
+          sat: { open: '00:00', close: '23:59' },
+          sun: { open: '00:00', close: '23:59' },
+        }),
+        '{DRIFT,OBSTACLE}',
+        60,
+        0,
+        0,
+        0,
+        0,
+      ],
+    );
+    systemCafeId = sc.id;
+    logger.info('Seed', `Created system cafe — RCField Platform (${systemCafeId})`);
+  }
+
+  // Feature flag cho system cafe
+  const [existingSystemFlag] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM feature_flags WHERE feature_key = 'AI_CHATBOT' AND entity_id = $1`,
+    [systemCafeId],
+  );
+  if (!existingSystemFlag) {
+    await AppDataSource.query(
+      `INSERT INTO feature_flags (
+        feature_key, display_name, description,
+        is_enabled, entity_type, entity_id,
+        config, enabled_by, enabled_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())`,
+      [
+        'AI_CHATBOT',
+        'AI Chat — RCField System',
+        'Chat demo trên landing page',
+        true,
+        'CAFE',
+        systemCafeId,
+        JSON.stringify({ monthly_quota: 10000, used_this_month: 0, quota_reset_day: 1 }),
+        provider.id,
+      ],
+    );
+    logger.info('Seed', 'Feature flag AI_CHATBOT created for system cafe');
+  }
+
+  // Widget config cho system cafe
+  await seedWidgetConfig(systemCafeId, {
+    greeting_message:
+      'Xin chào! Tôi là trợ lý AI của RCField. Hỏi tôi về nền tảng, tính năng hoặc cách đăng ký nhé!',
+    position: 'BOTTOM_RIGHT',
+    primary_color: '#EA580C',
+    quick_replies: ['RCField là gì?', 'Cách đăng ký', 'Tính năng nổi bật', 'Chi phí sử dụng'],
+  });
+
   await AppDataSource.destroy();
   logger.info('Seed', '─────────────────────────────────────────────');
   logger.info('Seed', 'Done! Cafe IDs for Postman:');
   logger.info('Seed', `  RC Arena Hà Nội:       ${cafe1Id}`);
   logger.info('Seed', `  RC Drift Club Sài Gòn: ${cafe2Id}`);
+  logger.info('Seed', `  RCField System (demo): ${systemCafeId}`);
   logger.info('Seed', '─────────────────────────────────────────────');
 }
 
