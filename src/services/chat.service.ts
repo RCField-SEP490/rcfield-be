@@ -1,5 +1,5 @@
 import { DataSource } from 'typeorm';
-import { GoogleGenerativeAI, Content } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { AppDataSource } from '../config/database';
 import { env } from '../config/env';
 import { classifyIntent } from '../config/nlu';
@@ -9,7 +9,7 @@ import { CafeWidgetConfig } from '../models/cafe-widget-config.entity';
 import { kbService } from './kb.service';
 import { ragCache } from './rag-cache';
 
-const genAI = new GoogleGenerativeAI(env.ai.googleApiKey);
+const ai = new GoogleGenAI({ apiKey: env.ai.googleApiKey });
 
 type ChatRoute = 'fast' | 'thanks' | 'farewell' | 'slot_check' | 'rag';
 
@@ -222,22 +222,67 @@ export async function slotCheck(cafeId: string, message: string): Promise<ChatRe
 // Generates 3 contextual quick-reply suggestions using Flash (called in parallel with main stream)
 async function generateQuickReplies(message: string, cafeName: string): Promise<string[]> {
   try {
-    const model = genAI.getGenerativeModel({ model: env.ai.supportModel });
-    const result = await model.generateContent(
-      `Khách hỏi cafe xe RC "${cafeName}": "${message}"
+    const response = await ai.models.generateContent({
+      model: env.ai.model,
+      contents: `Khách hỏi cafe xe RC "${cafeName}": "${message}"
 Tạo đúng 3 câu hỏi gợi ý ngắn (tối đa 8 từ tiếng Việt) liên quan mà khách có thể muốn hỏi tiếp.
 Chỉ trả về JSON array, không markdown: ["câu 1", "câu 2", "câu 3"]`,
-    );
-    const text = result.response
-      .text()
-      .trim()
-      .replace(/^```json\n?|```\n?$/g, '');
+    });
+    const text = (response.text ?? '').trim().replace(/^```json\n?|```\n?$/g, '');
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed) && parsed.length >= 2) return parsed.slice(0, 3);
   } catch {
     // fall through to defaults
   }
   return ['Hỏi thêm về dịch vụ', 'Kiểm tra lịch trống', 'Xem bảng giá'];
+}
+
+function buildSystemPrompt(
+  cafe: { name: string; address: string | null; operating_hours: unknown },
+  chunks: string[],
+  customSystemPrompt?: string | null,
+): string {
+  const parts: string[] = [];
+
+  if (customSystemPrompt?.trim()) {
+    parts.push(customSystemPrompt.trim());
+    parts.push('---');
+  }
+
+  parts.push(`Bạn là trợ lý AI của cafe xe RC "${cafe.name}".`);
+  parts.push(
+    `Chỉ trả lời dựa trên thông tin dưới đây. Nếu không có thông tin, nói thẳng là không biết và gợi ý liên hệ trực tiếp chi nhánh.`,
+  );
+  parts.push(`Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng.`);
+  parts.push(
+    `Nếu các tài liệu có thông tin mâu thuẫn nhau, ưu tiên tài liệu có ngày cập nhật mới hơn.`,
+  );
+  parts.push('');
+  parts.push(`Thông tin chi nhánh:`);
+  parts.push(`- Địa chỉ: ${cafe.address ?? 'Chưa cập nhật'}`);
+  parts.push(`- Giờ mở cửa: ${JSON.stringify(cafe.operating_hours ?? {})}`);
+  parts.push('');
+  parts.push(`Knowledge base:`);
+  parts.push(chunks.length ? chunks.join('\n---\n') : '(Chưa có tài liệu knowledge base)');
+
+  return parts.join('\n');
+}
+
+// Rephrases a cached answer using Flash so repeated questions feel natural, not robotic
+async function rephraseAnswer(answer: string, cafeId?: string): Promise<string> {
+  logger.info('RAG', `cache rephrase via ${env.ai.model}`, { cafeId });
+  try {
+    const response = await ai.models.generateContent({
+      model: env.ai.model,
+      contents: `Câu trả lời gốc: "${answer}"
+Viết lại câu này với cách diễn đạt khác nhưng giữ nguyên đầy đủ thông tin. Ngắn gọn, tự nhiên, bằng tiếng Việt.
+Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`,
+    });
+    return (response.text ?? '').trim() || answer;
+  } catch (err) {
+    logger.warn('RAG', 'rephrase failed, returning original', err);
+    return answer;
+  }
 }
 
 // Embeds the message, retrieves relevant KB chunks, and generates answer via Gemini 2.0 Flash
@@ -252,15 +297,17 @@ export async function ragChat(
   const queryEmbedding = await kbService.embedText(message);
 
   const cached = ragCache.get(cafeId, queryEmbedding);
-  if (cached)
+  if (cached) {
+    const answer = await rephraseAnswer(cached.answer, cafeId);
     return {
-      answer: cached.answer,
+      answer,
       responseType: 'text',
       sources: cached.sources,
       quickReplies: cached.quickReplies,
     };
+  }
 
-  const [cafeRows, docRows] = await Promise.all([
+  const [cafeRows, docRows, widgetConfig] = await Promise.all([
     ds.query<{ name: string; address: string; operating_hours: unknown }[]>(
       `SELECT name, address, operating_hours FROM cafes WHERE id = $1`,
       [cafeId],
@@ -271,6 +318,7 @@ export async function ragChat(
        WHERE c.cafe_id = $1 AND d.deleted_at IS NULL`,
       [cafeId],
     ),
+    ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } }),
   ]);
 
   if (!cafeRows.length) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
@@ -279,36 +327,26 @@ export async function ragChat(
 
   const chunks = await kbService.retrieveChunks(ds, cafeId, queryEmbedding);
 
-  const systemPrompt = `Bạn là trợ lý AI của cafe xe RC "${cafe.name}".
-Chỉ trả lời dựa trên thông tin dưới đây. Nếu không có thông tin, nói thẳng là không biết và gợi ý liên hệ trực tiếp chi nhánh.
-Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng.
+  const systemPrompt = buildSystemPrompt(cafe, chunks, widgetConfig?.systemPrompt);
 
-Thông tin chi nhánh:
-- Địa chỉ: ${cafe.address ?? 'Chưa cập nhật'}
-- Giờ mở cửa: ${JSON.stringify(cafe.operating_hours ?? {})}
-
-Knowledge base:
-${chunks.length ? chunks.join('\n---\n') : '(Chưa có tài liệu knowledge base)'}`;
-
-  const geminiHistory: Content[] = history.map((h) => ({
-    role: h.role,
-    parts: [{ text: h.content }],
-  }));
+  const contents = [
+    ...history.map((h) => ({ role: h.role, parts: [{ text: h.content }] })),
+    { role: 'user', parts: [{ text: message }] },
+  ];
 
   const selectedModel = nluConfidence >= 0.7 ? env.ai.model : env.ai.supportModel;
   logger.info('Chat', `model selected: ${selectedModel}`, { cafeId, nluConfidence });
 
   try {
-    const model = genAI.getGenerativeModel({
-      model: selectedModel,
-      systemInstruction: systemPrompt,
-    });
-    const chat = model.startChat({ history: geminiHistory });
-    const [result, quickReplies] = await Promise.all([
-      chat.sendMessage(message),
+    const [response, quickReplies] = await Promise.all([
+      ai.models.generateContent({
+        model: selectedModel,
+        config: { systemInstruction: systemPrompt },
+        contents,
+      }),
       generateQuickReplies(message, cafe.name),
     ]);
-    const answer = result.response.text();
+    const answer = response.text ?? '';
 
     ragCache.set(cafeId, message, queryEmbedding, answer, sources, quickReplies);
     return { answer, responseType: 'text', sources, quickReplies };
@@ -326,8 +364,12 @@ export async function ragChatStream(
   cafeId: string,
   message: string,
   history: HistoryMessage[],
-  nluConfidence = 0,
-): Promise<{ stream: AsyncGenerator<string>; sources: string[]; quickReplies: string[] }> {
+  _nluConfidence = 0,
+): Promise<{
+  stream: AsyncGenerator<string>;
+  sources: string[];
+  quickRepliesPromise: Promise<string[]>;
+}> {
   const ds: DataSource = AppDataSource;
   const t = () => `+${Date.now() - t0}ms`;
   const t0 = Date.now();
@@ -340,12 +382,30 @@ export async function ragChatStream(
   if (cached) {
     const hit = cached;
     async function* cachedStream(): AsyncGenerator<string> {
-      yield hit.answer;
+      logger.info('RAG', `cache rephrase stream via ${env.ai.model}`, { cafeId });
+      try {
+        const stream = await ai.models.generateContentStream({
+          model: env.ai.model,
+          contents: `Câu trả lời gốc: "${hit.answer}"
+Viết lại câu này với cách diễn đạt khác nhưng giữ nguyên đầy đủ thông tin. Ngắn gọn, tự nhiên, bằng tiếng Việt.
+Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`,
+        });
+        for await (const chunk of stream) {
+          const text = chunk.text;
+          if (text) yield text;
+        }
+      } catch {
+        yield hit.answer;
+      }
     }
-    return { stream: cachedStream(), sources: hit.sources, quickReplies: hit.quickReplies };
+    return {
+      stream: cachedStream(),
+      sources: hit.sources,
+      quickRepliesPromise: Promise.resolve(hit.quickReplies),
+    };
   }
 
-  const [cafeRows, docRows] = await Promise.all([
+  const [cafeRows, docRows, widgetConfig] = await Promise.all([
     ds.query<{ name: string; address: string; operating_hours: unknown }[]>(
       `SELECT name, address, operating_hours FROM cafes WHERE id = $1`,
       [cafeId],
@@ -356,6 +416,7 @@ export async function ragChatStream(
        WHERE c.cafe_id = $1 AND d.deleted_at IS NULL`,
       [cafeId],
     ),
+    ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } }),
   ]);
 
   if (!cafeRows.length) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
@@ -366,39 +427,29 @@ export async function ragChatStream(
   const chunks = await kbService.retrieveChunks(ds, cafeId, queryEmbedding);
   logger.info('RAG', `Retrieved ${chunks.length} chunk(s)  ${t()}`, { cafeId, sources });
 
-  const systemPrompt = `Bạn là trợ lý AI của cafe xe RC "${cafe.name}".
-Chỉ trả lời dựa trên thông tin dưới đây. Nếu không có thông tin, nói thẳng là không biết và gợi ý liên hệ trực tiếp chi nhánh.
-Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng.
+  const systemPrompt = buildSystemPrompt(cafe, chunks, widgetConfig?.systemPrompt);
 
-Thông tin chi nhánh:
-- Địa chỉ: ${cafe.address ?? 'Chưa cập nhật'}
-- Giờ mở cửa: ${JSON.stringify(cafe.operating_hours ?? {})}
+  const contents = [
+    ...history.map((h) => ({ role: h.role, parts: [{ text: h.content }] })),
+    { role: 'user', parts: [{ text: message }] },
+  ];
 
-Knowledge base:
-${chunks.length ? chunks.join('\n---\n') : '(Chưa có tài liệu knowledge base)'}`;
+  const selectedModel = env.ai.model;
+  logger.info('RAG', `Calling ${selectedModel} Streaming  ${t()}`, { cafeId });
 
-  const geminiHistory: Content[] = history.map((h) => ({
-    role: h.role,
-    parts: [{ text: h.content }],
-  }));
-
-  const selectedModel = nluConfidence >= 0.7 ? env.ai.model : env.ai.supportModel;
-  logger.info('RAG', `Calling ${selectedModel} Streamming  ${t()}`, { cafeId });
-
-  const model = genAI.getGenerativeModel({ model: selectedModel, systemInstruction: systemPrompt });
-  const chat = model.startChat({ history: geminiHistory });
-
-  // Start quick replies generation in parallel with stream — Flash call finishes well before stream ends
-  const [result, quickReplies] = await Promise.all([
-    chat.sendMessageStream(message),
-    generateQuickReplies(message, cafe.name),
-  ]);
+  // Fire quick-replies generation in background — do NOT await before streaming starts
+  const quickRepliesPromise = generateQuickReplies(message, cafe.name);
+  const stream = await ai.models.generateContentStream({
+    model: selectedModel,
+    config: { systemInstruction: systemPrompt },
+    contents,
+  });
 
   let firstToken = true;
   async function* tokenStream(): AsyncGenerator<string> {
     let fullAnswer = '';
-    for await (const chunk of result.stream) {
-      const text = chunk.text();
+    for await (const chunk of stream) {
+      const text = chunk.text;
       if (text) {
         if (firstToken) {
           logger.info('RAG', `First token  ${t()}`, { cafeId });
@@ -409,10 +460,11 @@ ${chunks.length ? chunks.join('\n---\n') : '(Chưa có tài liệu knowledge bas
       }
     }
     logger.info('RAG', `Stream complete  ${t()}`, { cafeId });
+    const quickReplies = await quickRepliesPromise;
     ragCache.set(cafeId, message, queryEmbedding, fullAnswer, sources, quickReplies);
   }
 
-  return { stream: tokenStream(), sources, quickReplies };
+  return { stream: tokenStream(), sources, quickRepliesPromise };
 }
 
 // Widget config helpers used by controller
@@ -428,6 +480,7 @@ export async function upsertWidgetConfig(
     primaryColor: string;
     avatarUrl: string | null;
     quickReplies: string[];
+    systemPrompt: string | null;
   }>,
 ): Promise<CafeWidgetConfig> {
   const ds: DataSource = AppDataSource;
@@ -439,12 +492,13 @@ export async function upsertWidgetConfig(
   if (updates.primaryColor !== undefined) setParts.push(`primary_color = EXCLUDED.primary_color`);
   if (updates.avatarUrl !== undefined) setParts.push(`avatar_url = EXCLUDED.avatar_url`);
   if (updates.quickReplies !== undefined) setParts.push(`quick_replies = EXCLUDED.quick_replies`);
+  if (updates.systemPrompt !== undefined) setParts.push(`system_prompt = EXCLUDED.system_prompt`);
 
   const setClause = setParts.length ? `, ${setParts.join(', ')}` : '';
 
   await ds.query(
-    `INSERT INTO cafe_widget_configs (cafe_id, greeting_message, position, primary_color, avatar_url, quick_replies)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+    `INSERT INTO cafe_widget_configs (cafe_id, greeting_message, position, primary_color, avatar_url, quick_replies, system_prompt)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
      ON CONFLICT (cafe_id) DO UPDATE SET updated_at = now()${setClause}`,
     [
       cafeId,
@@ -453,6 +507,7 @@ export async function upsertWidgetConfig(
       updates.primaryColor ?? '#2563EB',
       updates.avatarUrl ?? null,
       JSON.stringify(updates.quickReplies ?? []),
+      updates.systemPrompt ?? null,
     ],
   );
 

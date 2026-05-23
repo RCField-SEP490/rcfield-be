@@ -23,6 +23,7 @@ const DEFAULT_CONFIG = {
   primary_color: '#2563EB',
   avatar_url: null,
   quick_replies: [] as string[],
+  system_prompt: null as string | null,
   is_default: true,
 };
 
@@ -44,8 +45,11 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
 
     const { route: chatRoute, confidence } = await route(message);
     const modelUsed =
-      chatRoute === 'rag' ? (confidence >= 0.7 ? env.ai.supportModel : env.ai.model) : '(no LLM)';
-    logger.info('Chat', `route → ${chatRoute}  model: ${modelUsed}`, { cafeId });
+      chatRoute === 'rag' ? (confidence >= 0.7 ? env.ai.model : env.ai.supportModel) : '(no LLM)';
+    logger.info('Chat', `route → ${chatRoute}  model: ${modelUsed}`, {
+      cafeId,
+      nluConfidence: confidence,
+    });
 
     const t0 = Date.now();
     let response;
@@ -96,23 +100,6 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
     const { route: chatRoute, confidence } = await route(message);
     logger.info('Chat', `stream route → ${chatRoute}`, { cafeId, message });
 
-    // Non-RAG routes: return JSON immediately (no streaming needed)
-    if (chatRoute !== 'rag') {
-      let response;
-      if (chatRoute === 'fast') response = await fastAnswer(cafeId);
-      else if (chatRoute === 'thanks') response = thanksAnswer();
-      else if (chatRoute === 'farewell') response = farewellAnswer();
-      else response = await slotCheck(cafeId, message);
-      await incrementQuota(cafeId);
-      res.json({
-        answer: response.answer,
-        response_type: response.responseType,
-        ...(response.data !== undefined && { data: response.data }),
-        ...(response.quickReplies !== undefined && { quick_replies: response.quickReplies }),
-      });
-      return;
-    }
-
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -121,8 +108,27 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
     const send = (event: string, data: unknown) =>
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
+    // Non-RAG routes: wrap single answer as SSE so client always speaks the same protocol
+    if (chatRoute !== 'rag') {
+      let response;
+      if (chatRoute === 'fast') response = await fastAnswer(cafeId);
+      else if (chatRoute === 'thanks') response = thanksAnswer();
+      else if (chatRoute === 'farewell') response = farewellAnswer();
+      else response = await slotCheck(cafeId, message);
+      await incrementQuota(cafeId);
+      send('chunk', { text: response.answer });
+      send('done', {
+        response_type: response.responseType,
+        full_answer: response.answer,
+        ...(response.data !== undefined && { data: response.data }),
+        ...(response.quickReplies !== undefined && { quick_replies: response.quickReplies }),
+      });
+      res.end();
+      return;
+    }
+
     const t0 = Date.now();
-    const { stream, sources, quickReplies } = await ragChatStream(
+    const { stream, sources, quickRepliesPromise } = await ragChatStream(
       cafeId,
       message,
       history,
@@ -135,9 +141,10 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
       send('chunk', { text: token });
     }
 
+    // quickReplies ran in parallel — should already be resolved by the time stream finishes
+    const quickReplies = await quickRepliesPromise;
     await incrementQuota(cafeId);
     logger.info('Chat', `stream done in ${Date.now() - t0}ms`, { cafeId });
-    logger.info('Chat', `answer: "${fullAnswer}"`, { cafeId });
 
     send('done', {
       response_type: 'text',
@@ -172,6 +179,7 @@ export async function getWidgetConfig(
       primary_color: config.primaryColor,
       avatar_url: config.avatarUrl,
       quick_replies: config.quickReplies,
+      system_prompt: config.systemPrompt,
       is_default: false,
     });
   } catch (err) {
@@ -213,6 +221,7 @@ export async function updateWidgetConfig(
       ...(body.primary_color !== undefined && { primaryColor: body.primary_color }),
       ...(body.avatar_url !== undefined && { avatarUrl: body.avatar_url }),
       ...(body.quick_replies !== undefined && { quickReplies: body.quick_replies }),
+      ...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
     });
 
     res.json({
@@ -221,6 +230,7 @@ export async function updateWidgetConfig(
       primary_color: config.primaryColor,
       avatar_url: config.avatarUrl,
       quick_replies: config.quickReplies,
+      system_prompt: config.systemPrompt,
       is_default: false,
     });
   } catch (err) {

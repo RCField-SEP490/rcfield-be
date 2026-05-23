@@ -2,7 +2,7 @@
 
 ## Giới thiệu
 
-RC Arena Hà Nội là chi nhánh xe RC chuyên nghiệp tại Cầu Giấy, Hà Nội. Chúng tôi cung cấp sân drift và obstacle đạt tiêu chuẩn thi đấu, đội ngũ kỹ thuật viên hỗ trợ tại chỗ, và hệ thống xe thuê đa dạng từ Standard đến Restricted cho mọi trình độ.
+RC Arena Hà Nội là chi nhánh xe RC chuyên nghiệp tại Long Biên, Hà Nội. Chúng tôi cung cấp sân drift và obstacle đạt tiêu chuẩn thi đấu, đội ngũ kỹ thuật viên hỗ trợ tại chỗ, và hệ thống xe thuê đa dạng từ Standard đến Restricted cho mọi trình độ.
 
 ---
 
@@ -94,7 +94,7 @@ Khách mang xe riêng chỉ trả phí sân, không tính phí thuê xe và khô
 ## Quy định sử dụng
 
 ### Đặt lịch & Hủy
-- Đặt lịch tối thiểu **60 phút** trước giờ chơi
+- Đặt lịch tối thiểu **50 phút** trước giờ chơi
 - Hủy trước 24h: hoàn 100% tiền
 - Hủy trong vòng 24h: không hoàn tiền
 - Không đến mà không báo trước (no-show): bị ghi nhận vào hồ sơ, lần sau yêu cầu đặt cọc trước
@@ -115,7 +115,7 @@ Khách mang xe riêng chỉ trả phí sân, không tính phí thuê xe và khô
 - Không mang đồ ăn nóng, nước có gas vào khu vực sân
 - Không sạc pin xe cá nhân tại sân nếu chưa xin phép nhân viên
 - Trẻ em dưới 10 tuổi phải có người lớn đi kèm khi sử dụng xe
-- Không gây ồn ào quá mức sau 21:00
+- Không gây ồn ào quá mức sau 20S:00
 
 ---
 

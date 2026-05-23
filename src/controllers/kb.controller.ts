@@ -30,7 +30,6 @@ export async function uploadDocument(
       return next(new AppError('Chỉ hỗ trợ PDF, DOCX, TXT, MD.', 422, 'UNSUPPORTED_FORMAT'));
     }
 
-    // Verify provider owns this cafe
     const cafeRows = await AppDataSource.query<{ provider_id: string }[]>(
       `SELECT provider_id FROM cafes WHERE id = $1`,
       [cafeId],
@@ -49,7 +48,6 @@ export async function uploadDocument(
       return next(new AppError(body.error.errors[0].message, 400, 'VALIDATION_ERROR'));
     }
 
-    // Parse file text synchronously so we can store raw_content
     const rawContent = await kbService.parseFile(req.file.buffer, req.file.mimetype);
 
     const docRepo = AppDataSource.getRepository(KbDocument);
@@ -202,6 +200,11 @@ export async function debugKb(req: Request, res: Response, next: NextFunction): 
     const query = req.query.query as string | undefined;
     const top = Math.min(parseInt((req.query.top as string) ?? '5', 10), 20);
 
+    const [cafeRow] = await AppDataSource.query<{ name: string; address: string }[]>(
+      `SELECT name, address FROM cafes WHERE id = $1`,
+      [cafeId],
+    );
+
     // KB summary
     const [summary] = await AppDataSource.query<
       {
@@ -243,6 +246,7 @@ export async function debugKb(req: Request, res: Response, next: NextFunction): 
 
     if (!query) {
       res.json({
+        cafe: { name: cafeRow?.name ?? '', address: cafeRow?.address ?? '' },
         summary: {
           doc_count: Number(summary.doc_count),
           chunk_count: Number(summary.chunk_count),

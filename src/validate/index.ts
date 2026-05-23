@@ -47,4 +47,5 @@ export const WidgetConfigSchema = z.object({
     .optional(),
   avatar_url: z.string().url().nullable().optional(),
   quick_replies: z.array(z.string().max(50)).max(5).optional(),
+  system_prompt: z.string().max(2000).nullable().optional(),
 });

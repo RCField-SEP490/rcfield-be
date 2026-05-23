@@ -40,6 +40,9 @@ export class CafeWidgetConfig {
   @Column({ name: 'quick_replies', type: 'jsonb', default: '[]' })
   quickReplies: string[];
 
+  @Column({ name: 'system_prompt', type: 'text', nullable: true })
+  systemPrompt: string | null;
+
   @Column({ name: 'is_enabled', default: true })
   isEnabled: boolean;
 

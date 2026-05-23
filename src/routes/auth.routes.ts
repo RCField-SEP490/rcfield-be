@@ -3,7 +3,11 @@ import rateLimit from 'express-rate-limit';
 import { authController } from '../controllers/auth.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  skip: () => process.env.NODE_ENV === 'development',
+});
 
 const router = Router();
 router.use(authLimiter);

@@ -1,5 +1,5 @@
 import { DataSource } from 'typeorm';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buffer: Buffer) => Promise<{ text: string }>;
 import * as mammoth from 'mammoth';
@@ -10,7 +10,7 @@ import { AppError, KbDocumentStatus } from '../types';
 import { KbDocument } from '../models/kb-document.entity';
 import { wsService } from './websocket.service';
 
-const genAI = new GoogleGenerativeAI(env.ai.googleApiKey);
+const ai = new GoogleGenAI({ apiKey: env.ai.googleApiKey });
 
 const CHUNK_SIZE = 2000;
 const OVERLAP = 400;
@@ -66,9 +66,11 @@ export async function parseFile(buffer: Buffer, mimetype: string): Promise<strin
 
 // Generates embedding vector for a text using Gemini text-embedding-004
 export async function embedText(text: string): Promise<number[]> {
-  const model = genAI.getGenerativeModel({ model: env.ai.embeddingModel });
-  const result = await model.embedContent(text);
-  return result.embedding.values;
+  const result = await ai.models.embedContent({
+    model: env.ai.embeddingModel,
+    contents: text,
+  });
+  return result.embeddings![0].values!;
 }
 
 // Inserts chunks with their embeddings into kb_chunks using raw SQL (TypeORM has no vector type)
@@ -87,20 +89,26 @@ async function bulkInsertChunks(
   }
 }
 
-// Retrieves top-5 semantically similar chunks for cafeId using cosine similarity
+// Retrieves top-5 semantically similar chunks for cafeId using cosine similarity.
+// Returns chunks annotated with document title and upload date so the LLM can prefer newer info.
 export async function retrieveChunks(
   ds: DataSource,
   cafeId: string,
   queryEmbedding: number[],
 ): Promise<string[]> {
-  const rows = await ds.query<{ chunk_text: string }[]>(
-    `SELECT chunk_text FROM kb_chunks
-     WHERE cafe_id = $1
-     ORDER BY embedding <=> $2::vector
+  const rows = await ds.query<{ chunk_text: string; title: string; created_at: Date }[]>(
+    `SELECT c.chunk_text, d.title, d.created_at
+     FROM kb_chunks c
+     JOIN kb_documents d ON c.document_id = d.id
+     WHERE c.cafe_id = $1 AND d.deleted_at IS NULL
+     ORDER BY c.embedding <=> $2::vector
      LIMIT 5`,
     [cafeId, JSON.stringify(queryEmbedding)],
   );
-  return rows.map((r) => r.chunk_text);
+  return rows.map((r) => {
+    const date = new Date(r.created_at).toLocaleDateString('vi-VN');
+    return `[Tài liệu: "${r.title}" - cập nhật ${date}]\n${r.chunk_text}`;
+  });
 }
 
 // Full async pipeline: parse → chunk → embed → store → update status → push WS event
