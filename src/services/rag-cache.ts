@@ -75,6 +75,11 @@ class RagCache {
     this.store.set(cafeId, entries);
     logger.info('RAG', `cache stored (${entries.length}/${MAX_PER_CAFE})`, { cafeId });
   }
+
+  clear(cafeId: string): void {
+    this.store.delete(cafeId);
+    logger.info('RAG', 'cache cleared (config updated)', { cafeId });
+  }
 }
 
 export const ragCache = new RagCache();

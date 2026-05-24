@@ -539,6 +539,8 @@ export async function upsertWidgetConfig(
     ],
   );
 
+  ragCache.clear(cafeId);
+
   const config = await ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } });
   return config!;
 }
