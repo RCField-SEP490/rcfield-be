@@ -12,6 +12,9 @@ export function authenticate(req: AuthRequest, _res: Response, next: NextFunctio
   const token = header.slice(7);
   try {
     const payload = jwt.verify(token, env.jwt.secret) as AuthPayload;
+    if (!Object.values(UserRole).includes(payload.role)) {
+      return next(new AppError('Token role invalid', 401, 'TOKEN_INVALID'));
+    }
     req.user = payload;
     next();
   } catch {

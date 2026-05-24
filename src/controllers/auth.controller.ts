@@ -1,10 +1,31 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/auth.service';
-import { AuthRequest } from '../types';
+import { AuthRequest, UserRole } from '../types';
 import { logger } from '../config/logger';
-import { LoginSchema, GoogleSchema, RefreshSchema, LogoutSchema } from '../validate';
+import {
+  LoginSchema,
+  RegisterSchema,
+  GoogleSchema,
+  RefreshSchema,
+  LogoutSchema,
+} from '../validate';
 
 export const authController = {
+  // POST /api/v1/auth/register
+  async register(req: Request, res: Response, next: NextFunction) {
+    try {
+      const input = RegisterSchema.parse(req.body);
+      const result = await authService.registerWithPassword({
+        ...input,
+        role: input.role === 'PROVIDER' ? UserRole.PROVIDER : UserRole.CUSTOMER,
+      });
+      logger.auth('register', { email: result.user.email, role: result.user.role });
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // POST /api/v1/auth/login
   async login(req: Request, res: Response, next: NextFunction) {
     try {

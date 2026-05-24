@@ -4,7 +4,7 @@
   "description": "RCField Backend — Express + TypeScript + TypeORM",
   "main": "dist/app.js",
   "scripts": {
-    "dev": "lsof -ti:3000 | xargs kill -9 2>/dev/null; ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev": "node scripts/kill-port.js 3000 && ts-node-dev --respawn --transpile-only src/server.ts",
     "nlu:install": "python3 -m venv nlu-service/.venv && nlu-service/.venv/bin/pip install -r nlu-service/requirements.txt && nlu-service/.venv/bin/python -c \"from sentence_transformers import SentenceTransformer; print('[NLU] Downloading model...'); SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); print('[NLU] Model ready.')\"",
     "nlu": "lsof -ti:8000 | xargs kill -9 2>/dev/null; nlu-service/.venv/bin/python -m uvicorn main:app --port 8000 --reload --app-dir nlu-service",
     "ui": "lsof -ti:5500 | xargs kill -9 2>/dev/null; python3 -m http.server 5500 --directory .",
