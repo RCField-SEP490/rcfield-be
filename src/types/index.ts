@@ -133,6 +133,48 @@ export enum NotificationChannel {
   EMAIL = 'EMAIL',
 }
 
+// ── Provider Onboarding & Subscription ───────────────────────────────────────
+
+export enum ProviderStatus {
+  PENDING = 'PENDING',
+  ACTIVE = 'ACTIVE',
+  REJECTED = 'REJECTED',
+  SUSPENDED = 'SUSPENDED',
+}
+
+export enum SubscriptionStatus {
+  TRIAL = 'TRIAL',
+  ACTIVE = 'ACTIVE',
+  GRACE_PERIOD = 'GRACE_PERIOD',
+  EXPIRED = 'EXPIRED',
+}
+
+export enum PlanName {
+  TRIAL = 'TRIAL',
+  STARTER = 'STARTER',
+  GROWTH = 'GROWTH',
+  PRO = 'PRO',
+}
+
+export enum PaymentRequestStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  REJECTED = 'REJECTED',
+}
+
+export enum NotificationType {
+  ACCOUNT_APPROVED = 'ACCOUNT_APPROVED',
+  ACCOUNT_REJECTED = 'ACCOUNT_REJECTED',
+  ACCOUNT_SUSPENDED = 'ACCOUNT_SUSPENDED',
+  ACCOUNT_UNSUSPENDED = 'ACCOUNT_UNSUSPENDED',
+  TRIAL_EXPIRING_SOON = 'TRIAL_EXPIRING_SOON',
+  GRACE_PERIOD_STARTED = 'GRACE_PERIOD_STARTED',
+  SUBSCRIPTION_EXPIRED = 'SUBSCRIPTION_EXPIRED',
+  SUBSCRIPTION_ACTIVATED = 'SUBSCRIPTION_ACTIVATED',
+  PAYMENT_REQUEST_CONFIRMED = 'PAYMENT_REQUEST_CONFIRMED',
+  PAYMENT_REQUEST_REJECTED = 'PAYMENT_REQUEST_REJECTED',
+}
+
 // ── Express extensions ────────────────────────────────────────────────────────
 
 import { Request } from 'express';
@@ -197,6 +239,28 @@ export interface ChatResponse {
   };
   sources?: string[];
   quickReplies?: string[];
+}
+
+// ── Channel ───────────────────────────────────────────────────────────────────
+
+export enum ChannelType {
+  FACEBOOK_MESSENGER = 'FACEBOOK_MESSENGER',
+}
+
+export enum ChannelStatus {
+  CONNECTED = 'CONNECTED',
+  DISCONNECTED = 'DISCONNECTED',
+}
+
+export interface FbFormattedMessage {
+  text: string;
+  quickReplies: FbQuickReply[];
+}
+
+export interface FbQuickReply {
+  content_type: 'text';
+  title: string;
+  payload: string;
 }
 
 // ── Error ─────────────────────────────────────────────────────────────────────

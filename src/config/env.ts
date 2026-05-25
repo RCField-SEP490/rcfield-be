@@ -47,4 +47,14 @@ export const env = {
     model: process.env.GOOGLE_MODEL ?? 'gemini-2.5-pro',
     supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.0-flash',
   },
+
+  frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:5173',
+
+  facebook: {
+    appId: process.env.FB_APP_ID ?? '',
+    appSecret: process.env.FB_APP_SECRET ?? '',
+    verifyToken: process.env.FB_VERIFY_TOKEN ?? '',
+    redirectUri: process.env.FB_REDIRECT_URI ?? '',
+    encryptionKey: Buffer.from(process.env.CHANNEL_ENCRYPTION_KEY ?? '0'.repeat(64), 'hex'),
+  },
 } as const;

@@ -38,6 +38,73 @@ export const UploadDocumentSchema = z.object({
   content_type: z.enum(['POLICY', 'FAQ', 'ANNOUNCEMENT', 'CUSTOM']).optional().default('CUSTOM'),
 });
 
+// ── fb-channel ────────────────────────────────────────────────────────────────
+
+export const FbChannelQuerySchema = z.object({
+  cafeId: z.string().uuid('cafeId phải là UUID hợp lệ'),
+  returnPath: z.string().startsWith('/').optional(),
+});
+
+// ── provider-onboarding & subscription ───────────────────────────────────────
+
+export const RegisterProviderSchema = z.object({
+  email: z.string().email('Email không hợp lệ'),
+  password: z.string().min(8, 'Mật khẩu tối thiểu 8 ký tự'),
+  full_name: z.string().min(2).max(255),
+  phone: z.string().min(9).max(20).optional(),
+  business_name: z.string().min(2).max(255),
+  business_description: z.string().max(1000).optional(),
+});
+
+export const SubmitPaymentRequestSchema = z.object({
+  plan_id: z.string().uuid('plan_id phải là UUID hợp lệ'),
+  transfer_reference: z.string().min(1).max(255),
+  transfer_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'transfer_date phải có định dạng YYYY-MM-DD'),
+  transfer_amount: z.number().positive('Số tiền phải lớn hơn 0'),
+});
+
+export const AdminRejectSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+export const AdminSuspendSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+export const NotificationQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  unread_only: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
+});
+
+export const AdminPaymentRequestQuerySchema = z.object({
+  status: z.enum(['PENDING', 'CONFIRMED', 'REJECTED']).optional(),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+});
+
+export const AdminProviderQuerySchema = z.object({
+  status: z.enum(['PENDING', 'ACTIVE', 'REJECTED', 'SUSPENDED']).optional(),
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+});
+
+export const AdminConfirmPaymentSchema = z.object({
+  notes: z.string().max(500).optional(),
+});
+
+export const UpdateSubscriptionPlanSchema = z.object({
+  branch_limit: z.number().int().min(-1).optional(),
+  ai_quota_per_month: z.number().int().min(-1).optional(),
+  channel_limit: z.number().int().min(-1).optional(),
+  price_per_month: z.number().min(0).optional(),
+});
+
 export const WidgetConfigSchema = z.object({
   greeting_message: z.string().max(200).optional(),
   position: z.enum(['BOTTOM_RIGHT', 'BOTTOM_LEFT']).optional(),
