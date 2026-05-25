@@ -369,6 +369,34 @@ async function seed() {
     }
   }
 
+  // ─── Trial subscription for provider ─────────────────────────────────────
+
+  const [existingSub] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM provider_subscriptions WHERE provider_id = $1 AND deleted_at IS NULL`,
+    [provider.id],
+  );
+  if (existingSub) {
+    logger.warn('Seed', 'Skip subscription — already exists for provider@gmail.com');
+  } else {
+    const [trialPlan] = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM subscription_plans WHERE name = 'TRIAL'`,
+    );
+    if (trialPlan) {
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      await AppDataSource.query(
+        `INSERT INTO provider_subscriptions
+          (provider_id, plan_id, status, started_at, expires_at, ai_quota_reset_at)
+         VALUES ($1,$2,'TRIAL',$3,$4,$5)`,
+        [provider.id, trialPlan.id, now, expiresAt, nextMonth],
+      );
+      logger.info('Seed', 'Trial subscription created for provider@gmail.com');
+    } else {
+      logger.warn('Seed', 'Skip subscription — TRIAL plan not found in DB');
+    }
+  }
+
   // ─── Feature flags AI_CHATBOT ─────────────────────────────────────────────
 
   const enabledBy = admin?.id ?? provider.id;
@@ -422,6 +450,12 @@ async function seed() {
   });
 
   // ─── System Cafe (Landing Page Demo) ──────────────────────────────────────
+  // Owned by admin so quota/gate bypasses apply automatically.
+
+  if (!admin) {
+    logger.error('Seed', 'admin@gmail.com không tồn tại — chạy seed-users.ts trước', null);
+    process.exit(1);
+  }
 
   const [existingSystem] = await AppDataSource.query<{ id: string }[]>(
     `SELECT id FROM cafes WHERE slug = 'rcfield-system'`,
@@ -432,6 +466,11 @@ async function seed() {
   if (existingSystem) {
     systemCafeId = existingSystem.id;
     logger.warn('Seed', 'Skip system cafe — already exists: rcfield-system');
+    // Ensure owner is admin (fix for old seeds that used provider.id)
+    await AppDataSource.query(
+      `UPDATE cafes SET provider_id = $1 WHERE id = $2 AND provider_id != $1`,
+      [admin.id, systemCafeId],
+    );
   } else {
     const [sc] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO cafes (
@@ -443,7 +482,7 @@ async function seed() {
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       RETURNING id`,
       [
-        provider.id,
+        admin.id,
         'RCField Platform',
         'rcfield-system',
         'Nền tảng quản lý sân xe RC chuyên nghiệp cho toàn quốc.',

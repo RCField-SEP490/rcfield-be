@@ -4,7 +4,7 @@ import { ChatMessageSchema, WidgetConfigSchema } from '../validate';
 import { env } from '../config/env';
 import {
   checkGate,
-  incrementQuota,
+  consumeProviderAIQuota,
   route,
   fastAnswer,
   thanksAnswer,
@@ -69,7 +69,7 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
       responseType: response.responseType,
     });
 
-    await incrementQuota(cafeId);
+    await consumeProviderAIQuota(cafeId);
 
     res.json({
       answer: response.answer,
@@ -100,6 +100,10 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
     const { route: chatRoute, confidence } = await route(message);
     logger.info('Chat', `stream route → ${chatRoute}`, { cafeId, message });
 
+    // Quota check must happen before flushHeaders — once SSE headers are committed
+    // the error middleware can no longer send a JSON error response.
+    await consumeProviderAIQuota(cafeId);
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -115,7 +119,6 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
       else if (chatRoute === 'thanks') response = thanksAnswer();
       else if (chatRoute === 'farewell') response = farewellAnswer();
       else response = await slotCheck(cafeId, message);
-      await incrementQuota(cafeId);
       send('chunk', { text: response.answer });
       send('done', {
         response_type: response.responseType,
@@ -144,7 +147,6 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
     // Send done immediately so FE unlocks input — quick replies arrive separately
     send('done', { response_type: 'text', sources, full_answer: fullAnswer });
 
-    await incrementQuota(cafeId);
     logger.info('Chat', `stream done in ${Date.now() - t0}ms`, { cafeId });
 
     const quickReplies = await quickRepliesPromise;

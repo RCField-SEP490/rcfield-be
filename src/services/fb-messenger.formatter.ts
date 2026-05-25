@@ -32,7 +32,7 @@ export class FbMessengerFormatter {
       .replace(/`{1,3}[\s\S]*?`{1,3}/g, (m) => m.replace(/`/g, '').trim())
       .replace(/^#{1,6}\s+/gm, '')
       .replace(/\[(.+?)\]\(.+?\)/g, '$1')
-      .replace(/^\s*[-*+]\s+/gm, '')
+      .replace(/^\s*[-*+]\s+/gm, '• ')
       .trim();
   }
 }

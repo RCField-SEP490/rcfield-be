@@ -6,6 +6,7 @@ import { classifyIntent } from '../config/nlu';
 import { logger } from '../config/logger';
 import { AppError, ChatResponse, SlotItem } from '../types';
 import { CafeWidgetConfig } from '../models/cafe-widget-config.entity';
+import { incrementAIQuota } from './subscription.service';
 import { kbService } from './kb.service';
 import { ragCache } from './rag-cache';
 
@@ -13,22 +14,31 @@ const ai = new GoogleGenAI({ apiKey: env.ai.googleApiKey });
 
 type ChatRoute = 'fast' | 'thanks' | 'farewell' | 'slot_check' | 'rag';
 
-interface QuotaConfig {
-  monthly_quota: number;
-  used_this_month: number;
-  quota_reset_day: number;
-}
-
 interface HistoryMessage {
   role: 'user' | 'model';
   content: string;
 }
 
-// Verifies feature flag AI_CHATBOT is enabled and quota not exceeded for the cafe
+// Verifies feature flag AI_CHATBOT is enabled for the cafe (admin toggle only).
+// Admin-owned cafes bypass the gate entirely (used for system testing / demo).
 export async function checkGate(cafeId: string): Promise<void> {
   const ds: DataSource = AppDataSource;
-  const rows = await ds.query<{ is_enabled: boolean; config: QuotaConfig }[]>(
-    `SELECT is_enabled, config FROM feature_flags
+
+  const cafeRows = await ds.query<{ provider_role: string }[]>(
+    `SELECT u.role AS provider_role
+     FROM cafes c
+     JOIN users u ON u.id = c.provider_id
+     WHERE c.id = $1`,
+    [cafeId],
+  );
+
+  if (cafeRows.length && cafeRows[0].provider_role === 'ADMIN') {
+    logger.info('Gate', 'admin cafe — gate bypassed', { cafeId });
+    return;
+  }
+
+  const rows = await ds.query<{ is_enabled: boolean }[]>(
+    `SELECT is_enabled FROM feature_flags
      WHERE feature_key = 'AI_CHATBOT'
        AND entity_type = 'CAFE'
        AND entity_id = $1`,
@@ -38,11 +48,7 @@ export async function checkGate(cafeId: string): Promise<void> {
   logger.info('Gate', `checkGate cafeId=${cafeId} rows=${rows.length}`, rows[0] ?? null);
 
   if (!rows.length || !rows[0].is_enabled) {
-    logger.warn('Gate', 'AI_DISABLED', {
-      cafeId,
-      hasRow: rows.length > 0,
-      isEnabled: rows[0]?.is_enabled,
-    });
+    logger.warn('Gate', 'AI_DISABLED', { cafeId });
     throw new AppError(
       'Dịch vụ AI chat chưa được kích hoạt cho chi nhánh này.',
       503,
@@ -50,32 +56,31 @@ export async function checkGate(cafeId: string): Promise<void> {
     );
   }
 
-  const cfg = rows[0].config as QuotaConfig;
-  logger.info('Gate', 'quota', { cafeId, used: cfg.used_this_month, quota: cfg.monthly_quota });
-
-  if (cfg.used_this_month >= cfg.monthly_quota) {
-    logger.warn('Gate', 'QUOTA_EXCEEDED', {
-      cafeId,
-      used: cfg.used_this_month,
-      quota: cfg.monthly_quota,
-    });
-    throw new AppError('Gói AI của chi nhánh đã hết lượt tháng này.', 429, 'QUOTA_EXCEEDED');
-  }
-
   logger.info('Gate', 'passed', { cafeId });
 }
 
-// Increments used_this_month after a successful chat request
-export async function incrementQuota(cafeId: string): Promise<void> {
+// Looks up the provider who owns the cafe then atomically checks + increments their AI quota.
+// Admin-owned cafes bypass quota (used for system testing / demo).
+export async function consumeProviderAIQuota(cafeId: string): Promise<void> {
   const ds: DataSource = AppDataSource;
-  await ds.query(
-    `UPDATE feature_flags
-     SET config = jsonb_set(config, '{used_this_month}', ((config->>'used_this_month')::int + 1)::text::jsonb)
-     WHERE feature_key = 'AI_CHATBOT'
-       AND entity_type = 'CAFE'
-       AND entity_id = $1`,
+  const rows = await ds.query<{ provider_id: string; role: string }[]>(
+    `SELECT c.provider_id, u.role
+     FROM cafes c
+     JOIN users u ON u.id = c.provider_id
+     WHERE c.id = $1`,
     [cafeId],
   );
+  if (!rows.length) {
+    throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  }
+  const { provider_id: providerId, role } = rows[0];
+  if (role === 'ADMIN') {
+    logger.info('AIQuota', `admin cafe — quota bypassed`, { providerId, cafeId });
+    return;
+  }
+  logger.info('AIQuota', `consuming quota for provider=${providerId} cafe=${cafeId}`);
+  await incrementAIQuota(providerId);
+  logger.info('AIQuota', `quota incremented ok`, { providerId, cafeId });
 }
 
 // Classifies message intent and returns routing decision + confidence

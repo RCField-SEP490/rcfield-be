@@ -7,6 +7,7 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { wsService } from './services/websocket.service';
 import { scheduleQuotaReset } from './jobs/quota-reset.job';
+import { startSubscriptionLifecycleJobs } from './jobs/subscription-lifecycle.job';
 
 async function bootstrap() {
   try {
@@ -19,6 +20,7 @@ async function bootstrap() {
     const httpServer = createServer(app);
     wsService.init(httpServer);
     scheduleQuotaReset();
+    startSubscriptionLifecycleJobs();
 
     httpServer.listen(env.PORT, () => {
       logger.server(`Running on http://localhost:${env.PORT}`);

@@ -5,10 +5,10 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { AppError, ChannelStatus, ChannelType } from '../types';
 import { CafeChannel } from '../models/cafe-channel.entity';
+import { incrementAIQuota } from '../services/subscription.service';
 import { decryptToken } from '../utils/crypto';
 import {
   checkGate,
-  incrementQuota,
   route,
   fastAnswer,
   thanksAnswer,
@@ -57,11 +57,18 @@ async function processEvent(event: FbMessagingEvent, pageId: string): Promise<vo
   });
 
   if (!channel) {
-    logger.warn('FbWebhook', 'unknown page_id', { pageId });
+    logger.warn('Facebook Webhook', 'unknown page_id', { pageId });
     return;
   }
 
   const pageToken = decryptToken(channel.encryptedPageToken, env.facebook.encryptionKey as Buffer);
+
+  const providerRows = await AppDataSource.query<{ provider_id: string; role: string }[]>(
+    `SELECT c.provider_id, u.role FROM cafes c JOIN users u ON u.id = c.provider_id WHERE c.id = $1`,
+    [channel.cafeId],
+  );
+  const providerId = providerRows[0]?.provider_id;
+  const providerRole = providerRows[0]?.role;
 
   // Show seen + typing indicator immediately, before AI processing
   const typingAt = Date.now();
@@ -69,6 +76,7 @@ async function processEvent(event: FbMessagingEvent, pageId: string): Promise<vo
 
   try {
     await checkGate(channel.cafeId);
+    if (providerId && providerRole !== 'ADMIN') await incrementAIQuota(providerId);
 
     const { route: chatRoute, confidence } = await route(text);
     let response;
@@ -85,11 +93,20 @@ async function processEvent(event: FbMessagingEvent, pageId: string): Promise<vo
     if (elapsed < 10000) await new Promise((r) => setTimeout(r, 10000 - elapsed));
 
     await sendMessage(psid, formatted, pageToken);
-    await incrementQuota(channel.cafeId);
-
-    logger.info('FbWebhook', 'replied', { cafeId: channel.cafeId, pageId, psid });
+    logger.info('Facebook Webhook', 'replied', { cafeId: channel.cafeId, pageId, psid });
   } catch (err) {
-    if (err instanceof AppError && (err.code === 'AI_DISABLED' || err.code === 'QUOTA_EXCEEDED')) {
+    if (
+      err instanceof AppError &&
+      (err.code === 'AI_DISABLED' ||
+        err.code === 'QUOTA_EXCEEDED' ||
+        err.code === 'AI_QUOTA_EXCEEDED')
+    ) {
+      if (err.code === 'AI_QUOTA_EXCEEDED') {
+        logger.warn('Facebook Webhook', 'AI quota exceeded', {
+          providerId,
+          cafeId: channel.cafeId,
+        });
+      }
       await sendText(
         psid,
         'Xin lỗi, dịch vụ hỗ trợ tự động hiện không khả dụng. Vui lòng liên hệ trực tiếp chi nhánh.',
@@ -97,7 +114,7 @@ async function processEvent(event: FbMessagingEvent, pageId: string): Promise<vo
       );
       return;
     }
-    logger.error('FbWebhook', 'processing error', err);
+    logger.error('Facebook Webhook', 'processing error', err);
   }
 }
 
@@ -125,7 +142,7 @@ export function handleWebhookEvent(req: Request, res: Response): void {
     const pageId = entry.id;
     for (const event of entry.messaging ?? []) {
       processEvent(event, pageId).catch((err) => {
-        logger.error('FbWebhook', 'unhandled error in processEvent', err);
+        logger.error('Facebook Webhook', 'unhandled error in processEvent', err);
       });
     }
   }

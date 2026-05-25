@@ -6,6 +6,7 @@ import { logger } from '../config/logger';
 import { AppError, ChannelStatus, ChannelType } from '../types';
 import { CafeChannel } from '../models/cafe-channel.entity';
 import { encryptToken, decryptToken } from '../utils/crypto';
+import { checkChannelQuota } from './subscription.service';
 
 const FB_GRAPH = 'https://graph.facebook.com/v21.0';
 const OAUTH_URL = 'https://www.facebook.com/v21.0/dialog/oauth';
@@ -166,6 +167,7 @@ export async function handleOAuthCallback(
     if (cafeRows[0].provider_id !== userId) {
       throw new AppError('Forbidden', 403, 'FORBIDDEN');
     }
+    await checkChannelQuota(cafeRows[0].provider_id);
   }
 
   const shortToken = await exchangeCodeForShortLivedToken(code);
