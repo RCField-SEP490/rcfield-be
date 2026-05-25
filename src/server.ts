@@ -6,6 +6,7 @@ import { redis } from './config/redis';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { wsService } from './services/websocket.service';
+import { scheduleQuotaReset } from './jobs/quota-reset.job';
 
 async function bootstrap() {
   try {
@@ -17,6 +18,7 @@ async function bootstrap() {
 
     const httpServer = createServer(app);
     wsService.init(httpServer);
+    scheduleQuotaReset();
 
     httpServer.listen(env.PORT, () => {
       logger.server(`Running on http://localhost:${env.PORT}`);

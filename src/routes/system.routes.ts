@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { upsertWidgetConfig } from '../services/chat.service';
+import { UserRole } from '../types';
 
 const router = Router();
 
@@ -56,7 +57,7 @@ router.get('/widget-config', async (_req: Request, res: Response, next: NextFunc
 router.put(
   '/widget-config',
   authenticate,
-  authorize(['ADMIN']),
+  authorize(UserRole.ADMIN),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const ds = AppDataSource;

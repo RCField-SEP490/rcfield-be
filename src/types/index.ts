@@ -199,6 +199,28 @@ export interface ChatResponse {
   quickReplies?: string[];
 }
 
+// ── Channel ───────────────────────────────────────────────────────────────────
+
+export enum ChannelType {
+  FACEBOOK_MESSENGER = 'FACEBOOK_MESSENGER',
+}
+
+export enum ChannelStatus {
+  CONNECTED = 'CONNECTED',
+  DISCONNECTED = 'DISCONNECTED',
+}
+
+export interface FbFormattedMessage {
+  text: string;
+  quickReplies: FbQuickReply[];
+}
+
+export interface FbQuickReply {
+  content_type: 'text';
+  title: string;
+  payload: string;
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export class AppError extends Error {

@@ -35,7 +35,14 @@ export async function checkGate(cafeId: string): Promise<void> {
     [cafeId],
   );
 
+  logger.info('Gate', `checkGate cafeId=${cafeId} rows=${rows.length}`, rows[0] ?? null);
+
   if (!rows.length || !rows[0].is_enabled) {
+    logger.warn('Gate', 'AI_DISABLED', {
+      cafeId,
+      hasRow: rows.length > 0,
+      isEnabled: rows[0]?.is_enabled,
+    });
     throw new AppError(
       'Dịch vụ AI chat chưa được kích hoạt cho chi nhánh này.',
       503,
@@ -44,9 +51,18 @@ export async function checkGate(cafeId: string): Promise<void> {
   }
 
   const cfg = rows[0].config as QuotaConfig;
+  logger.info('Gate', 'quota', { cafeId, used: cfg.used_this_month, quota: cfg.monthly_quota });
+
   if (cfg.used_this_month >= cfg.monthly_quota) {
+    logger.warn('Gate', 'QUOTA_EXCEEDED', {
+      cafeId,
+      used: cfg.used_this_month,
+      quota: cfg.monthly_quota,
+    });
     throw new AppError('Gói AI của chi nhánh đã hết lượt tháng này.', 429, 'QUOTA_EXCEEDED');
   }
+
+  logger.info('Gate', 'passed', { cafeId });
 }
 
 // Increments used_this_month after a successful chat request

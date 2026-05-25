@@ -44,14 +44,24 @@ router.get('/kb/debug', debugKb);
 
 // ── Provider-only endpoints ────────────────────────────────────────────────────
 
-router.put('/chat/config', authenticate, authorize(UserRole.PROVIDER), updateWidgetConfig);
+router.put(
+  '/chat/config',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  updateWidgetConfig,
+);
 
-router.get('/kb/documents', authenticate, authorize(UserRole.PROVIDER), listDocuments);
+router.get(
+  '/kb/documents',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  listDocuments,
+);
 
 router.post(
   '/kb/documents',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
   upload.single('file'),
   uploadDocument,
 );
@@ -59,7 +69,7 @@ router.post(
 router.delete(
   '/kb/documents/:documentId',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
   deleteDocument,
 );
 

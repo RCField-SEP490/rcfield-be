@@ -38,6 +38,13 @@ export const UploadDocumentSchema = z.object({
   content_type: z.enum(['POLICY', 'FAQ', 'ANNOUNCEMENT', 'CUSTOM']).optional().default('CUSTOM'),
 });
 
+// ── fb-channel ────────────────────────────────────────────────────────────────
+
+export const FbChannelQuerySchema = z.object({
+  cafeId: z.string().uuid('cafeId phải là UUID hợp lệ'),
+  returnPath: z.string().startsWith('/').optional(),
+});
+
 export const WidgetConfigSchema = z.object({
   greeting_message: z.string().max(200).optional(),
   position: z.enum(['BOTTOM_RIGHT', 'BOTTOM_LEFT']).optional(),

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
-import { AppError, AuthRequest, KbContentType, KbDocumentStatus } from '../types';
+import { AppError, AuthRequest, KbContentType, KbDocumentStatus, UserRole } from '../types';
 import { KbDocument } from '../models/kb-document.entity';
 import { UploadDocumentSchema } from '../validate';
 import { kbService } from '../services/kb.service';
@@ -37,7 +37,7 @@ export async function uploadDocument(
     if (!cafeRows.length) {
       return next(new AppError('Cafe không tồn tại.', 404, 'CAFE_NOT_FOUND'));
     }
-    if (cafeRows[0].provider_id !== providerId) {
+    if (cafeRows[0].provider_id !== providerId && req.user!.role !== UserRole.ADMIN) {
       return next(
         new AppError('Bạn không có quyền quản lý KB của chi nhánh này.', 403, 'FORBIDDEN'),
       );
@@ -101,7 +101,7 @@ export async function listDocuments(
     if (!cafeRows.length) {
       return next(new AppError('Cafe không tồn tại.', 404, 'CAFE_NOT_FOUND'));
     }
-    if (cafeRows[0].provider_id !== providerId) {
+    if (cafeRows[0].provider_id !== providerId && req.user!.role !== UserRole.ADMIN) {
       return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
     }
 
@@ -162,7 +162,7 @@ export async function deleteDocument(
     if (!cafeRows.length) {
       return next(new AppError('Cafe không tồn tại.', 404, 'CAFE_NOT_FOUND'));
     }
-    if (cafeRows[0].provider_id !== providerId) {
+    if (cafeRows[0].provider_id !== providerId && req.user!.role !== UserRole.ADMIN) {
       return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
     }
 
