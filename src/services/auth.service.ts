@@ -22,6 +22,14 @@ export interface LoginResult extends TokenPair {
   user: { id: string; email: string; role: UserRole };
 }
 
+export interface RegisterInput {
+  full_name: string;
+  email: string;
+  phone?: string;
+  password: string;
+  role: UserRole.CUSTOMER | UserRole.PROVIDER;
+}
+
 class AuthService {
   private get userRepo() {
     return AppDataSource.getRepository(User);
@@ -85,6 +93,31 @@ class AuthService {
     }
 
     await redis.del(failKey);
+    const tokens = await this.issueTokenPair(user);
+    return { ...tokens, user: { id: user.id, email: user.email, role: user.role } };
+  }
+
+  async registerWithPassword(input: RegisterInput): Promise<LoginResult> {
+    const email = input.email.toLowerCase().trim();
+    const existing = await this.userRepo.findOne({ where: { email } });
+
+    if (existing) {
+      throw new AppError('Email đã được sử dụng', 409, 'EMAIL_ALREADY_EXISTS');
+    }
+
+    const password_hash = await bcrypt.hash(input.password, 10);
+    const user = await this.userRepo.save(
+      this.userRepo.create({
+        email,
+        full_name: input.full_name.trim(),
+        phone: input.phone ?? null,
+        password_hash,
+        role: input.role,
+        auth_provider: AuthProvider.LOCAL,
+        is_active: true,
+      }),
+    );
+
     const tokens = await this.issueTokenPair(user);
     return { ...tokens, user: { id: user.id, email: user.email, role: user.role } };
   }

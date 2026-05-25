@@ -5,6 +5,17 @@ export const LoginSchema = z.object({
   password: z.string().min(6),
 });
 
+export const RegisterSchema = z.object({
+  full_name: z.string().min(2).max(255),
+  email: z.string().email().max(255),
+  phone: z
+    .string()
+    .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/)
+    .optional(),
+  password: z.string().min(6).max(100),
+  role: z.enum(['CUSTOMER', 'PROVIDER']).default('CUSTOMER'),
+});
+
 export const GoogleSchema = z.object({
   id_token: z.string().min(1),
 });
