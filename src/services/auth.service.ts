@@ -5,9 +5,10 @@ import { OAuth2Client } from 'google-auth-library';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
-import { AppError, UserRole, AuthProvider } from '../types';
+import { AppError, UserRole, AuthProvider, ProviderStatus } from '../types';
 import { User } from '../models/user.entity';
 import { RefreshToken } from '../models/refresh-token.entity';
+import { ProviderProfile } from '../models/provider-profile.entity';
 
 const BRUTE_FORCE_MAX = 5;
 const BRUTE_FORCE_TTL = 900; // 15 minutes
@@ -19,7 +20,7 @@ export interface TokenPair {
 }
 
 export interface LoginResult extends TokenPair {
-  user: { id: string; email: string; role: UserRole };
+  user: { id: string; email: string; role: UserRole; registrationStatus?: string };
 }
 
 export interface RegisterInput {
@@ -94,7 +95,17 @@ class AuthService {
 
     await redis.del(failKey);
     const tokens = await this.issueTokenPair(user);
-    return { ...tokens, user: { id: user.id, email: user.email, role: user.role } };
+    let registrationStatus: string | undefined;
+    if (user.role === UserRole.PROVIDER) {
+      const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
+        where: { userId: user.id },
+      });
+      registrationStatus = profile?.registrationStatus ?? ProviderStatus.PENDING;
+    }
+    return {
+      ...tokens,
+      user: { id: user.id, email: user.email, role: user.role, registrationStatus },
+    };
   }
 
   async registerWithPassword(input: RegisterInput): Promise<LoginResult> {
@@ -119,7 +130,17 @@ class AuthService {
     );
 
     const tokens = await this.issueTokenPair(user);
-    return { ...tokens, user: { id: user.id, email: user.email, role: user.role } };
+    let regStatus: string | undefined;
+    if (user.role === UserRole.PROVIDER) {
+      const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
+        where: { userId: user.id },
+      });
+      regStatus = profile?.registrationStatus ?? ProviderStatus.PENDING;
+    }
+    return {
+      ...tokens,
+      user: { id: user.id, email: user.email, role: user.role, registrationStatus: regStatus },
+    };
   }
 
   async loginWithGoogle(idToken: string): Promise<LoginResult> {
@@ -172,7 +193,17 @@ class AuthService {
     }
 
     const tokens = await this.issueTokenPair(user);
-    return { ...tokens, user: { id: user.id, email: user.email, role: user.role } };
+    let registrationStatus: string | undefined;
+    if (user.role === UserRole.PROVIDER) {
+      const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
+        where: { userId: user.id },
+      });
+      registrationStatus = profile?.registrationStatus ?? ProviderStatus.PENDING;
+    }
+    return {
+      ...tokens,
+      user: { id: user.id, email: user.email, role: user.role, registrationStatus },
+    };
   }
 
   async refreshTokens(rawToken: string): Promise<TokenPair> {
