@@ -2,7 +2,6 @@ import request from 'supertest';
 import { app } from '../../app';
 import { UserRole } from '../../types';
 import { createTestUser, createTestCafe, createTestVehicle, generateToken } from '../helpers';
-import { beforeEach, describe, it } from 'node:test';
 
 // Template — bổ sung khi implement BookingController
 
