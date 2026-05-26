@@ -28,6 +28,9 @@ export class User {
   @Column({ type: 'enum', enum: AuthProvider, default: AuthProvider.LOCAL })
   auth_provider: AuthProvider;
 
+  @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
+  google_id: string | null;
+
   @Column({ type: 'enum', enum: UserRole })
   role: UserRole;
 

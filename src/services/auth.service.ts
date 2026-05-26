@@ -123,32 +123,47 @@ class AuthService {
   }
 
   async loginWithGoogle(idToken: string): Promise<LoginResult> {
+    if (!env.google.clientId) {
+      throw new AppError('Google Client ID chưa được cấu hình', 500, 'GOOGLE_CONFIG_MISSING');
+    }
+
     let email: string;
+    let googleId: string;
+    let fullName: string;
 
     try {
       const client = new OAuth2Client(env.google.clientId);
       const ticket = await client.verifyIdToken({ idToken, audience: env.google.clientId });
       const payload = ticket.getPayload();
       if (!payload?.email) throw new Error('No email in payload');
-      email = payload.email;
+      if (!payload.sub) throw new Error('No subject in payload');
+      email = payload.email.toLowerCase().trim();
+      googleId = payload.sub;
+      fullName = payload.name?.trim() || email.split('@')[0];
     } catch {
       throw new AppError('Xác thực Google thất bại', 401, 'GOOGLE_AUTH_FAILED');
     }
 
-    let user = await this.userRepo.findOne({ where: { email } });
+    let user = await this.userRepo.findOne({ where: [{ google_id: googleId }, { email }] });
 
     if (!user) {
       user = await this.userRepo.save(
         this.userRepo.create({
           email,
-          full_name: email.split('@')[0],
+          full_name: fullName,
           role: UserRole.CUSTOMER,
           auth_provider: AuthProvider.GOOGLE,
+          google_id: googleId,
           is_active: true,
         }),
       );
     } else if (user.auth_provider === AuthProvider.LOCAL) {
       user.auth_provider = AuthProvider.GOOGLE;
+      user.google_id = googleId;
+      if (!user.full_name) user.full_name = fullName;
+      user = await this.userRepo.save(user);
+    } else if (!user.google_id) {
+      user.google_id = googleId;
       user = await this.userRepo.save(user);
     }
 
