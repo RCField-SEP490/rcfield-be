@@ -42,8 +42,14 @@ export function requireActiveProvider(req: AuthRequest, _res: Response, next: Ne
   )
     .then((rows) => {
       const status = rows[0]?.registration_status;
-      if (status === ProviderStatus.SUSPENDED) {
-        return next(new AppError('Tài khoản đã bị tạm khóa', 403, 'ACCOUNT_SUSPENDED'));
+      if (status !== ProviderStatus.ACTIVE) {
+        if (status === ProviderStatus.SUSPENDED) {
+          return next(new AppError('Tài khoản đã bị tạm khóa', 403, 'ACCOUNT_SUSPENDED'));
+        }
+        if (status === ProviderStatus.REJECTED) {
+          return next(new AppError('Hồ sơ đăng ký của bạn đã bị từ chối', 403, 'ACCOUNT_REJECTED'));
+        }
+        return next(new AppError('Tài khoản chưa được phê duyệt', 403, 'ACCOUNT_NOT_ACTIVE'));
       }
       next();
     })

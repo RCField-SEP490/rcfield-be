@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { AppError, AuthRequest, ProviderStatus } from '../types';
+import { AppError, AuthRequest, ProviderStatus, UserRole } from '../types';
 import { RegisterProviderSchema, AdminRejectSchema, AdminProviderQuerySchema } from '../validate';
 import * as providerOnboardingService from '../services/provider-onboarding.service';
 
@@ -81,6 +81,19 @@ export const providerOnboardingController = {
     try {
       await providerOnboardingService.unsuspend(req.params.id, req.user!.userId);
       res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/me  [auth]
+  async getProviderMe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== UserRole.PROVIDER) {
+        return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
+      }
+      const data = await providerOnboardingService.getProviderDetail(req.user.userId);
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }
