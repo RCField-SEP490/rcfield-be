@@ -16,9 +16,14 @@ export const RegisterSchema = z.object({
   role: z.enum(['CUSTOMER', 'PROVIDER']).default('CUSTOMER'),
 });
 
-export const GoogleSchema = z.object({
-  id_token: z.string().min(1),
-});
+export const GoogleSchema = z
+  .object({
+    id_token: z.string().min(1).optional(),
+    credential: z.string().min(1).optional(),
+  })
+  .refine((value) => value.id_token || value.credential, {
+    message: 'Google ID token is required',
+  });
 
 export const RefreshSchema = z.object({
   refresh_token: z.string().min(1),

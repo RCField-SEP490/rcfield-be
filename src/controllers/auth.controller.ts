@@ -41,8 +41,9 @@ export const authController = {
   // POST /api/v1/auth/google
   async googleLogin(req: Request, res: Response, next: NextFunction) {
     try {
-      const { id_token } = GoogleSchema.parse(req.body);
-      const result = await authService.loginWithGoogle(id_token);
+      const { id_token, credential } = GoogleSchema.parse(req.body);
+      const token = id_token ?? credential!;
+      const result = await authService.loginWithGoogle(token);
       logger.auth('google login', { email: result.user.email, role: result.user.role });
       res.json({ success: true, data: result });
     } catch (err) {

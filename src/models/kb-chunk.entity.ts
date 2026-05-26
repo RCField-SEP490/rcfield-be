@@ -30,7 +30,7 @@ export class KbChunk {
   @Column({ name: 'chunk_index' })
   chunkIndex: number;
 
-  // Stored as vector(768) in PostgreSQL; embedding insert/query must use raw SQL
+  // Stored as vector in PostgreSQL; embedding insert/query must use raw SQL.
   @Column({ type: 'text', nullable: true, select: false })
   embedding: string | null;
 
