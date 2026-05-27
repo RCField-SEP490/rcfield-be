@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
+import { IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
@@ -9,6 +10,8 @@ import { AppError, UserRole, AuthProvider, ProviderStatus } from '../types';
 import { User } from '../models/user.entity';
 import { RefreshToken } from '../models/refresh-token.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
+import { PasswordResetToken } from '../models/password-reset-token.entity';
+import { emailService } from './email.service';
 
 const BRUTE_FORCE_MAX = 5;
 const BRUTE_FORCE_TTL = 900; // 15 minutes
@@ -40,8 +43,16 @@ class AuthService {
     return AppDataSource.getRepository(RefreshToken);
   }
 
+  private get passwordResetRepo() {
+    return AppDataSource.getRepository(PasswordResetToken);
+  }
+
   private hashToken(raw: string): string {
     return crypto.createHash('sha256').update(raw).digest('hex');
+  }
+
+  private hashPasswordResetCode(userId: string, email: string, code: string): string {
+    return this.hashToken(`${userId}:${email}:${code}:${env.jwt.secret}`);
   }
 
   private async issueTokenPair(user: User): Promise<TokenPair> {
@@ -228,6 +239,106 @@ class AuthService {
   async logout(userId: string, rawToken: string): Promise<void> {
     const hash = this.hashToken(rawToken);
     await this.tokenRepo.delete({ user_id: userId, token: hash });
+  }
+
+  async requestPasswordReset(emailInput: string): Promise<{ expires_in_minutes: number }> {
+    const email = emailInput.toLowerCase().trim();
+    const user = await this.userRepo.findOne({ where: { email } });
+
+    if (!user) {
+      throw new AppError('Email chưa được đăng ký trong hệ thống', 404, 'EMAIL_NOT_FOUND');
+    }
+
+    if (!user.is_active) {
+      throw new AppError('Tài khoản đang bị khóa', 403, 'ACCOUNT_LOCKED');
+    }
+
+    if (!user.password_hash) {
+      throw new AppError(
+        'Tài khoản này chưa có mật khẩu cục bộ. Vui lòng đăng nhập bằng Google.',
+        400,
+        'LOCAL_PASSWORD_NOT_AVAILABLE',
+      );
+    }
+
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const expiresAt = new Date(Date.now() + env.email.passwordResetTtlMinutes * 60 * 1000);
+
+    await this.passwordResetRepo.delete({ user_id: user.id });
+
+    await this.passwordResetRepo.save(
+      this.passwordResetRepo.create({
+        user_id: user.id,
+        token: this.hashPasswordResetCode(user.id, email, code),
+        expires_at: expiresAt,
+      }),
+    );
+
+    await emailService.sendPasswordResetCode({
+      to: email,
+      code,
+      ttlMinutes: env.email.passwordResetTtlMinutes,
+    });
+
+    return { expires_in_minutes: env.email.passwordResetTtlMinutes };
+  }
+
+  async verifyPasswordResetCode(emailInput: string, code: string): Promise<void> {
+    const email = emailInput.toLowerCase().trim();
+    const user = await this.userRepo.findOne({ where: { email } });
+
+    if (!user) {
+      throw new AppError('Email chưa được đăng ký trong hệ thống', 404, 'EMAIL_NOT_FOUND');
+    }
+
+    const row = await this.passwordResetRepo.findOne({
+      where: {
+        user_id: user.id,
+        token: this.hashPasswordResetCode(user.id, email, code),
+        used_at: IsNull(),
+      },
+      order: { created_at: 'DESC' },
+    });
+
+    if (!row) {
+      throw new AppError('Mã xác nhận không hợp lệ', 400, 'INVALID_RESET_CODE');
+    }
+
+    if (row.expires_at <= new Date()) {
+      throw new AppError('Mã xác nhận đã hết hạn', 410, 'RESET_CODE_EXPIRED');
+    }
+  }
+
+  async resetPasswordWithCode(emailInput: string, code: string, password: string): Promise<void> {
+    const email = emailInput.toLowerCase().trim();
+    const user = await this.userRepo.findOne({ where: { email } });
+
+    if (!user) {
+      throw new AppError('Email chưa được đăng ký trong hệ thống', 404, 'EMAIL_NOT_FOUND');
+    }
+
+    const row = await this.passwordResetRepo.findOne({
+      where: {
+        user_id: user.id,
+        token: this.hashPasswordResetCode(user.id, email, code),
+        used_at: IsNull(),
+      },
+      order: { created_at: 'DESC' },
+    });
+
+    if (!row) {
+      throw new AppError('Mã xác nhận không hợp lệ', 400, 'INVALID_RESET_CODE');
+    }
+
+    if (row.expires_at <= new Date()) {
+      throw new AppError('Mã xác nhận đã hết hạn', 410, 'RESET_CODE_EXPIRED');
+    }
+
+    user.password_hash = await bcrypt.hash(password, 10);
+    user.auth_provider = AuthProvider.LOCAL;
+    await this.userRepo.save(user);
+    await this.passwordResetRepo.update(row.id, { used_at: new Date() });
+    await this.tokenRepo.delete({ user_id: user.id });
   }
 }
 

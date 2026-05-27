@@ -35,6 +35,16 @@ export const env = {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
 
+  email: {
+    provider: process.env.EMAIL_PROVIDER ?? 'Brevo',
+    brevoApiKey: process.env.EMAIL_BREVO_API_KEY ?? process.env.BREVO_API_KEY ?? '',
+    brevoBaseUrl: process.env.EMAIL_BREVO_BASE_URL ?? 'https://api.brevo.com/v3',
+    fromEmail:
+      process.env.EMAIL_FROM_EMAIL ?? process.env.BREVO_SENDER_EMAIL ?? 'no-reply@rcfield.local',
+    fromName: process.env.EMAIL_FROM_NAME ?? process.env.BREVO_SENDER_NAME ?? 'RCField',
+    passwordResetTtlMinutes: parseInt(process.env.PASSWORD_RESET_CODE_TTL_MINUTES ?? '30', 10),
+  },
+
   platform: {
     feePct: parseFloat(process.env.PLATFORM_FEE_PCT ?? '0.15'),
     paymentWindowMinutes: parseInt(process.env.PAYMENT_WINDOW_MINUTES ?? '30', 10),
