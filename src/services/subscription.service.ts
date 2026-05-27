@@ -139,7 +139,9 @@ export async function activateFromPayment(
     existing.aiQuotaResetAt = nextMonth;
     existing.graceEndsAt = null;
     await repo.save(existing);
-    await transition(existing.id, SubscriptionStatus.ACTIVE);
+    if (existing.status !== SubscriptionStatus.ACTIVE) {
+      await transition(existing.id, SubscriptionStatus.ACTIVE);
+    }
     return existing;
   }
 
