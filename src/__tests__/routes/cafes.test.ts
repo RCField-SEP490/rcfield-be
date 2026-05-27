@@ -114,6 +114,28 @@ describe('Cafe routes', () => {
     expect(res.body.data[0].status).toBe(CafeStatus.ACTIVE);
   });
 
+  it('public list cho phép filter status=ACTIVE', async () => {
+    await createTestCafe({ status: CafeStatus.ACTIVE });
+    await createTestCafe({ status: CafeStatus.PENDING });
+
+    const res = await request(app).get('/api/v1/cafes?status=ACTIVE');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].status).toBe(CafeStatus.ACTIVE);
+  });
+
+  it('public list bỏ qua filter status chưa public và chỉ trả ACTIVE', async () => {
+    await createTestCafe({ status: CafeStatus.ACTIVE });
+    await createTestCafe({ status: CafeStatus.PENDING });
+
+    const res = await request(app).get('/api/v1/cafes?status=PENDING');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].status).toBe(CafeStatus.ACTIVE);
+  });
+
   it('owner xem được draft detail, public không xem được', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.PENDING });

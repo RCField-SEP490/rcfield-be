@@ -17,31 +17,31 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-cafeRouter.get('/', optionalAuthenticate, cafeController.list);
-cafeRouter.get('/:id', optionalAuthenticate, cafeController.detail);
-cafeRouter.get('/:id/images', optionalAuthenticate, cafeImageController.listImages);
+cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
+cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
+cafeRouter.get('/:cafeId/images', optionalAuthenticate, cafeImageController.listImages);
 cafeRouter.post(
   '/',
   authenticate,
   authorize(UserRole.PROVIDER),
   requireActiveProvider,
-  cafeController.create,
+  cafeController.createCafe,
 );
 cafeRouter.patch(
-  '/:id',
+  '/:cafeId',
   authenticate,
   authorize(UserRole.PROVIDER),
   requireActiveProvider,
-  cafeController.update,
+  cafeController.updateCafe,
 );
 cafeRouter.patch(
-  '/:id/status',
+  '/:cafeId/status',
   authenticate,
   authorize(UserRole.ADMIN),
-  cafeController.updateStatus,
+  cafeController.updateCafeStatus,
 );
 cafeRouter.post(
-  '/:id/images',
+  '/:cafeId/images',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.ADMIN),
   requireActiveProvider,

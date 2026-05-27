@@ -1,5 +1,8 @@
 import { z } from 'zod';
+import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
 import { CafeStatus, TrackType } from '../types';
+
+extendZodWithOpenApi(z);
 
 export const LoginSchema = z.object({
   email: z.string().email(),
@@ -90,31 +93,52 @@ const OperatingHourSchema = z.object({
 });
 
 export const CafeListQuerySchema = z.object({
-  page: z.coerce.number().int().positive().optional().default(1),
-  limit: z.coerce.number().int().positive().max(100).optional().default(20),
-  district: z.string().min(1).max(100).optional(),
-  city: z.string().min(1).max(100).optional(),
-  track_type: TrackTypeSchema.optional(),
-  status: z.nativeEnum(CafeStatus).optional(),
+  page: z.coerce.number().int().positive().optional().default(1).openapi({ example: 1 }),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
+    example: 20,
+  }),
+  district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
+  city: z.string().min(1).max(100).optional().openapi({ example: 'TP. Ho Chi Minh' }),
+  track_type: TrackTypeSchema.optional().openapi({ example: TrackType.DRIFT }),
+  status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
 });
 
 export const CreateCafeSchema = z.object({
-  name: z.string().min(2).max(255),
-  description: z.string().max(2000).nullable().optional(),
-  phone: z.string().min(9).max(20).nullable().optional(),
-  cover_image_url: z.string().url().nullable().optional(),
-  address: z.string().min(5).max(500),
-  district: z.string().min(1).max(100),
-  city: z.string().min(1).max(100),
-  latitude: z.number().min(-90).max(90).nullable().optional(),
-  longitude: z.number().min(-180).max(180).nullable().optional(),
+  name: z.string().min(2).max(255).openapi({ example: 'RC Arena Sai Gon' }),
+  description: z
+    .string()
+    .max(2000)
+    .nullable()
+    .optional()
+    .openapi({ example: 'San RC trong nha voi duong drift va obstacle.' }),
+  phone: z.string().min(9).max(20).nullable().optional().openapi({ example: '0901234567' }),
+  cover_image_url: z
+    .string()
+    .url()
+    .nullable()
+    .optional()
+    .openapi({ example: 'https://cdn.rcfield.vn/cafes/rc-arena-cover.jpg' }),
+  address: z.string().min(5).max(500).openapi({ example: '15 Hoang Van Thai' }),
+  district: z.string().min(1).max(100).openapi({ example: 'Quan 7' }),
+  city: z.string().min(1).max(100).openapi({ example: 'TP. Ho Chi Minh' }),
+  latitude: z.number().min(-90).max(90).nullable().optional().openapi({ example: 10.7403 }),
+  longitude: z.number().min(-180).max(180).nullable().optional().openapi({ example: 106.712 }),
   operating_hours: z.record(OperatingHourSchema).optional().default({}),
-  track_types: z.array(TrackTypeSchema).min(1),
-  slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60),
-  slot_fee_rate: z.number().nonnegative(),
-  max_concurrent_bookings: z.number().int().positive().optional().default(10),
-  min_booking_notice_minutes: z.number().int().nonnegative().optional().default(60),
-  byoc_capacity: z.number().int().nonnegative().optional().default(5),
+  track_types: z
+    .array(TrackTypeSchema)
+    .min(1)
+    .openapi({ example: [TrackType.DRIFT, TrackType.OBSTACLE] }),
+  slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60).openapi({
+    example: 60,
+  }),
+  slot_fee_rate: z.number().nonnegative().openapi({ example: 50000 }),
+  max_concurrent_bookings: z.number().int().positive().optional().default(10).openapi({
+    example: 8,
+  }),
+  min_booking_notice_minutes: z.number().int().nonnegative().optional().default(60).openapi({
+    example: 30,
+  }),
+  byoc_capacity: z.number().int().nonnegative().optional().default(5).openapi({ example: 4 }),
 });
 
 export const UpdateCafeSchema = CreateCafeSchema.partial().refine(
@@ -128,6 +152,62 @@ export const UpdateCafeStatusSchema = z.object({
 
 export const CafeImageCreateSchema = z.object({
   sort_order: z.coerce.number().int().min(0).optional().default(0),
+});
+
+export const CafeIdParamsSchema = z.object({
+  cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+});
+
+export const CafeImageIdParamsSchema = z.object({
+  id: z.string().uuid().openapi({ example: '9f4c9fb0-9c28-4b6b-a9c2-fdd4d13d1001' }),
+});
+
+export const CafeImageUploadSchema = z.object({
+  files: z.array(z.string().openapi({ format: 'binary' })).min(1),
+  sort_order: z.coerce.number().int().min(0).optional().default(0).openapi({ example: 0 }),
+});
+
+export const CafeResponseSchema = z.object({
+  id: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+  providerId: z.string().uuid().openapi({ example: '7f8d1fd7-5334-47e5-94a8-a8f69a70d001' }),
+  name: z.string().openapi({ example: 'RC Arena Sai Gon' }),
+  slug: z.string().openapi({ example: 'rc-arena-sai-gon' }),
+  description: z.string().nullable().openapi({
+    example: 'San RC trong nha voi duong drift va obstacle.',
+  }),
+  phone: z.string().nullable().openapi({ example: '0901234567' }),
+  status: z.nativeEnum(CafeStatus).openapi({ example: CafeStatus.ACTIVE }),
+  coverImageUrl: z.string().nullable().openapi({
+    example: 'https://cdn.rcfield.vn/cafes/rc-arena-cover.jpg',
+  }),
+  address: z.string().openapi({ example: '15 Hoang Van Thai' }),
+  district: z.string().openapi({ example: 'Quan 7' }),
+  city: z.string().openapi({ example: 'TP. Ho Chi Minh' }),
+  latitude: z.number().nullable().openapi({ example: 10.7403 }),
+  longitude: z.number().nullable().openapi({ example: 106.712 }),
+  operatingHours: z.record(OperatingHourSchema),
+  trackTypes: z.array(TrackTypeSchema).openapi({
+    example: [TrackType.DRIFT, TrackType.OBSTACLE],
+  }),
+  slotDurationMinutes: z.number().int().openapi({ example: 60 }),
+  slotFeeRate: z.string().openapi({ example: '50000.00' }),
+  maxConcurrentBookings: z.number().int().openapi({ example: 8 }),
+  minBookingNoticeMinutes: z.number().int().openapi({ example: 30 }),
+  byocCapacity: z.number().int().openapi({ example: 4 }),
+  createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
+  updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
+  deletedAt: z.string().datetime().nullable().openapi({ example: null }),
+});
+
+export const CafeImageResponseSchema = z.object({
+  id: z.string().uuid().openapi({ example: '9f4c9fb0-9c28-4b6b-a9c2-fdd4d13d1001' }),
+  cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+  url: z
+    .string()
+    .url()
+    .openapi({ example: 'https://res.cloudinary.com/rcfield/image/upload/v1/cafes/track-1.png' }),
+  sortOrder: z.number().int().openapi({ example: 0 }),
+  createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
 });
 
 const TimeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'Thời gian phải có định dạng HH:mm');

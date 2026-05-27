@@ -5,6 +5,8 @@
   "main": "dist/app.js",
   "scripts": {
     "dev": "node scripts/kill-port.js 3000 && ts-node-dev --respawn --transpile-only src/server.ts",
+    "swagger": "npm run dev",
+    "up:all": "node scripts/up-all.js",
     "nlu:install": "python3 -m venv nlu-service/.venv && nlu-service/.venv/bin/pip install -r nlu-service/requirements.txt && nlu-service/.venv/bin/python -c \"from sentence_transformers import SentenceTransformer; print('[NLU] Downloading model...'); SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); print('[NLU] Model ready.')\"",
     "nlu": "lsof -ti:8000 | xargs kill -9 2>/dev/null; nlu-service/.venv/bin/python -m uvicorn main:app --port 8000 --reload --app-dir nlu-service",
     "ui": "lsof -ti:5500 | xargs kill -9 2>/dev/null; python3 -m http.server 5500 --directory .",
@@ -35,6 +37,7 @@
     ]
   },
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.3.4",
     "@google/genai": "^2.5.0",
     "@google/generative-ai": "^0.24.1",
     "@types/bcryptjs": "^2.4.6",

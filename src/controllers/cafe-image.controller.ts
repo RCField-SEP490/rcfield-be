@@ -40,17 +40,17 @@ function assertImageFiles(
 }
 
 export const cafeImageController = {
-  // GET /api/v1/cafes/:id/images
+  // GET /api/v1/cafes/:cafeId/images
   async listImages(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await cafeImageService.listCafeImages(req.params.id, viewerFromRequest(req));
+      const data = await cafeImageService.listCafeImages(req.params.cafeId, viewerFromRequest(req));
       res.json({ success: true, data: data.map(formatImage) });
     } catch (err) {
       next(err);
     }
   },
 
-  // POST /api/v1/cafes/:id/images  [auth]
+  // POST /api/v1/cafes/:cafeId/images  [auth]
   async createImages(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
@@ -63,14 +63,14 @@ export const cafeImageController = {
       assertImageFiles(files);
 
       const images = await cafeImageService.createCafeImages({
-        cafeId: req.params.id,
+        cafeId: req.params.cafeId,
         viewer: { userId: req.user.userId, role: req.user.role },
         baseSortOrder: body.sort_order,
         files,
       });
 
       logger.info('CafeImage', 'created', {
-        cafeId: req.params.id,
+        cafeId: req.params.cafeId,
         count: images.length,
       });
       res.status(201).json({ success: true, data: images.map(formatImage) });

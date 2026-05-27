@@ -14,7 +14,7 @@ function viewerFromRequest(req: AuthRequest) {
 
 export const cafeController = {
   // POST /api/v1/cafes  [auth]
-  async create(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  async createCafe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
       const body = CreateCafeSchema.parse(req.body);
@@ -26,16 +26,14 @@ export const cafeController = {
   },
 
   // GET /api/v1/cafes
-  async list(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  async listCafes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { page, limit, district, city, track_type, status } = CafeListQuerySchema.parse(
         req.query,
       );
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
-      if (status && !canFilterStatus) {
-        throw new AppError('Forbidden', 403, 'FORBIDDEN');
-      }
+      const visibleStatus = canFilterStatus ? (status as CafeStatus | undefined) : undefined;
 
       const result = await cafeService.listCafes({
         page,
@@ -43,7 +41,7 @@ export const cafeController = {
         district,
         city,
         track_type,
-        status: status as CafeStatus | undefined,
+        status: visibleStatus,
         viewer: viewerFromRequest(req),
       });
       res.json({
@@ -56,35 +54,35 @@ export const cafeController = {
     }
   },
 
-  // GET /api/v1/cafes/:id
-  async detail(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  // GET /api/v1/cafes/:cafeId
+  async getCafeById(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const cafe = await cafeService.getCafeDetail(req.params.id, viewerFromRequest(req));
+      const cafe = await cafeService.getCafeDetail(req.params.cafeId, viewerFromRequest(req));
       res.json({ success: true, data: cafe });
     } catch (err) {
       next(err);
     }
   },
 
-  // PATCH /api/v1/cafes/:id  [auth]
-  async update(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  // PATCH /api/v1/cafes/:cafeId  [auth]
+  async updateCafe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user || req.user.role !== UserRole.PROVIDER) {
         throw new AppError('Forbidden', 403, 'FORBIDDEN');
       }
       const body = UpdateCafeSchema.parse(req.body);
-      const cafe = await cafeService.updateCafe(req.params.id, req.user.userId, body);
+      const cafe = await cafeService.updateCafe(req.params.cafeId, req.user.userId, body);
       res.json({ success: true, data: cafe });
     } catch (err) {
       next(err);
     }
   },
 
-  // PATCH /api/v1/cafes/:id/status  [auth]
-  async updateStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  // PATCH /api/v1/cafes/:cafeId/status  [auth]
+  async updateCafeStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { status } = UpdateCafeStatusSchema.parse(req.body);
-      const cafe = await cafeService.updateCafeStatus(req.params.id, status);
+      const cafe = await cafeService.updateCafeStatus(req.params.cafeId, status);
       res.json({ success: true, data: cafe });
     } catch (err) {
       next(err);
