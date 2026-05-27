@@ -23,6 +23,24 @@ export function authenticate(req: AuthRequest, _res: Response, next: NextFunctio
   }
 }
 
+export function optionalAuthenticate(req: AuthRequest, _res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+  if (!header) return next();
+  if (!header.startsWith('Bearer ')) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'));
+
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, env.jwt.secret) as AuthPayload;
+    if (!Object.values(UserRole).includes(payload.role)) {
+      return next(new AppError('Token role invalid', 401, 'TOKEN_INVALID'));
+    }
+    req.user = payload;
+    next();
+  } catch {
+    next(new AppError('Token invalid or expired', 401, 'TOKEN_INVALID'));
+  }
+}
+
 export function authorize(...roles: UserRole[]) {
   return (req: AuthRequest, _res: Response, next: NextFunction): void => {
     if (!req.user) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'));

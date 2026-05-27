@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CafeStatus, TrackType } from '../types';
 
 export const LoginSchema = z.object({
   email: z.string().email(),
@@ -70,6 +71,59 @@ export const ChatMessageSchema = z.object({
 export const UploadDocumentSchema = z.object({
   title: z.string().min(1).max(200),
   content_type: z.enum(['POLICY', 'FAQ', 'ANNOUNCEMENT', 'CUSTOM']).optional().default('CUSTOM'),
+});
+
+// ── cafes ────────────────────────────────────────────────────────────────────
+
+const TrackTypeSchema = z.nativeEnum(TrackType);
+
+const OperatingHourSchema = z.object({
+  open: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(),
+  close: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .optional(),
+  is_closed: z.boolean().optional(),
+});
+
+export const CafeListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  district: z.string().min(1).max(100).optional(),
+  city: z.string().min(1).max(100).optional(),
+  track_type: TrackTypeSchema.optional(),
+  status: z.nativeEnum(CafeStatus).optional(),
+});
+
+export const CreateCafeSchema = z.object({
+  name: z.string().min(2).max(255),
+  description: z.string().max(2000).nullable().optional(),
+  phone: z.string().min(9).max(20).nullable().optional(),
+  cover_image_url: z.string().url().nullable().optional(),
+  address: z.string().min(5).max(500),
+  district: z.string().min(1).max(100),
+  city: z.string().min(1).max(100),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  operating_hours: z.record(OperatingHourSchema).optional().default({}),
+  track_types: z.array(TrackTypeSchema).min(1),
+  slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60),
+  slot_fee_rate: z.number().nonnegative(),
+  max_concurrent_bookings: z.number().int().positive().optional().default(10),
+  min_booking_notice_minutes: z.number().int().nonnegative().optional().default(60),
+  byoc_capacity: z.number().int().nonnegative().optional().default(5),
+});
+
+export const UpdateCafeSchema = CreateCafeSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const UpdateCafeStatusSchema = z.object({
+  status: z.nativeEnum(CafeStatus),
 });
 
 // ── fb-channel ────────────────────────────────────────────────────────────────
