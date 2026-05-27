@@ -71,12 +71,19 @@ function assertCafeOwner(cafe: Cafe, providerId: string): void {
   }
 }
 
-async function getCafeOrThrow(id: string): Promise<Cafe> {
+export async function getCafeOrThrow(id: string): Promise<Cafe> {
   const cafe = await AppDataSource.getRepository(Cafe).findOne({
     where: { id } as FindOptionsWhere<Cafe>,
   });
   if (!cafe) throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
   return cafe;
+}
+
+export async function getManagedCafeOrThrow(id: string, viewer: Viewer): Promise<Cafe> {
+  const cafe = await getCafeOrThrow(id);
+  if (viewer.role === UserRole.ADMIN) return cafe;
+  if (viewer.role === UserRole.PROVIDER && cafe.providerId === viewer.userId) return cafe;
+  throw new AppError('Forbidden', 403, 'FORBIDDEN');
 }
 
 export async function createCafe(providerId: string, body: CreateCafeBody): Promise<Cafe> {

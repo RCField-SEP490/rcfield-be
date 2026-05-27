@@ -11,6 +11,7 @@ import { notificationRouter } from './notification.routes';
 import { providerSubscriptionRouter } from './provider-subscription.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { cafeRouter } from './cafe.routes';
+import { cafeImagesRouter } from './cafe-images.routes';
 
 const router = Router();
 
@@ -27,6 +28,7 @@ router.use('/provider/notifications', notificationRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/system', systemRouter);
 router.use('/cafes', cafeRouter);
+router.use('/', cafeImagesRouter);
 router.use('/cafes/:cafeId', chatRouter);
 router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);

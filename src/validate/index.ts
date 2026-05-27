@@ -126,6 +126,24 @@ export const UpdateCafeStatusSchema = z.object({
   status: z.nativeEnum(CafeStatus),
 });
 
+export const CafeImageCreateSchema = z.object({
+  sort_order: z.coerce.number().int().min(0).optional().default(0),
+});
+
+const TimeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'Thời gian phải có định dạng HH:mm');
+
+export const CafeClosureCreateSchema = z.object({
+  closed_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải có định dạng YYYY-MM-DD'),
+  start_time: TimeSchema,
+  end_time: TimeSchema,
+  reason: z.string().min(1).max(255),
+});
+
+export const CafeClosureUpdateSchema = CafeClosureCreateSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
 // ── fb-channel ────────────────────────────────────────────────────────────────
 
 export const FbChannelQuerySchema = z.object({
