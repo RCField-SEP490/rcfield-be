@@ -8,6 +8,9 @@ import {
   GoogleSchema,
   RefreshSchema,
   LogoutSchema,
+  ForgotPasswordSchema,
+  VerifyPasswordResetCodeSchema,
+  ResetPasswordWithCodeSchema,
 } from '../validate';
 
 export const authController = {
@@ -68,6 +71,41 @@ export const authController = {
       const { refresh_token } = LogoutSchema.parse(req.body);
       await authService.logout(req.user!.userId, refresh_token);
       res.json({ success: true, message: 'Đăng xuất thành công' });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/auth/forgot-password
+  async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email } = ForgotPasswordSchema.parse(req.body);
+      const data = await authService.requestPasswordReset(email);
+      logger.auth('forgot password requested', { email });
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/auth/forgot-password/verify
+  async verifyPasswordResetCode(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, code } = VerifyPasswordResetCodeSchema.parse(req.body);
+      await authService.verifyPasswordResetCode(email, code);
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/auth/reset-password
+  async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, code, password } = ResetPasswordWithCodeSchema.parse(req.body);
+      await authService.resetPasswordWithCode(email, code, password);
+      logger.auth('password reset completed', { email });
+      res.json({ success: true });
     } catch (err) {
       next(err);
     }

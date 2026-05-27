@@ -35,6 +35,24 @@ export const LogoutSchema = z.object({
 
 // ── ai-chat ───────────────────────────────────────────────────────────────────
 
+export const ForgotPasswordSchema = z.object({
+  email: z.string().email('Email không hợp lệ').max(255),
+});
+
+export const VerifyPasswordResetCodeSchema = z.object({
+  email: z.string().email('Email không hợp lệ').max(255),
+  code: z.string().regex(/^\d{6}$/, 'Mã xác nhận phải gồm đúng 6 chữ số'),
+});
+
+export const ResetPasswordWithCodeSchema = z.object({
+  email: z.string().email('Email không hợp lệ').max(255),
+  code: z.string().regex(/^\d{6}$/, 'Mã xác nhận phải gồm đúng 6 chữ số'),
+  password: z
+    .string()
+    .min(6, 'Mật khẩu tối thiểu 6 ký tự')
+    .max(100, 'Mật khẩu không được vượt quá 100 ký tự'),
+});
+
 export const ChatMessageSchema = z.object({
   message: z.string().min(1).max(1000),
   history: z
