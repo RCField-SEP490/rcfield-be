@@ -1,15 +1,19 @@
 import type { Express } from 'express';
 import listEndpoints from 'express-list-endpoints';
+import { cafeOpenApiDocument } from './openapi/cafe.openapi';
 
 type OpenApiOperation = {
   tags: string[];
   summary: string;
+  description?: string;
   security?: Array<{ bearerAuth: [] }>;
   parameters?: Array<{
     name: string;
-    in: 'path';
-    required: true;
-    schema: { type: string };
+    in: 'path' | 'query';
+    required?: boolean;
+    description?: string;
+    schema: Record<string, unknown>;
+    example?: unknown;
   }>;
   requestBody?: {
     required: boolean;
@@ -43,7 +47,7 @@ const getTag = (path: string) => {
   }
 
   if (first === 'cafes') {
-    return second && second !== ':cafeId' ? toTitleCase(second) : 'Cafes';
+    return 'Cafes';
   }
 
   return toTitleCase(first);
@@ -56,7 +60,10 @@ const getPathParameters = (path: string) => {
     name: match[1],
     in: 'path' as const,
     required: true as const,
-    schema: { type: 'string' },
+    schema: {
+      type: 'string',
+      ...((match[1] === 'id' || match[1].endsWith('Id')) && { format: 'uuid' }),
+    },
   }));
 };
 
@@ -86,6 +93,35 @@ const buildRequestBody = (method: string, path: string) => {
     };
   }
 
+  if (path.includes('/cafes/:cafeId/images') && method === 'post') {
+    return {
+      required: true,
+      content: {
+        'multipart/form-data': {
+          schema: {
+            type: 'object',
+            required: ['files'],
+            properties: {
+              files: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'binary',
+                },
+                description: 'Mot hoac nhieu file anh JPG, PNG, WEBP.',
+              },
+              sort_order: {
+                type: 'integer',
+                minimum: 0,
+                default: 0,
+              },
+            },
+          },
+        },
+      },
+    };
+  }
+
   return {
     required: false,
     content: {
@@ -101,6 +137,13 @@ const buildRequestBody = (method: string, path: string) => {
 
 const hasAuthMiddleware = (middlewares: string[]) =>
   middlewares.some((middleware) => AUTH_MIDDLEWARES.has(middleware));
+
+const zodOperationDocs = cafeOpenApiDocument.paths as unknown as Record<
+  string,
+  Record<string, Partial<OpenApiOperation>>
+>;
+
+const getOperationDocs = (path: string, method: string) => zodOperationDocs[path]?.[method];
 
 export const createOpenApiSpec = (app: Express) => {
   const paths: Record<string, Record<string, OpenApiOperation>> = {};
@@ -118,8 +161,9 @@ export const createOpenApiSpec = (app: Express) => {
     for (const rawMethod of endpoint.methods) {
       const method = rawMethod.toLowerCase();
       const requestBody = buildRequestBody(method, endpoint.path);
+      const operationDocs = getOperationDocs(openApiPath, method);
 
-      paths[openApiPath][method] = {
+      const operation: OpenApiOperation = {
         tags: [getTag(endpoint.path)],
         summary: buildSummary(method, endpoint.path),
         ...(hasAuthMiddleware(endpoint.middlewares) && {
@@ -144,6 +188,15 @@ export const createOpenApiSpec = (app: Express) => {
           404: { $ref: '#/components/responses/NotFound' },
           500: { $ref: '#/components/responses/InternalServerError' },
         },
+      };
+
+      paths[openApiPath][method] = {
+        ...operation,
+        ...operationDocs,
+        tags: operationDocs?.tags ?? operation.tags,
+        parameters: operationDocs?.parameters ?? operation.parameters,
+        requestBody: operationDocs?.requestBody ?? operation.requestBody,
+        responses: operationDocs?.responses ?? operation.responses,
       };
     }
   }
@@ -175,6 +228,7 @@ export const createOpenApiSpec = (app: Express) => {
         },
       },
       schemas: {
+        ...(cafeOpenApiDocument.components?.schemas ?? {}),
         ApiResponse: {
           type: 'object',
           properties: {

@@ -34,6 +34,14 @@ export enum TrackType {
   HILL_CLIMB = 'HILL_CLIMB',
 }
 
+export interface CafeOperatingHour {
+  open?: string;
+  close?: string;
+  is_closed?: boolean;
+}
+
+export type CafeOperatingHours = Record<string, CafeOperatingHour>;
+
 // ── Vehicle ───────────────────────────────────────────────────────────────────
 
 export enum AssetTier {

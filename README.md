@@ -29,25 +29,22 @@ REST API cho hệ thống quản lý sân xe RC — B2B SaaS phục vụ chuỗi
 ## Cài đặt lần đầu
 
 ```bash
-# 1. Clone và cài dependencies
+# 1. Clone và cài dependencies Node.js
 npm install
 
-# 2. Tạo file biến môi trường
-cp .env.example .env
-# Mở .env và điền các giá trị cần thiết
-
-# 3. Khởi động DB và Redis bằng Docker
-docker compose up -d
-
-# 4. Chạy migration để tạo toàn bộ bảng
-npm run migration:run
-
-# 5. Khởi động server (development)
-npm run dev
+# 2. Dựng toàn bộ stack: PostgreSQL, Redis, NLU service, migration, backend, Swagger
+npm run up:all
 ```
 
-Server chạy tại: `http://localhost:3000`  
-Health check: `GET http://localhost:3000/api/v1/health`
+Sau khi chạy xong:
+
+- API: `http://localhost:3000`
+- Swagger UI: `http://localhost:3000/api-docs`
+- Health check: `GET http://localhost:3000/api/v1/health`
+
+Lưu ý: nếu chưa có `.env`, lệnh `npm run up:all` sẽ tự copy từ `.env.example`. Với các tính năng bên thứ ba như Cloudinary, Google, Email, Facebook, mở `.env` và điền key thật khi cần dùng.
+
+Nếu lệnh báo Docker chưa chạy, mở Docker Desktop trước rồi chạy lại `npm run up:all`.
 
 ---
 
@@ -71,9 +68,26 @@ Xem file `.env.example` để biết đầy đủ các biến. Những biến b�
 
 ```bash
 npm run dev              # Chạy development (hot reload)
+npm run swagger          # Alias để chạy backend phục vụ Swagger
+npm run up:all           # Một lệnh dựng DB + Redis + NLU + migration + backend + Swagger
 npm run build            # Build TypeScript → dist/
 npm run start            # Chạy production từ dist/
 ```
+
+## Swagger
+
+Swagger UI được mount sẵn ở backend:
+
+- UI: `http://localhost:3000/api-docs`
+- JSON: `http://localhost:3000/api-docs.json`
+
+### Chạy nhanh
+
+```bash
+npm run up:all
+```
+
+Sau đó mở `http://localhost:3000/api-docs` trên trình duyệt.
 
 ### Migration
 
@@ -90,7 +104,10 @@ npm run migration:generate src/migrations/TenMigration # Tự generate migration
 
 ```bash
 # Khởi động PostgreSQL + Redis
-docker compose up -d
+docker compose up -d postgres redis
+
+# Một lệnh dựng toàn bộ stack cần thiết để mở Swagger
+npm run up:all
 
 # Tắt (giữ nguyên data)
 docker compose stop
@@ -104,8 +121,10 @@ docker compose down -v
 
 | Service | Port | Container |
 |---------|------|-----------|
+| Backend API / Swagger | 3000 | `rcfeild_backend` |
 | PostgreSQL | 5432 | `rcfeild_postgres` |
 | Redis | 6379 | `rcfeild_redis` |
+| NLU service | internal 8000 | `rcfeild_nlu` |
 
 ---
 
