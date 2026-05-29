@@ -2,8 +2,6 @@ import 'reflect-metadata';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 
-jest.setTimeout(30000);
-
 // Kết nối DB trước khi test file chạy
 beforeAll(async () => {
   if (!AppDataSource.isInitialized) {
