@@ -11,6 +11,7 @@ import {
   ForgotPasswordSchema,
   VerifyPasswordResetCodeSchema,
   ResetPasswordWithCodeSchema,
+  UpdateMeSchema,
 } from '../validate';
 
 export const authController = {
@@ -71,6 +72,27 @@ export const authController = {
       const { refresh_token } = LogoutSchema.parse(req.body);
       await authService.logout(req.user!.userId, refresh_token);
       res.json({ success: true, message: 'Đăng xuất thành công' });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/auth/me  [auth]
+  async me(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const data = await authService.getMe(req.user!.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/auth/me  [auth]
+  async updateMe(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const input = UpdateMeSchema.parse(req.body);
+      const data = await authService.updateMe(req.user!.userId, input);
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }

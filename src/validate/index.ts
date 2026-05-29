@@ -37,6 +37,14 @@ export const LogoutSchema = z.object({
   refresh_token: z.string().min(1),
 });
 
+export const UpdateMeSchema = z
+  .object({
+    full_name: z.string().min(2).max(255).optional(),
+    phone: z.string().min(9).max(20).nullable().optional(),
+    avatar_url: z.string().url().nullable().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
+
 // ── ai-chat ───────────────────────────────────────────────────────────────────
 
 export const ForgotPasswordSchema = z.object({

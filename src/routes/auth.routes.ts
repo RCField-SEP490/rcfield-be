@@ -19,6 +19,8 @@ router.post('/refresh', authController.refresh);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/forgot-password/verify', authController.verifyPasswordResetCode);
 router.post('/reset-password', authController.resetPassword);
+router.get('/me', authenticate, authController.me);
+router.patch('/me', authenticate, authController.updateMe);
 router.post('/logout', authenticate, authController.logout);
 
 export { router as authRouter };

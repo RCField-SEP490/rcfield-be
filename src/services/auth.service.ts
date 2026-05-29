@@ -23,7 +23,16 @@ export interface TokenPair {
 }
 
 export interface LoginResult extends TokenPair {
-  user: { id: string; email: string; role: UserRole; registrationStatus?: string };
+  user: UserProfile & { registrationStatus?: string };
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string | null;
+  avatarUrl: string | null;
+  role: UserRole;
 }
 
 export interface RegisterInput {
@@ -53,6 +62,17 @@ class AuthService {
 
   private hashPasswordResetCode(userId: string, email: string, code: string): string {
     return this.hashToken(`${userId}:${email}:${code}:${env.jwt.secret}`);
+  }
+
+  private toUserProfile(user: User): UserProfile {
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      phone: user.phone,
+      avatarUrl: user.avatar_url,
+      role: user.role,
+    };
   }
 
   private async issueTokenPair(user: User): Promise<TokenPair> {
@@ -115,7 +135,7 @@ class AuthService {
     }
     return {
       ...tokens,
-      user: { id: user.id, email: user.email, role: user.role, registrationStatus },
+      user: { ...this.toUserProfile(user), registrationStatus },
     };
   }
 
@@ -150,7 +170,7 @@ class AuthService {
     }
     return {
       ...tokens,
-      user: { id: user.id, email: user.email, role: user.role, registrationStatus: regStatus },
+      user: { ...this.toUserProfile(user), registrationStatus: regStatus },
     };
   }
 
@@ -162,6 +182,7 @@ class AuthService {
     let email: string;
     let googleId: string;
     let fullName: string;
+    let avatarUrl: string | null;
 
     try {
       const client = new OAuth2Client(env.google.clientId);
@@ -172,6 +193,7 @@ class AuthService {
       email = payload.email.toLowerCase().trim();
       googleId = payload.sub;
       fullName = payload.name?.trim() || email.split('@')[0];
+      avatarUrl = payload.picture ?? null;
     } catch {
       throw new AppError('Xác thực Google thất bại', 401, 'GOOGLE_AUTH_FAILED');
     }
@@ -186,6 +208,7 @@ class AuthService {
           role: UserRole.CUSTOMER,
           auth_provider: AuthProvider.GOOGLE,
           google_id: googleId,
+          avatar_url: avatarUrl,
           is_active: true,
         }),
       );
@@ -193,9 +216,14 @@ class AuthService {
       user.auth_provider = AuthProvider.GOOGLE;
       user.google_id = googleId;
       if (!user.full_name) user.full_name = fullName;
+      if (!user.avatar_url && avatarUrl) user.avatar_url = avatarUrl;
       user = await this.userRepo.save(user);
     } else if (!user.google_id) {
       user.google_id = googleId;
+      if (!user.avatar_url && avatarUrl) user.avatar_url = avatarUrl;
+      user = await this.userRepo.save(user);
+    } else if (!user.avatar_url && avatarUrl) {
+      user.avatar_url = avatarUrl;
       user = await this.userRepo.save(user);
     }
 
@@ -213,8 +241,29 @@ class AuthService {
     }
     return {
       ...tokens,
-      user: { id: user.id, email: user.email, role: user.role, registrationStatus },
+      user: { ...this.toUserProfile(user), registrationStatus },
     };
+  }
+
+  async getMe(userId: string): Promise<UserProfile> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new AppError('Người dùng không tồn tại', 404, 'USER_NOT_FOUND');
+    return this.toUserProfile(user);
+  }
+
+  async updateMe(
+    userId: string,
+    input: { full_name?: string; phone?: string | null; avatar_url?: string | null },
+  ): Promise<UserProfile> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new AppError('Người dùng không tồn tại', 404, 'USER_NOT_FOUND');
+
+    if (input.full_name !== undefined) user.full_name = input.full_name.trim();
+    if (input.phone !== undefined) user.phone = input.phone;
+    if (input.avatar_url !== undefined) user.avatar_url = input.avatar_url;
+
+    const saved = await this.userRepo.save(user);
+    return this.toUserProfile(saved);
   }
 
   async refreshTokens(rawToken: string): Promise<TokenPair> {
