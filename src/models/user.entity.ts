@@ -22,6 +22,9 @@ export class User {
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string | null;
 
+  @Column({ name: 'avatar_url', type: 'text', nullable: true })
+  avatar_url: string | null;
+
   @Column({ type: 'text', nullable: true })
   password_hash: string | null;
 

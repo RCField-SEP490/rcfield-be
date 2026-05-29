@@ -12,6 +12,7 @@ import { providerSubscriptionRouter } from './provider-subscription.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { cafeRouter } from './cafe.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
+import { uploadRouter } from './upload.routes';
 
 const router = Router();
 
@@ -27,6 +28,7 @@ router.use('/admin/subscription-plans', adminSubscriptionPlanRouter);
 router.use('/provider/notifications', notificationRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/system', systemRouter);
+router.use('/uploads', uploadRouter);
 router.use('/cafes', cafeRouter);
 router.use('/', cafeImagesRouter);
 router.use('/cafes/:cafeId', chatRouter);
