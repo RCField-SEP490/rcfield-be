@@ -3,7 +3,7 @@ import multer from 'multer';
 import {
   authenticate,
   authorize,
-  // optionalAuthenticate,
+  optionalAuthenticate,
   requireActiveProvider,
 } from '../middlewares/auth.middleware';
 import { cafeController } from '../controllers/cafe.controller';
@@ -17,8 +17,8 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
-cafeRouter.get('/', cafeController.listCafes);
-cafeRouter.get('/:cafeId', cafeController.getCafeById);
+cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
+cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.post(
   '/',

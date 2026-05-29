@@ -21,7 +21,7 @@
     "seed:cafes": "ts-node --transpile-only src/seeds/seed-cafes.ts",
     "seed:all": "npm run seed && npm run seed:cafes",
     "test:kb": "ts-node --transpile-only src/scripts/test-kb.ts",
-    "test": "jest",
+    "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint src",
