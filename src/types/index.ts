@@ -191,6 +191,7 @@ export interface AuthPayload {
   userId: string;
   role: UserRole;
   email: string;
+  impersonated_by?: string;
 }
 
 export interface AuthRequest extends Request {
