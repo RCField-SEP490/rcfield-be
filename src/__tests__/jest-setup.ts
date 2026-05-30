@@ -30,7 +30,7 @@ beforeEach(async () => {
       bookings,
       menu_items,
       promotions,
-      vehicle_images,
+      vehicle_catalog_images,
       vehicles,
       staff_cafe_assignments,
       cafe_announcements,

@@ -41,11 +41,30 @@ export function optionalAuthenticate(req: AuthRequest, _res: Response, next: Nex
   }
 }
 
-export function authorize(...roles: UserRole[]) {
+export function authorize(
+  roles: UserRole[],
+  message?: string,
+): (req: AuthRequest, res: Response, next: NextFunction) => void;
+export function authorize(
+  ...roles: UserRole[]
+): (req: AuthRequest, res: Response, next: NextFunction) => void;
+export function authorize(...args: unknown[]) {
+  let roles: UserRole[] = [];
+  let customMessage = 'Forbidden';
+
+  if (args.length > 0 && Array.isArray(args[0])) {
+    roles = args[0] as UserRole[];
+    if (typeof args[1] === 'string') {
+      customMessage = args[1];
+    }
+  } else {
+    roles = args as UserRole[];
+  }
+
   return (req: AuthRequest, _res: Response, next: NextFunction): void => {
     if (!req.user) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'));
     if (!roles.includes(req.user.role)) {
-      return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
+      return next(new AppError(customMessage, 403, 'FORBIDDEN'));
     }
     next();
   };
@@ -59,7 +78,16 @@ export function requireActiveProvider(req: AuthRequest, _res: Response, next: Ne
     [req.user.userId],
   )
     .then((rows) => {
-      const status = rows[0]?.registration_status;
+      if (rows.length === 0) {
+        return next(
+          new AppError(
+            'Tài khoản chưa hoàn thành đăng ký hồ sơ đối tác hoặc chưa được phê duyệt',
+            403,
+            'ACCOUNT_NOT_ACTIVE',
+          ),
+        );
+      }
+      const status = rows[0].registration_status;
       if (status !== ProviderStatus.ACTIVE) {
         if (status === ProviderStatus.SUSPENDED) {
           return next(new AppError('Tài khoản đã bị tạm khóa', 403, 'ACCOUNT_SUSPENDED'));

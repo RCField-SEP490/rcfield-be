@@ -8,6 +8,6 @@ export const cafeImagesRouter = Router();
 cafeImagesRouter.delete(
   '/cafe-images/:id',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  authorize(UserRole.PROVIDER),
   cafeImageController.deleteImage,
 );

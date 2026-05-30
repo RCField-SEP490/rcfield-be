@@ -100,13 +100,33 @@ interface CreateVehicleOptions {
 export async function createTestVehicle(options: CreateVehicleOptions) {
   const { cafe_id, tier = 'STANDARD', status = 'AVAILABLE', compatible_track_types = [] } = options;
 
+  // Insert catalog first
+  const [catalog] = await AppDataSource.query(
+    `INSERT INTO vehicle_catalogs
+       (cafe_id, name, tier, hourly_rate, security_deposit, damage_multiplier, compatible_track_types)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING *`,
+    [cafe_id, 'Traxxas Slash 4x4', tier, 50000, 500000, 1.0, compatible_track_types],
+  );
+
+  // Insert vehicle pointing to catalog
   const [vehicle] = await AppDataSource.query(
     `INSERT INTO vehicles
-       (cafe_id, name, tier, status, hourly_rate,
-        security_deposit, damage_multiplier, compatible_track_types)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       (cafe_id, catalog_id, status)
+     VALUES ($1,$2,$3)
      RETURNING *`,
-    [cafe_id, 'Traxxas Slash 4x4', tier, status, 50000, 500000, 1.0, compatible_track_types],
+    [cafe_id, catalog.id, status],
   );
-  return vehicle;
+
+  return {
+    ...vehicle,
+    id: vehicle.id,
+    catalog_id: catalog.id,
+    name: catalog.name,
+    tier: catalog.tier,
+    hourly_rate: catalog.hourly_rate,
+    security_deposit: catalog.security_deposit,
+    damage_multiplier: catalog.damage_multiplier,
+    compatible_track_types: catalog.compatible_track_types,
+  };
 }

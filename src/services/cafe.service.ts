@@ -4,7 +4,7 @@ import { Cafe } from '../models/cafe.entity';
 import { AppError, CafeOperatingHours, CafeStatus, TrackType, UserRole } from '../types';
 import { checkBranchQuota } from './subscription.service';
 
-interface Viewer {
+export interface Viewer {
   userId: string;
   role: UserRole;
 }
@@ -81,9 +81,19 @@ export async function getCafeOrThrow(id: string): Promise<Cafe> {
 
 export async function getManagedCafeOrThrow(id: string, viewer: Viewer): Promise<Cafe> {
   const cafe = await getCafeOrThrow(id);
-  if (viewer.role === UserRole.ADMIN) return cafe;
-  if (viewer.role === UserRole.PROVIDER && cafe.providerId === viewer.userId) return cafe;
-  throw new AppError('Forbidden', 403, 'FORBIDDEN');
+  if (viewer.role === UserRole.PROVIDER) {
+    if (cafe.providerId === viewer.userId) return cafe;
+    throw new AppError('Bạn không phải chủ sở hữu chi nhánh này', 403, 'FORBIDDEN');
+  }
+  if (viewer.role === UserRole.STAFF) {
+    const isAssigned = await AppDataSource.query(
+      `SELECT 1 FROM staff_cafe_assignments WHERE staff_id = $1 AND cafe_id = $2`,
+      [viewer.userId, id],
+    );
+    if (isAssigned && isAssigned.length > 0) return cafe;
+    throw new AppError('Nhân viên không thuộc chi nhánh này', 403, 'FORBIDDEN');
+  }
+  throw new AppError('Bạn không có quyền truy cập hoặc quản lý chi nhánh này', 403, 'FORBIDDEN');
 }
 
 export async function createCafe(providerId: string, body: CreateCafeBody): Promise<Cafe> {

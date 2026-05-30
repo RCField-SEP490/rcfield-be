@@ -8,6 +8,7 @@ import {
 } from '../middlewares/auth.middleware';
 import { cafeController } from '../controllers/cafe.controller';
 import { cafeImageController } from '../controllers/cafe-image.controller';
+import { vehicleController } from '../controllers/vehicle.controller';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -20,6 +21,7 @@ const upload = multer({
 cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
+cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);
 cafeRouter.post(
   '/',
   authenticate,
@@ -43,7 +45,7 @@ cafeRouter.patch(
 cafeRouter.post(
   '/:cafeId/images',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  authorize(UserRole.PROVIDER),
   requireActiveProvider,
   upload.array('files', 20),
   cafeImageController.createImages,
