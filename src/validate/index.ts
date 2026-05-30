@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
-import { CafeStatus, TrackType } from '../types';
+import { AssetTier, CafeStatus, TrackType, VehicleStatus } from '../types';
 
 extendZodWithOpenApi(z);
 
@@ -309,4 +309,95 @@ export const WidgetConfigSchema = z.object({
   avatar_url: z.string().url().nullable().optional(),
   quick_replies: z.array(z.string().max(50)).max(5).optional(),
   system_prompt: z.string().max(2000).nullable().optional(),
+});
+
+// ── vehicle catalog ──────────────────────────────────────────────────────────
+
+const AssetTierSchema = z.nativeEnum(AssetTier);
+
+export const CreateVehicleCatalogSchema = z.object({
+  name: z.string().min(2).max(255).openapi({ example: 'Tamiya TT-02 Drift Spec' }),
+  description: z
+    .string()
+    .max(2000)
+    .nullable()
+    .optional()
+    .openapi({ example: 'Phù hợp cho người mới bắt đầu chơi drift.' }),
+  tier: AssetTierSchema.openapi({ example: AssetTier.STANDARD }),
+  hourly_rate: z.number().nonnegative().openapi({ example: 40000 }),
+  security_deposit: z.number().nonnegative().openapi({ example: 200000 }),
+  damage_multiplier: z
+    .number()
+    .min(0.1)
+    .max(10.0)
+    .optional()
+    .default(1.0)
+    .openapi({ example: 1.0 }),
+  compatible_track_types: z
+    .array(TrackTypeSchema)
+    .min(1)
+    .openapi({ example: [TrackType.DRIFT] }),
+  cover_image_url: z
+    .string()
+    .url()
+    .nullable()
+    .optional()
+    .openapi({ example: 'https://res.cloudinary.com/rcfield/image/upload/v1/vehicles/tamiya.jpg' }),
+  images: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        sort_order: z.number().int().min(0).optional().default(0),
+      }),
+    )
+    .optional()
+    .openapi({
+      example: [
+        {
+          url: 'https://res.cloudinary.com/rcfield/image/upload/v1/vehicles/tamiya-2.jpg',
+          sort_order: 1,
+        },
+      ],
+    }),
+});
+
+export const UpdateVehicleCatalogSchema = CreateVehicleCatalogSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const VehicleCatalogIdParamsSchema = z.object({
+  catalogId: z.string().uuid().openapi({ example: '9f4c9fb0-9c28-4b6b-a9c2-fdd4d13d1002' }),
+});
+
+export const CreateVehicleUnitSchema = z.object({
+  status: z.nativeEnum(VehicleStatus).optional().default(VehicleStatus.AVAILABLE),
+  identifier: z.string().max(255).nullable().optional(),
+  color: z.string().max(100).nullable().optional(),
+  distinctive_image_url: z.string().url().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  metadata: z.record(z.any()).nullable().optional(),
+});
+
+export const UpdateVehicleUnitSchema = z
+  .object({
+    status: z.nativeEnum(VehicleStatus).optional(),
+    last_maintenance_at: z.string().datetime().nullable().optional(),
+    identifier: z.string().max(255).nullable().optional(),
+    color: z.string().max(100).nullable().optional(),
+    distinctive_image_url: z.string().url().nullable().optional(),
+    notes: z.string().nullable().optional(),
+    metadata: z.record(z.any()).nullable().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
+
+export const VehicleUnitIdParamsSchema = z.object({
+  catalogId: z.string().uuid(),
+  unitId: z.string().uuid(),
+});
+
+export const ListVehicleUnitsQuerySchema = z.object({
+  status: z.nativeEnum(VehicleStatus).optional(),
+  catalog_id: z.string().uuid().optional(),
+  search: z.string().optional(),
 });

@@ -571,31 +571,116 @@ async function seedVehicles(
   }[],
 ) {
   for (const v of vehicles) {
-    const [existing] = await AppDataSource.query<{ id: string }[]>(
-      `SELECT id FROM vehicles WHERE cafe_id = $1 AND name = $2 AND deleted_at IS NULL`,
+    // 1. Check if catalog exists
+    let [catalog] = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM vehicle_catalogs WHERE cafe_id = $1 AND name = $2 AND deleted_at IS NULL`,
       [cafeId, v.name],
     );
-    if (existing) {
-      logger.warn('Seed', `Skip vehicle — ${v.name}`);
-      continue;
+
+    let catalogId: string;
+    if (catalog) {
+      catalogId = catalog.id;
+      logger.warn('Seed', `Skip vehicle catalog — already exists: ${v.name}`);
+    } else {
+      const [newCatalog] = await AppDataSource.query<{ id: string }[]>(
+        `INSERT INTO vehicle_catalogs (
+          cafe_id, name, description, tier,
+          hourly_rate, security_deposit, damage_multiplier, compatible_track_types,
+          cover_image_url
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING id`,
+        [
+          cafeId,
+          v.name,
+          v.description,
+          v.tier,
+          v.hourly_rate,
+          v.security_deposit,
+          v.damage_multiplier,
+          v.compatible_track_types,
+          'https://cdn.rcfield.vn/vehicles/tamiya-cover.jpg',
+        ],
+      );
+      catalogId = newCatalog.id;
+      logger.info('Seed', `  Created Vehicle Catalog: ${v.tier.padEnd(10)} ${v.name}`);
+
+      // Seed catalog images (sort_order 0, 1)
+      await AppDataSource.query(
+        `INSERT INTO vehicle_catalog_images (catalog_id, url, sort_order)
+         VALUES ($1, $2, $3)`,
+        [catalogId, 'https://cdn.rcfield.vn/vehicles/tamiya-detail1.jpg', 0],
+      );
     }
-    await AppDataSource.query(
-      `INSERT INTO vehicles (
-        cafe_id, name, description, tier, status,
-        hourly_rate, security_deposit, damage_multiplier, compatible_track_types
-      ) VALUES ($1,$2,$3,$4,'AVAILABLE',$5,$6,$7,$8)`,
-      [
-        cafeId,
-        v.name,
-        v.description,
-        v.tier,
-        v.hourly_rate,
-        v.security_deposit,
-        v.damage_multiplier,
-        v.compatible_track_types,
-      ],
+
+    // 2. Check if physical units exist for this catalog
+    const existingUnits = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM vehicles WHERE catalog_id = $1 AND deleted_at IS NULL`,
+      [catalogId],
     );
-    logger.info('Seed', `  Vehicle: ${v.tier.padEnd(10)} ${v.name}`);
+
+    if (existingUnits.length > 0) {
+      logger.warn('Seed', `  Skip physical units for catalog ${v.name} — already exist`);
+    } else {
+      // Seed 4 physical units with different states for Postman testing
+      const states = [
+        {
+          status: 'AVAILABLE',
+          color: 'Blue',
+          identifier: `${v.name.split(' ')[0]}-01-Blue`,
+          notes: 'Hoạt động tốt, thân vỏ trầy xước nhẹ.',
+          metadata: { body_shell: 'Subaru Impreza WRX', led: 'Chỉ có đèn trước' },
+          last_maintenance_at: null,
+        },
+        {
+          status: 'IN_USE',
+          color: 'Red',
+          identifier: `${v.name.split(' ')[0]}-02-Red`,
+          notes: 'Đang chạy trong slot đặt trước.',
+          metadata: { body_shell: 'Toyota GR Supra', led: 'Hệ thống led gầm RGB' },
+          last_maintenance_at: null,
+        },
+        {
+          status: 'MAINTENANCE',
+          color: 'Yellow',
+          identifier: `${v.name.split(' ')[0]}-03-Maint`,
+          notes: 'Đang thay thế động cơ brushless và servo lái.',
+          metadata: { body_shell: 'Nissan GT-R R35', led: 'Đầy đủ led trước sau' },
+          last_maintenance_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
+        },
+        {
+          status: 'RETIRED',
+          color: 'Black',
+          identifier: `${v.name.split(' ')[0]}-04-Retired`,
+          notes: 'Hỏng hóc nặng khung gầm, ngưng hoạt động chờ thanh lý.',
+          metadata: { body_shell: 'Mazda RX-7', led: 'Không hoạt động' },
+          last_maintenance_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), // 10 days ago
+        },
+      ];
+
+      for (const state of states) {
+        await AppDataSource.query(
+          `INSERT INTO vehicles (
+            cafe_id, catalog_id, status, last_maintenance_at,
+            identifier, color, distinctive_image_url, notes, metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            cafeId,
+            catalogId,
+            state.status,
+            state.last_maintenance_at,
+            state.identifier,
+            state.color,
+            `https://cdn.rcfield.vn/vehicles/unit-${state.color.toLowerCase()}.jpg`,
+            state.notes,
+            JSON.stringify(state.metadata),
+          ],
+        );
+      }
+      logger.info(
+        'Seed',
+        `    Seeded 4 physical units (AVAILABLE, IN_USE, MAINTENANCE, RETIRED) under ${v.name}`,
+      );
+    }
   }
 }
 

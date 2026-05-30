@@ -13,6 +13,7 @@ import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { cafeRouter } from './cafe.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
+import { vehicleCatalogRouter } from './vehicle-catalog.routes';
 
 const router = Router();
 
@@ -31,6 +32,7 @@ router.use('/system', systemRouter);
 router.use('/uploads', uploadRouter);
 router.use('/cafes', cafeRouter);
 router.use('/', cafeImagesRouter);
+router.use('/cafes/:cafeId/vehicle-catalogs', vehicleCatalogRouter);
 router.use('/cafes/:cafeId', chatRouter);
 router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);

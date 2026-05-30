@@ -12,7 +12,19 @@ const USERS = [
     role: 'PROVIDER',
     password: '123456',
   },
+  {
+    email: 'provider_other@gmail.com',
+    full_name: 'Other Provider Owner',
+    role: 'PROVIDER',
+    password: '123456',
+  },
   { email: 'staff@gmail.com', full_name: 'Staff Member', role: 'STAFF', password: '123456' },
+  {
+    email: 'staff_other@gmail.com',
+    full_name: 'Other Staff Member',
+    role: 'STAFF',
+    password: '123456',
+  },
   { email: 'customer@gmail.com', full_name: 'Khách Hàng', role: 'CUSTOMER', password: '123456' },
 ];
 
@@ -25,19 +37,39 @@ async function seed() {
       u.email,
     ]);
 
+    let userId: string;
+
     if (existing) {
       logger.warn('Seed', `Skip — already exists: ${u.email}`);
-      continue;
+      userId = existing.id;
+    } else {
+      const password_hash = await bcrypt.hash(u.password, 10);
+      const result = await AppDataSource.query(
+        `INSERT INTO users (email, full_name, password_hash, role, is_active)
+         VALUES ($1, $2, $3, $4, true)
+         RETURNING id`,
+        [u.email, u.full_name, password_hash, u.role],
+      );
+      userId = result[0]?.id;
+      logger.info('Seed', `Created ${u.role.padEnd(8)} — ${u.email}`);
     }
 
-    const password_hash = await bcrypt.hash(u.password, 10);
-    await AppDataSource.query(
-      `INSERT INTO users (email, full_name, password_hash, role, is_active)
-       VALUES ($1, $2, $3, $4, true)`,
-      [u.email, u.full_name, password_hash, u.role],
-    );
-
-    logger.info('Seed', `Created ${u.role.padEnd(8)} — ${u.email}`);
+    if (u.role === 'PROVIDER' && userId) {
+      const [existingProfile] = await AppDataSource.query(
+        `SELECT id FROM provider_profiles WHERE user_id = $1`,
+        [userId],
+      );
+      if (!existingProfile) {
+        await AppDataSource.query(
+          `INSERT INTO provider_profiles (user_id, business_name, registration_status)
+           VALUES ($1, $2, 'ACTIVE')`,
+          [userId, u.full_name + ' Business'],
+        );
+        logger.info('Seed', `Created Provider Profile for ${u.email}`);
+      } else {
+        logger.warn('Seed', `Skip profile — already exists for ${u.email}`);
+      }
+    }
   }
 
   await AppDataSource.destroy();

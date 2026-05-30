@@ -54,7 +54,7 @@ export const cafeImageController = {
   async createImages(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      if (![UserRole.PROVIDER, UserRole.ADMIN].includes(req.user.role)) {
+      if (req.user.role !== UserRole.PROVIDER) {
         throw new AppError('Forbidden', 403, 'FORBIDDEN');
       }
 
@@ -83,7 +83,7 @@ export const cafeImageController = {
   async deleteImage(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      if (![UserRole.PROVIDER, UserRole.ADMIN].includes(req.user.role)) {
+      if (req.user.role !== UserRole.PROVIDER) {
         throw new AppError('Forbidden', 403, 'FORBIDDEN');
       }
 
