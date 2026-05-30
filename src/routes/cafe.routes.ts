@@ -8,6 +8,7 @@ import {
 } from '../middlewares/auth.middleware';
 import { cafeController } from '../controllers/cafe.controller';
 import { cafeImageController } from '../controllers/cafe-image.controller';
+import { menuRouter } from './menu.routes';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -18,6 +19,7 @@ const upload = multer({
 });
 
 cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
+cafeRouter.use('/:cafeId/menu', menuRouter);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.post(

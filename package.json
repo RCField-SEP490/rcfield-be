@@ -19,6 +19,7 @@
     "setup": "npm run migration:run && npm run seed",
     "seed": "ts-node --transpile-only src/seeds/seed-users.ts",
     "seed:cafes": "ts-node --transpile-only src/seeds/seed-cafes.ts",
+    "seed:menu": "ts-node --transpile-only src/seeds/seed-menu.ts",
     "seed:all": "npm run seed && npm run seed:cafes",
     "test:kb": "ts-node --transpile-only src/scripts/test-kb.ts",
     "test": "jest --runInBand",

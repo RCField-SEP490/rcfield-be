@@ -10,10 +10,14 @@ describe('GET /api-docs.json', () => {
     const cafeList = res.body.paths['/api/v1/cafes'];
     const cafeDetail = res.body.paths['/api/v1/cafes/{cafeId}'];
     const cafeStatus = res.body.paths['/api/v1/cafes/{cafeId}/status'];
+    const cafeMenu = res.body.paths['/api/v1/cafes/{cafeId}/menu'];
+    const cafeMenuItem = res.body.paths['/api/v1/cafes/{cafeId}/menu/{itemId}'];
 
     expect(cafeList).toBeDefined();
     expect(cafeDetail).toBeDefined();
     expect(cafeStatus).toBeDefined();
+    expect(cafeMenu).toBeDefined();
+    expect(cafeMenuItem).toBeDefined();
     expect(res.body.paths['/api/v1/cafes/{id}']).toBeUndefined();
     expect(res.body.paths['/api/v1/cafes/{cafeId}/images']).toBeDefined();
     expect(res.body.paths['/api/v1/cafe-images/{id}']).toBeDefined();
@@ -100,5 +104,48 @@ describe('GET /api-docs.json', () => {
 
     const cafeTags = cafeOperations.flatMap((operation) => operation.tags);
     expect(cafeTags).not.toEqual(expect.arrayContaining(['Id', ':id', 'CafeId']));
+
+    const menuOperations = [cafeMenu.get, cafeMenu.post, cafeMenuItem.patch, cafeMenuItem.delete];
+    for (const operation of menuOperations) {
+      expect(operation.tags).toEqual(['Menu']);
+      expect(operation.summary).toEqual(expect.any(String));
+      expect(operation.summary).not.toMatch(/^GET |^POST |^PATCH |^DELETE /);
+      expect(operation.security).toEqual([{ bearerAuth: [] }]);
+      expect(operation.description).toEqual(expect.any(String));
+      expect(operation.description.length).toBeGreaterThan(20);
+    }
+
+    expect(cafeMenu.get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'cafeId', in: 'path' }),
+        expect.objectContaining({ name: 'page', in: 'query' }),
+        expect.objectContaining({ name: 'limit', in: 'query' }),
+        expect.objectContaining({ name: 'category', in: 'query' }),
+        expect.objectContaining({ name: 'available', in: 'query' }),
+      ]),
+    );
+    expect(cafeMenu.post.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/CreateMenuItemRequest',
+    });
+    expect(cafeMenuItem.patch.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/UpdateMenuItemRequest',
+    });
+    expect(cafeMenuItem.patch.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'cafeId',
+          in: 'path',
+          schema: expect.objectContaining({ format: 'uuid' }),
+        }),
+        expect.objectContaining({
+          name: 'itemId',
+          in: 'path',
+          schema: expect.objectContaining({ format: 'uuid' }),
+        }),
+      ]),
+    );
+    expect(cafeMenuItem.delete.responses[204]).toBeDefined();
+    expect(res.body.components.schemas.CreateMenuItemRequest.properties.price.example).toBe(55000);
+    expect(res.body.components.schemas.MenuItem.properties.isAvailable.example).toBe(true);
   });
 });

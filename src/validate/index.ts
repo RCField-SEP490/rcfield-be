@@ -218,6 +218,66 @@ export const CafeImageResponseSchema = z.object({
   createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
 });
 
+// ── menu ─────────────────────────────────────────────────────────────────────
+
+export const MenuListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1).openapi({ example: 1 }),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
+    example: 20,
+  }),
+  category: z.string().min(1).max(100).optional().openapi({ example: 'Do uong' }),
+  available: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true'))
+    .openapi({ example: 'true' }),
+});
+
+export const CreateMenuItemSchema = z.object({
+  name: z.string().trim().min(2).max(255).openapi({ example: 'Cold Brew Nitro' }),
+  description: z
+    .string()
+    .trim()
+    .max(2000)
+    .nullable()
+    .optional()
+    .openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
+  price: z.coerce.number().nonnegative().openapi({ example: 55000 }),
+  category: z.string().trim().max(100).nullable().optional().openapi({ example: 'Do uong' }),
+  image_url: z
+    .string()
+    .trim()
+    .url()
+    .nullable()
+    .optional()
+    .openapi({ example: 'https://cdn.rcfield.vn/menu/cold-brew.jpg' }),
+  is_available: z.boolean().optional().default(true).openapi({ example: true }),
+});
+
+export const UpdateMenuItemSchema = CreateMenuItemSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const MenuItemParamsSchema = z.object({
+  cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+  itemId: z.string().uuid().openapi({ example: '56d971ce-83ef-4456-b391-7f5673f88001' }),
+});
+
+export const MenuItemResponseSchema = z.object({
+  id: z.string().uuid().openapi({ example: '56d971ce-83ef-4456-b391-7f5673f88001' }),
+  cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+  name: z.string().openapi({ example: 'Cold Brew Nitro' }),
+  description: z.string().nullable().openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
+  price: z.string().openapi({ example: '55000.00' }),
+  category: z.string().nullable().openapi({ example: 'Do uong' }),
+  imageUrl: z.string().nullable().openapi({ example: 'https://cdn.rcfield.vn/menu/cold-brew.jpg' }),
+  isAvailable: z.boolean().openapi({ example: true }),
+  createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
+  updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
+  deletedAt: z.string().datetime().nullable().openapi({ example: null }),
+});
+
 const TimeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'Thời gian phải có định dạng HH:mm');
 
 export const CafeClosureCreateSchema = z.object({

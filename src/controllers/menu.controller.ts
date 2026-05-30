@@ -1,0 +1,80 @@
+import type { NextFunction, Response } from 'express';
+import { logger } from '../config/logger';
+import * as menuService from '../services/menu.service';
+import { AppError, AuthRequest } from '../types';
+import {
+  CafeIdParamsSchema,
+  CreateMenuItemSchema,
+  MenuItemParamsSchema,
+  MenuListQuerySchema,
+  UpdateMenuItemSchema,
+} from '../validate';
+
+function viewerFromRequest(req: AuthRequest) {
+  if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+  return { userId: req.user.userId, role: req.user.role };
+}
+
+export const menuController = {
+  // GET /api/v1/cafes/:cafeId/menu  [auth]
+  async listMenuItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId } = CafeIdParamsSchema.parse(req.params);
+      const { page, limit, category, available } = MenuListQuerySchema.parse(req.query);
+      const result = await menuService.listMenuItems({
+        cafeId,
+        viewer: viewerFromRequest(req),
+        page,
+        limit,
+        category,
+        available,
+      });
+
+      res.json({
+        success: true,
+        data: result.data,
+        meta: { total: result.total, page, limit },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/cafes/:cafeId/menu  [auth]
+  async createMenuItem(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId } = CafeIdParamsSchema.parse(req.params);
+      const body = CreateMenuItemSchema.parse(req.body);
+      const item = await menuService.createMenuItem(cafeId, viewerFromRequest(req), body);
+      logger.info('Menu', 'created item', { cafeId, itemId: item.id });
+      res.status(201).json({ success: true, data: item });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/cafes/:cafeId/menu/:itemId  [auth]
+  async updateMenuItem(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId, itemId } = MenuItemParamsSchema.parse(req.params);
+      const body = UpdateMenuItemSchema.parse(req.body);
+      const item = await menuService.updateMenuItem(cafeId, itemId, viewerFromRequest(req), body);
+      logger.info('Menu', 'updated item', { cafeId, itemId });
+      res.json({ success: true, data: item });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // DELETE /api/v1/cafes/:cafeId/menu/:itemId  [auth]
+  async deleteMenuItem(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId, itemId } = MenuItemParamsSchema.parse(req.params);
+      await menuService.deleteMenuItem(cafeId, itemId, viewerFromRequest(req));
+      logger.info('Menu', 'deleted item', { cafeId, itemId });
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+};
