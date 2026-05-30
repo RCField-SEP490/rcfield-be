@@ -110,10 +110,13 @@ describe('GET /api-docs.json', () => {
       expect(operation.tags).toEqual(['Menu']);
       expect(operation.summary).toEqual(expect.any(String));
       expect(operation.summary).not.toMatch(/^GET |^POST |^PATCH |^DELETE /);
-      expect(operation.security).toEqual([{ bearerAuth: [] }]);
       expect(operation.description).toEqual(expect.any(String));
       expect(operation.description.length).toBeGreaterThan(20);
     }
+    expect(cafeMenu.get.security).toBeUndefined();
+    expect(cafeMenu.post.security).toEqual([{ bearerAuth: [] }]);
+    expect(cafeMenuItem.patch.security).toEqual([{ bearerAuth: [] }]);
+    expect(cafeMenuItem.delete.security).toEqual([{ bearerAuth: [] }]);
 
     expect(cafeMenu.get.parameters).toEqual(
       expect.arrayContaining([

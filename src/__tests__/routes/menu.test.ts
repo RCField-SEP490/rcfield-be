@@ -79,6 +79,18 @@ describe('Menu routes', () => {
     );
   });
 
+  it('public list chỉ thấy món đang bán của cafe ACTIVE', async () => {
+    const cafe = await createTestCafe({ status: 'ACTIVE' });
+    await createMenuItem(cafe.id, { name: 'Tra dao', is_available: true });
+    await createMenuItem(cafe.id, { name: 'Mon tam an', is_available: false });
+
+    const res = await request(app).get(`/api/v1/cafes/${cafe.id}/menu`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].name).toBe('Tra dao');
+  });
+
   it('provider create item hợp lệ', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
@@ -138,7 +150,7 @@ describe('Menu routes', () => {
     expect(listed.body.data).toHaveLength(0);
   });
 
-  it('provider không CRUD cafe hoặc item của người khác', async () => {
+  it('provider không mutate cafe hoặc item của người khác', async () => {
     const owner = await createTestUser({ role: UserRole.PROVIDER });
     const other = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(owner.id);
@@ -146,7 +158,7 @@ describe('Menu routes', () => {
     const cafe = await createTestCafe({ provider_id: owner.id });
     const item = await createMenuItem(cafe.id);
 
-    const listDenied = await request(app)
+    const listAllowed = await request(app)
       .get(`/api/v1/cafes/${cafe.id}/menu`)
       .set('Authorization', `Bearer ${generateToken(other)}`);
     const createDenied = await request(app)
@@ -161,7 +173,7 @@ describe('Menu routes', () => {
       .delete(`/api/v1/cafes/${cafe.id}/menu/${item.id}`)
       .set('Authorization', `Bearer ${generateToken(other)}`);
 
-    expect(listDenied.status).toBe(403);
+    expect(listAllowed.status).toBe(200);
     expect(createDenied.status).toBe(403);
     expect(updateDenied.status).toBe(403);
     expect(deleteDenied.status).toBe(403);

@@ -6,7 +6,6 @@ import { UserRole } from '../types';
 export const menuRouter = Router({ mergeParams: true });
 
 menuRouter.use(authenticate, authorize(UserRole.PROVIDER), requireActiveProvider);
-menuRouter.get('/', menuController.listMenuItems);
 menuRouter.post('/', menuController.createMenuItem);
 menuRouter.patch('/:itemId', menuController.updateMenuItem);
 menuRouter.delete('/:itemId', menuController.deleteMenuItem);

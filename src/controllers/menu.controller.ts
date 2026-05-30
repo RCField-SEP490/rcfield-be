@@ -15,6 +15,11 @@ function viewerFromRequest(req: AuthRequest) {
   return { userId: req.user.userId, role: req.user.role };
 }
 
+function optionalViewerFromRequest(req: AuthRequest) {
+  if (!req.user) return undefined;
+  return { userId: req.user.userId, role: req.user.role };
+}
+
 export const menuController = {
   // GET /api/v1/cafes/:cafeId/menu  [auth]
   async listMenuItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -23,7 +28,7 @@ export const menuController = {
       const { page, limit, category, available } = MenuListQuerySchema.parse(req.query);
       const result = await menuService.listMenuItems({
         cafeId,
-        viewer: viewerFromRequest(req),
+        viewer: optionalViewerFromRequest(req),
         page,
         limit,
         category,

@@ -1,7 +1,7 @@
 import { AppDataSource } from '../config/database';
 import { MenuItem } from '../models/menu-item.entity';
 import { AppError, UserRole } from '../types';
-import { getManagedCafeOrThrow } from './cafe.service';
+import { getCafeDetail, getManagedCafeOrThrow } from './cafe.service';
 
 interface Viewer {
   userId: string;
@@ -10,7 +10,7 @@ interface Viewer {
 
 export interface MenuListOptions {
   cafeId: string;
-  viewer: Viewer;
+  viewer?: Viewer;
   page: number;
   limit: number;
   category?: string;
@@ -47,7 +47,10 @@ export async function listMenuItems(
   options: MenuListOptions,
 ): Promise<{ data: MenuItem[]; total: number }> {
   const { cafeId, viewer, page, limit, category, available } = options;
-  await getManagedCafeOrThrow(cafeId, viewer);
+  const cafe = await getCafeDetail(cafeId, viewer);
+  const canManage =
+    viewer?.role === UserRole.ADMIN ||
+    (viewer?.role === UserRole.PROVIDER && cafe.providerId === viewer.userId);
 
   const qb = AppDataSource.getRepository(MenuItem)
     .createQueryBuilder('item')
@@ -58,7 +61,9 @@ export async function listMenuItems(
     qb.andWhere('item.category = :category', { category });
   }
 
-  if (available !== undefined) {
+  if (!canManage) {
+    qb.andWhere('item.is_available = true');
+  } else if (available !== undefined) {
     qb.andWhere('item.is_available = :available', { available });
   }
 

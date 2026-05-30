@@ -52,8 +52,8 @@ registry.registerPath({
   path: '/api/v1/cafes/{cafeId}/menu',
   tags: ['Menu'],
   summary: 'List cafe menu items',
-  description: 'Provider lay danh sach mon an/uong cua cafe thuoc so huu cua minh.',
-  security: [{ bearerAuth: [] }],
+  description:
+    'Lay danh sach mon an/uong cua cafe. Public chi thay mon dang ban cua cafe ACTIVE; provider so huu cafe co the loc ca mon tam an.',
   request: {
     params: CafeIdParams,
     query: MenuListQuery,
