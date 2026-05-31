@@ -11,6 +11,7 @@ import { cafeImageController } from '../controllers/cafe-image.controller';
 import { vehicleController } from '../controllers/vehicle.controller';
 import { menuController } from '../controllers/menu.controller';
 import { menuRouter } from './menu.routes';
+import { promotionController } from '../controllers/promotion.controller';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -26,6 +27,30 @@ cafeRouter.use('/:cafeId/menu', menuRouter);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);
+cafeRouter.get(
+  '/:cafeId/promotions',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  promotionController.list,
+);
+cafeRouter.post(
+  '/:cafeId/promotions',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  promotionController.create,
+);
+cafeRouter.patch(
+  '/:cafeId/promotions/:promotionId',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  promotionController.update,
+);
+cafeRouter.delete(
+  '/:cafeId/promotions/:promotionId',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  promotionController.remove,
+);
 cafeRouter.post(
   '/',
   authenticate,
