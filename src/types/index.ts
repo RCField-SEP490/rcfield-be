@@ -104,6 +104,12 @@ export enum DiscountType {
   FIXED = 'FIXED',
 }
 
+export enum PromoApplicableTo {
+  ALL = 'ALL',
+  RENTAL = 'RENTAL',
+  BYOC = 'BYOC',
+}
+
 // ── Inspection ────────────────────────────────────────────────────────────────
 
 export enum InspectionType {

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
-import { AssetTier, CafeStatus, TrackType, VehicleStatus } from '../types';
+import {
+  AssetTier,
+  CafeStatus,
+  DiscountType,
+  PromoApplicableTo,
+  TrackType,
+  VehicleStatus,
+} from '../types';
 
 extendZodWithOpenApi(z);
 
@@ -157,6 +164,52 @@ export const UpdateCafeSchema = CreateCafeSchema.partial().refine(
 
 export const UpdateCafeStatusSchema = z.object({
   status: z.nativeEnum(CafeStatus),
+});
+
+const PromotionBaseSchema = z.object({
+  code: z
+    .string()
+    .min(3)
+    .max(50)
+    .regex(/^[A-Z0-9_-]+$/i, 'Mã ưu đãi chỉ gồm chữ, số, dấu gạch ngang hoặc gạch dưới')
+    .transform((value) => value.trim().toUpperCase()),
+  description: z.string().max(2000).nullable().optional(),
+  discount_type: z.nativeEnum(DiscountType),
+  discount_value: z.coerce.number().positive(),
+  max_discount_amount: z.coerce.number().positive().nullable().optional(),
+  min_order_amount: z.coerce.number().nonnegative().nullable().optional(),
+  max_uses: z.coerce.number().int().positive().nullable().optional(),
+  max_uses_per_user: z.coerce.number().int().positive().optional().default(1),
+  applicable_to: z.nativeEnum(PromoApplicableTo).optional().default(PromoApplicableTo.ALL),
+  starts_at: z.coerce.date(),
+  expires_at: z.coerce.date().nullable().optional(),
+  is_active: z.boolean().optional().default(true),
+});
+
+export const CreatePromotionSchema = PromotionBaseSchema.refine(
+  (value) => value.discount_type !== DiscountType.PERCENT || value.discount_value <= 100,
+  'Giảm giá phần trăm không được vượt quá 100%',
+).refine(
+  (value) => !value.expires_at || value.expires_at > value.starts_at,
+  'Thời gian hết hạn phải sau thời gian bắt đầu',
+);
+
+export const UpdatePromotionSchema = PromotionBaseSchema.partial()
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
+  .refine(
+    (value) =>
+      value.discount_type !== DiscountType.PERCENT ||
+      value.discount_value === undefined ||
+      value.discount_value <= 100,
+    'Giảm giá phần trăm không được vượt quá 100%',
+  )
+  .refine(
+    (value) => !value.expires_at || !value.starts_at || value.expires_at > value.starts_at,
+    'Thời gian hết hạn phải sau thời gian bắt đầu',
+  );
+
+export const PromotionIdParamsSchema = z.object({
+  promotionId: z.string().uuid(),
 });
 
 export const CafeImageCreateSchema = z.object({
