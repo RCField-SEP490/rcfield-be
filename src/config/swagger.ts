@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import listEndpoints from 'express-list-endpoints';
 import { cafeOpenApiDocument } from './openapi/cafe.openapi';
+import { menuOpenApiDocument } from './openapi/menu.openapi';
 
 type OpenApiOperation = {
   tags: string[];
@@ -138,10 +139,16 @@ const buildRequestBody = (method: string, path: string) => {
 const hasAuthMiddleware = (middlewares: string[]) =>
   middlewares.some((middleware) => AUTH_MIDDLEWARES.has(middleware));
 
-const zodOperationDocs = cafeOpenApiDocument.paths as unknown as Record<
-  string,
-  Record<string, Partial<OpenApiOperation>>
->;
+const zodOperationDocs = {
+  ...(cafeOpenApiDocument.paths as unknown as Record<
+    string,
+    Record<string, Partial<OpenApiOperation>>
+  >),
+  ...(menuOpenApiDocument.paths as unknown as Record<
+    string,
+    Record<string, Partial<OpenApiOperation>>
+  >),
+} as Record<string, Record<string, Partial<OpenApiOperation>>>;
 
 const getOperationDocs = (path: string, method: string) => zodOperationDocs[path]?.[method];
 
@@ -201,6 +208,15 @@ export const createOpenApiSpec = (app: Express) => {
     }
   }
 
+  for (const [path, methods] of Object.entries(zodOperationDocs)) {
+    paths[path] ??= {};
+    for (const [method, operationDocs] of Object.entries(methods)) {
+      if (!paths[path][method]) {
+        paths[path][method] = operationDocs as OpenApiOperation;
+      }
+    }
+  }
+
   return {
     openapi: '3.0.3',
     info: {
@@ -229,6 +245,7 @@ export const createOpenApiSpec = (app: Express) => {
       },
       schemas: {
         ...(cafeOpenApiDocument.components?.schemas ?? {}),
+        ...(menuOpenApiDocument.components?.schemas ?? {}),
         ApiResponse: {
           type: 'object',
           properties: {

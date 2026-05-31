@@ -9,6 +9,8 @@ import {
 import { cafeController } from '../controllers/cafe.controller';
 import { cafeImageController } from '../controllers/cafe-image.controller';
 import { vehicleController } from '../controllers/vehicle.controller';
+import { menuController } from '../controllers/menu.controller';
+import { menuRouter } from './menu.routes';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -19,6 +21,8 @@ const upload = multer({
 });
 
 cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
+cafeRouter.get('/:cafeId/menu', optionalAuthenticate, menuController.listMenuItems);
+cafeRouter.use('/:cafeId/menu', menuRouter);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);

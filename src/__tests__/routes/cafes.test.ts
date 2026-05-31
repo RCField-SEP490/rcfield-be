@@ -136,6 +136,26 @@ describe('Cafe routes', () => {
     expect(res.body.data[0].status).toBe(CafeStatus.ACTIVE);
   });
 
+  it('provider managed list chỉ trả cafe thuộc sở hữu của provider', async () => {
+    const owner = await createTestUser({ role: UserRole.PROVIDER });
+    const other = await createTestUser({ role: UserRole.PROVIDER });
+    await createTestCafe({ provider_id: owner.id, status: CafeStatus.ACTIVE });
+    await createTestCafe({ provider_id: owner.id, status: CafeStatus.PENDING });
+    await createTestCafe({ provider_id: owner.id, status: CafeStatus.SUSPENDED });
+    await createTestCafe({ provider_id: other.id, status: CafeStatus.ACTIVE });
+
+    const res = await request(app)
+      .get('/api/v1/cafes?scope=managed&page=1&limit=20')
+      .set('Authorization', `Bearer ${generateToken(owner)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.meta.total).toBe(3);
+    expect(res.body.data).toHaveLength(3);
+    expect(
+      res.body.data.every((cafe: { providerId: string }) => cafe.providerId === owner.id),
+    ).toBe(true);
+  });
+
   it('owner xem được draft detail, public không xem được', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.PENDING });
@@ -165,5 +185,53 @@ describe('Cafe routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe(CafeStatus.ACTIVE);
+  });
+
+  it('provider không đổi được status cafe thuộc provider khác', async () => {
+    const owner = await createTestUser({ role: UserRole.PROVIDER });
+    const other = await createTestUser({ role: UserRole.PROVIDER });
+    const cafe = await createTestCafe({ provider_id: owner.id, status: CafeStatus.ACTIVE });
+
+    const res = await request(app)
+      .patch(`/api/v1/cafes/${cafe.id}/status`)
+      .set('Authorization', `Bearer ${generateToken(other)}`)
+      .send({ status: CafeStatus.SUSPENDED });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  it('provider không tự approve cafe PENDING', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.PENDING });
+
+    const res = await request(app)
+      .patch(`/api/v1/cafes/${cafe.id}/status`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ status: CafeStatus.ACTIVE });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  it('provider owner được tạm ngưng và kích hoạt lại cafe đang hoạt động', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.ACTIVE });
+
+    const suspended = await request(app)
+      .patch(`/api/v1/cafes/${cafe.id}/status`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ status: CafeStatus.SUSPENDED });
+
+    expect(suspended.status).toBe(200);
+    expect(suspended.body.data.status).toBe(CafeStatus.SUSPENDED);
+
+    const active = await request(app)
+      .patch(`/api/v1/cafes/${cafe.id}/status`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ status: CafeStatus.ACTIVE });
+
+    expect(active.status).toBe(200);
+    expect(active.body.data.status).toBe(CafeStatus.ACTIVE);
   });
 });
