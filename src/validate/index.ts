@@ -105,6 +105,7 @@ export const CafeListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
+  scope: z.enum(['managed']).optional().openapi({ example: 'managed' }),
   district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
   city: z.string().min(1).max(100).optional().openapi({ example: 'TP. Ho Chi Minh' }),
   track_type: TrackTypeSchema.optional().openapi({ example: TrackType.DRIFT }),

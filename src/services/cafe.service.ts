@@ -12,6 +12,7 @@ interface Viewer {
 interface ListOptions {
   page: number;
   limit: number;
+  scope?: 'managed';
   district?: string;
   city?: string;
   track_type?: string;
@@ -115,12 +116,14 @@ export async function createCafe(providerId: string, body: CreateCafeBody): Prom
 }
 
 export async function listCafes(options: ListOptions): Promise<{ data: Cafe[]; total: number }> {
-  const { page, limit, district, city, track_type, status, viewer } = options;
+  const { page, limit, scope, district, city, track_type, status, viewer } = options;
   const qb = AppDataSource.getRepository(Cafe)
     .createQueryBuilder('cafe')
     .where('cafe.deleted_at IS NULL');
 
-  if (!viewer || viewer.role === UserRole.CUSTOMER || viewer.role === UserRole.STAFF) {
+  if (scope === 'managed' && viewer?.role === UserRole.PROVIDER) {
+    qb.andWhere('cafe.provider_id = :providerId', { providerId: viewer.userId });
+  } else if (!viewer || viewer.role === UserRole.CUSTOMER || viewer.role === UserRole.STAFF) {
     qb.andWhere('cafe.status = :active', { active: CafeStatus.ACTIVE });
   } else if (viewer.role === UserRole.PROVIDER) {
     qb.andWhere('(cafe.status = :active OR cafe.provider_id = :providerId)', {
@@ -194,8 +197,26 @@ export async function updateCafe(
   return AppDataSource.getRepository(Cafe).save(cafe);
 }
 
-export async function updateCafeStatus(id: string, status: CafeStatus): Promise<Cafe> {
+export async function updateCafeStatus(
+  id: string,
+  status: CafeStatus,
+  viewer: Viewer,
+): Promise<Cafe> {
   const cafe = await getCafeOrThrow(id);
+
+  if (viewer.role === UserRole.PROVIDER) {
+    assertCafeOwner(cafe, viewer.userId);
+    if (cafe.status === CafeStatus.PENDING || status === CafeStatus.PENDING) {
+      throw new AppError(
+        'Provider không thể tự duyệt hoặc chuyển cafe về trạng thái chờ duyệt',
+        403,
+        'FORBIDDEN',
+      );
+    }
+  } else if (viewer.role !== UserRole.ADMIN) {
+    throw new AppError('Forbidden', 403, 'FORBIDDEN');
+  }
+
   cafe.status = status;
   return AppDataSource.getRepository(Cafe).save(cafe);
 }

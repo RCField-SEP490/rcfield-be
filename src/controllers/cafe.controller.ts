@@ -28,7 +28,7 @@ export const cafeController = {
   // GET /api/v1/cafes
   async listCafes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { page, limit, district, city, track_type, status } = CafeListQuerySchema.parse(
+      const { page, limit, scope, district, city, track_type, status } = CafeListQuerySchema.parse(
         req.query,
       );
       const canFilterStatus =
@@ -38,6 +38,7 @@ export const cafeController = {
       const result = await cafeService.listCafes({
         page,
         limit,
+        scope,
         district,
         city,
         track_type,
@@ -81,8 +82,12 @@ export const cafeController = {
   // PATCH /api/v1/cafes/:cafeId/status  [auth]
   async updateCafeStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
       const { status } = UpdateCafeStatusSchema.parse(req.body);
-      const cafe = await cafeService.updateCafeStatus(req.params.cafeId, status);
+      const cafe = await cafeService.updateCafeStatus(req.params.cafeId, status, {
+        userId: req.user.userId,
+        role: req.user.role,
+      });
       res.json({ success: true, data: cafe });
     } catch (err) {
       next(err);
