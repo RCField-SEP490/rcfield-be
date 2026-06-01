@@ -7,7 +7,6 @@ import {
   UpsertWidgetConfigSchema,
 } from '../validate';
 import { AppError, AuthRequest, CafeStatus, UserRole } from '../types';
-import { AppDataSource } from '../config/database';
 import * as cafeService from '../services/cafe.service';
 import { getWidgetConfigForCafe, upsertWidgetConfig } from '../services/chat.service';
 
@@ -31,9 +30,8 @@ export const cafeController = {
   // GET /api/v1/cafes
   async listCafes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { page, limit, scope, district, city, track_type, status } = CafeListQuerySchema.parse(
-        req.query,
-      );
+      const { page, limit, scope, slug, district, city, track_type, status } =
+        CafeListQuerySchema.parse(req.query);
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
       const visibleStatus = canFilterStatus ? (status as CafeStatus | undefined) : undefined;
@@ -42,6 +40,7 @@ export const cafeController = {
         page,
         limit,
         scope,
+        slug,
         district,
         city,
         track_type,
@@ -101,7 +100,7 @@ export const cafeController = {
   async getWidgetConfig(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      await cafeService.getManagedCafeOrThrow(req.params.cafeId, {
+      const cafe = await cafeService.getManagedCafeOrThrow(req.params.cafeId, {
         userId: req.user.userId,
         role: req.user.role,
       });
@@ -109,6 +108,8 @@ export const cafeController = {
       res.json({
         success: true,
         data: {
+          cafeId: cafe.id,
+          cafeSlug: cafe.slug,
           greetingMessage: config?.greetingMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
           welcomeMessage: config?.welcomeMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
           position: config?.position ?? 'BOTTOM_RIGHT',
@@ -117,6 +118,7 @@ export const cafeController = {
           quickReplies: config?.quickReplies ?? [],
           systemPrompt: config?.systemPrompt ?? null,
           isEnabled: config?.isEnabled ?? false,
+          fullPageEnabled: config?.fullPageEnabled ?? false,
         },
       });
     } catch (err) {
@@ -141,13 +143,9 @@ export const cafeController = {
         ...(body.avatar_url !== undefined && { avatarUrl: body.avatar_url }),
         ...(body.quick_replies !== undefined && { quickReplies: body.quick_replies }),
         ...(body.system_prompt !== undefined && { systemPrompt: body.system_prompt }),
+        ...(body.is_enabled !== undefined && { isEnabled: body.is_enabled }),
+        ...(body.full_page_enabled !== undefined && { fullPageEnabled: body.full_page_enabled }),
       });
-      if (body.is_enabled !== undefined) {
-        await AppDataSource.query(
-          `UPDATE cafe_widget_configs SET is_enabled = $1 WHERE cafe_id = $2`,
-          [body.is_enabled, req.params.cafeId],
-        );
-      }
       res.json({ success: true, data: updated });
     } catch (err) {
       next(err);

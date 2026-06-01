@@ -46,6 +46,9 @@ export class CafeWidgetConfig {
   @Column({ name: 'is_enabled', default: true })
   isEnabled: boolean;
 
+  @Column({ name: 'full_page_enabled', default: false })
+  fullPageEnabled: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

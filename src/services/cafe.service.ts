@@ -13,6 +13,7 @@ interface ListOptions {
   page: number;
   limit: number;
   scope?: 'managed';
+  slug?: string;
   district?: string;
   city?: string;
   track_type?: string;
@@ -126,20 +127,16 @@ export async function createCafe(providerId: string, body: CreateCafeBody): Prom
 }
 
 export async function listCafes(options: ListOptions): Promise<{ data: Cafe[]; total: number }> {
-  const { page, limit, scope, district, city, track_type, status, viewer } = options;
+  const { page, limit, scope, slug, district, city, track_type, status, viewer } = options;
   const qb = AppDataSource.getRepository(Cafe)
     .createQueryBuilder('cafe')
     .where('cafe.deleted_at IS NULL');
 
   if (scope === 'managed' && viewer?.role === UserRole.PROVIDER) {
     qb.andWhere('cafe.provider_id = :providerId', { providerId: viewer.userId });
-  } else if (!viewer || viewer.role === UserRole.CUSTOMER || viewer.role === UserRole.STAFF) {
+  } else {
+    // Public browse (explore page): only ACTIVE cafes, regardless of viewer role
     qb.andWhere('cafe.status = :active', { active: CafeStatus.ACTIVE });
-  } else if (viewer.role === UserRole.PROVIDER) {
-    qb.andWhere('(cafe.status = :active OR cafe.provider_id = :providerId)', {
-      active: CafeStatus.ACTIVE,
-      providerId: viewer.userId,
-    });
   }
 
   if (status && viewer?.role === UserRole.ADMIN) {
@@ -147,6 +144,7 @@ export async function listCafes(options: ListOptions): Promise<{ data: Cafe[]; t
   } else if (status && viewer?.role === UserRole.PROVIDER) {
     qb.andWhere('cafe.status = :status', { status });
   }
+  if (slug) qb.andWhere('cafe.slug = :slug', { slug });
   if (district) qb.andWhere('cafe.district = :district', { district });
   if (city) qb.andWhere('cafe.city = :city', { city });
   if (track_type) qb.andWhere(':trackType = ANY(cafe.track_types)', { trackType: track_type });

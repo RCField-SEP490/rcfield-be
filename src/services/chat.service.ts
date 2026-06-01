@@ -525,11 +525,14 @@ export async function upsertWidgetConfig(
   cafeId: string,
   updates: Partial<{
     greetingMessage: string;
+    welcomeMessage: string;
     position: string;
     primaryColor: string;
     avatarUrl: string | null;
     quickReplies: string[];
     systemPrompt: string | null;
+    isEnabled: boolean;
+    fullPageEnabled: boolean;
   }>,
 ): Promise<CafeWidgetConfig> {
   const ds: DataSource = AppDataSource;
@@ -537,26 +540,35 @@ export async function upsertWidgetConfig(
   const setParts: string[] = [];
   if (updates.greetingMessage !== undefined)
     setParts.push(`greeting_message = EXCLUDED.greeting_message`);
+  if (updates.welcomeMessage !== undefined)
+    setParts.push(`welcome_message = EXCLUDED.welcome_message`);
   if (updates.position !== undefined) setParts.push(`position = EXCLUDED.position`);
   if (updates.primaryColor !== undefined) setParts.push(`primary_color = EXCLUDED.primary_color`);
   if (updates.avatarUrl !== undefined) setParts.push(`avatar_url = EXCLUDED.avatar_url`);
   if (updates.quickReplies !== undefined) setParts.push(`quick_replies = EXCLUDED.quick_replies`);
   if (updates.systemPrompt !== undefined) setParts.push(`system_prompt = EXCLUDED.system_prompt`);
+  if (updates.isEnabled !== undefined) setParts.push(`is_enabled = EXCLUDED.is_enabled`);
+  if (updates.fullPageEnabled !== undefined)
+    setParts.push(`full_page_enabled = EXCLUDED.full_page_enabled`);
 
   const setClause = setParts.length ? `, ${setParts.join(', ')}` : '';
 
   await ds.query(
-    `INSERT INTO cafe_widget_configs (cafe_id, greeting_message, position, primary_color, avatar_url, quick_replies, system_prompt)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+    `INSERT INTO cafe_widget_configs
+       (cafe_id, greeting_message, welcome_message, position, primary_color, avatar_url, quick_replies, system_prompt, is_enabled, full_page_enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
      ON CONFLICT (cafe_id) DO UPDATE SET updated_at = now()${setClause}`,
     [
       cafeId,
       updates.greetingMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
+      updates.welcomeMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
       updates.position ?? 'BOTTOM_RIGHT',
       updates.primaryColor ?? '#2563EB',
       updates.avatarUrl ?? null,
       JSON.stringify(updates.quickReplies ?? []),
       updates.systemPrompt ?? null,
+      updates.isEnabled ?? false,
+      updates.fullPageEnabled ?? false,
     ],
   );
 

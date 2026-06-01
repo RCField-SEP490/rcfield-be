@@ -113,6 +113,7 @@ export const CafeListQuerySchema = z.object({
     example: 20,
   }),
   scope: z.enum(['managed']).optional().openapi({ example: 'managed' }),
+  slug: z.string().min(1).max(120).optional().openapi({ example: 'rc-arena-sai-gon' }),
   district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
   city: z.string().min(1).max(100).optional().openapi({ example: 'TP. Ho Chi Minh' }),
   track_type: TrackTypeSchema.optional().openapi({ example: TrackType.DRIFT }),
@@ -529,4 +530,5 @@ export const UpsertWidgetConfigSchema = z.object({
   quick_replies: z.array(z.string().max(100)).max(6).optional(),
   system_prompt: z.string().max(4000).nullable().optional(),
   is_enabled: z.boolean().optional(),
+  full_page_enabled: z.boolean().optional(),
 });
