@@ -515,3 +515,18 @@ export const ListVehicleUnitsQuerySchema = z.object({
   catalog_id: z.string().uuid().optional(),
   search: z.string().optional(),
 });
+
+// ── cafe widget config ────────────────────────────────────────────────────────
+export const UpsertWidgetConfigSchema = z.object({
+  greeting_message: z.string().max(500).optional(),
+  welcome_message: z.string().max(500).optional(),
+  position: z.enum(['BOTTOM_RIGHT', 'BOTTOM_LEFT']).optional(),
+  primary_color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/)
+    .optional(),
+  avatar_url: z.string().url().nullable().optional(),
+  quick_replies: z.array(z.string().max(100)).max(6).optional(),
+  system_prompt: z.string().max(4000).nullable().optional(),
+  is_enabled: z.boolean().optional(),
+});

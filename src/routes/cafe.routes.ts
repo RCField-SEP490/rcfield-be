@@ -79,3 +79,16 @@ cafeRouter.post(
   upload.array('files', 20),
   cafeImageController.createImages,
 );
+cafeRouter.get(
+  '/:cafeId/widget-config',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  cafeController.getWidgetConfig,
+);
+cafeRouter.put(
+  '/:cafeId/widget-config',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  requireActiveProvider,
+  cafeController.updateWidgetConfig,
+);
