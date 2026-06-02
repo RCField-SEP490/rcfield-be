@@ -156,6 +156,8 @@ export const CreateCafeSchema = z.object({
     example: 30,
   }),
   byoc_capacity: z.number().int().nonnegative().optional().default(5).openapi({ example: 4 }),
+  amenity_ids: z.array(z.string().uuid()).optional().default([]),
+  rules: z.array(z.string().min(1).max(500)).optional().default([]),
 });
 
 export const UpdateCafeSchema = CreateCafeSchema.partial().refine(
@@ -272,6 +274,17 @@ export const CafeImageResponseSchema = z.object({
   sortOrder: z.number().int().openapi({ example: 0 }),
   createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
 });
+
+export const CreateAmenitySchema = z.object({
+  title: z.string().min(1).max(100),
+  description: z.string().max(500).nullable().optional(),
+  icon: z.string().min(1).max(50),
+  sort_order: z.number().int().nonnegative().optional().default(0),
+});
+export const UpdateAmenitySchema = CreateAmenitySchema.partial().refine(
+  (v) => Object.keys(v).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
 
 // ── menu ─────────────────────────────────────────────────────────────────────
 

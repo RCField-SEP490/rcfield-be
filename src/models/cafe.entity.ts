@@ -75,6 +75,12 @@ export class Cafe {
   @Column({ name: 'byoc_capacity', type: 'int', default: 5 })
   byocCapacity: number;
 
+  @Column({ name: 'amenity_ids', type: 'uuid', array: true, default: [] })
+  amenityIds: string[];
+
+  @Column({ type: 'text', array: true, default: [] })
+  rules: string[];
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

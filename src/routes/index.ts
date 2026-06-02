@@ -10,10 +10,14 @@ import { adminPaymentRequestRouter } from './admin-payment-request.routes';
 import { notificationRouter } from './notification.routes';
 import { providerSubscriptionRouter } from './provider-subscription.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
+import { adminAmenityRouter } from './admin-amenity.routes';
 import { cafeRouter } from './cafe.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
+import { AppDataSource } from '../config/database';
+import { SubscriptionPlan } from '../models/subscription-plan.entity';
+import { AmenityCatalog } from '../models/amenity-catalog.entity';
 
 const router = Router();
 
@@ -21,11 +25,53 @@ router.get('/health', (_req, res) => {
   res.json({ success: true, message: 'RCField API is running' });
 });
 
+// GET /api/v1/subscription-plans — public, trả về các gói trả phí để provider chọn khi nộp payment request
+router.get('/subscription-plans', async (_req, res, next) => {
+  try {
+    const plans = await AppDataSource.getRepository(SubscriptionPlan).find({
+      where: { isTrial: false },
+      order: { pricePerMonth: 'ASC' },
+    });
+    res.json(
+      plans.map((p) => ({
+        id: p.id,
+        name: p.name,
+        branchLimit: p.branchLimit,
+        aiQuotaPerMonth: p.aiQuotaPerMonth,
+        channelLimit: p.channelLimit,
+        pricePerMonth: Number(p.pricePerMonth),
+      })),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/amenities', async (_req, res, next) => {
+  try {
+    const items = await AppDataSource.getRepository(AmenityCatalog).find({
+      order: { sortOrder: 'ASC' },
+    });
+    res.json(
+      items.map((a) => ({
+        id: a.id,
+        title: a.title,
+        description: a.description,
+        icon: a.icon,
+        sortOrder: a.sortOrder,
+      })),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use('/auth', authRouter);
 router.use('/auth', providerOnboardingRouter);
 router.use('/admin/providers', adminProviderRouter);
 router.use('/admin/payment-requests', adminPaymentRequestRouter);
 router.use('/admin/subscription-plans', adminSubscriptionPlanRouter);
+router.use('/admin/amenities', adminAmenityRouter);
 router.use('/provider/notifications', notificationRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/system', systemRouter);

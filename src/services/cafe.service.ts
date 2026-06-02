@@ -1,6 +1,7 @@
-import { FindOptionsWhere } from 'typeorm';
+import { FindOptionsWhere, In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Cafe } from '../models/cafe.entity';
+import { AmenityCatalog } from '../models/amenity-catalog.entity';
 import { AppError, CafeOperatingHours, CafeStatus, TrackType, UserRole } from '../types';
 import { checkBranchQuota } from './subscription.service';
 
@@ -38,6 +39,8 @@ export interface CreateCafeBody {
   max_concurrent_bookings: number;
   min_booking_notice_minutes: number;
   byoc_capacity: number;
+  amenity_ids?: string[];
+  rules?: string[];
 }
 
 export type UpdateCafeBody = Partial<CreateCafeBody>;
@@ -108,7 +111,7 @@ export async function createCafe(providerId: string, body: CreateCafeBody): Prom
   cafe.slug = await makeUniqueSlug(body.name);
   cafe.description = body.description ?? null;
   cafe.phone = body.phone ?? null;
-  cafe.status = CafeStatus.PENDING;
+  cafe.status = CafeStatus.ACTIVE;
   cafe.coverImageUrl = body.cover_image_url ?? null;
   cafe.address = body.address;
   cafe.district = body.district;
@@ -122,6 +125,8 @@ export async function createCafe(providerId: string, body: CreateCafeBody): Prom
   cafe.maxConcurrentBookings = body.max_concurrent_bookings;
   cafe.minBookingNoticeMinutes = body.min_booking_notice_minutes;
   cafe.byocCapacity = body.byoc_capacity;
+  cafe.amenityIds = body.amenity_ids ?? [];
+  cafe.rules = body.rules ?? [];
 
   return repo.save(cafe);
 }
@@ -158,7 +163,10 @@ export async function listCafes(options: ListOptions): Promise<{ data: Cafe[]; t
   return { data, total };
 }
 
-export async function getCafeDetail(id: string, viewer?: Viewer): Promise<Cafe> {
+export async function getCafeDetail(
+  id: string,
+  viewer?: Viewer,
+): Promise<Cafe & { amenities: AmenityCatalog[] }> {
   const cafe = await getCafeOrThrow(id);
   const canViewInactive =
     viewer?.role === UserRole.ADMIN ||
@@ -168,7 +176,13 @@ export async function getCafeDetail(id: string, viewer?: Viewer): Promise<Cafe> 
     throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
   }
 
-  return cafe;
+  const amenities =
+    cafe.amenityIds.length > 0
+      ? await AppDataSource.getRepository(AmenityCatalog).findBy({ id: In(cafe.amenityIds) })
+      : [];
+  amenities.sort((a, b) => a.sortOrder - b.sortOrder);
+
+  return Object.assign(cafe, { amenities });
 }
 
 export async function updateCafe(
@@ -201,6 +215,8 @@ export async function updateCafe(
     cafe.minBookingNoticeMinutes = body.min_booking_notice_minutes;
   }
   if (body.byoc_capacity !== undefined) cafe.byocCapacity = body.byoc_capacity;
+  if (body.amenity_ids !== undefined) cafe.amenityIds = body.amenity_ids;
+  if (body.rules !== undefined) cafe.rules = body.rules;
 
   return AppDataSource.getRepository(Cafe).save(cafe);
 }
