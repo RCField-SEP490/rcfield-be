@@ -262,6 +262,7 @@ export async function listVehicleUnits(
   return vehicles.map((v) => {
     const base: Record<string, unknown> = {
       id: v.id,
+      catalogId: v.catalogId,
       status: v.status,
       identifier: v.identifier,
       color: v.color,
