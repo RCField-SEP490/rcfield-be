@@ -4,6 +4,7 @@ import {
   AssetTier,
   CafeStatus,
   DiscountType,
+  PromotionScheduleMode,
   PromoApplicableTo,
   TrackType,
   VehicleStatus,
@@ -186,16 +187,43 @@ const PromotionBaseSchema = z.object({
   applicable_to: z.nativeEnum(PromoApplicableTo).optional().default(PromoApplicableTo.ALL),
   starts_at: z.coerce.date(),
   expires_at: z.coerce.date().nullable().optional(),
+  schedule_mode: z.nativeEnum(PromotionScheduleMode).optional().default(PromotionScheduleMode.ONCE),
+  schedule_start_time: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .nullable()
+    .optional(),
+  schedule_end_time: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .nullable()
+    .optional(),
+  schedule_weekdays: z
+    .array(z.enum(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']))
+    .optional()
+    .default([]),
   is_active: z.boolean().optional().default(true),
 });
 
 export const CreatePromotionSchema = PromotionBaseSchema.refine(
   (value) => value.discount_type !== DiscountType.PERCENT || value.discount_value <= 100,
   'Giảm giá phần trăm không được vượt quá 100%',
-).refine(
-  (value) => !value.expires_at || value.expires_at > value.starts_at,
-  'Thời gian hết hạn phải sau thời gian bắt đầu',
-);
+)
+  .refine(
+    (value) => !value.expires_at || value.expires_at > value.starts_at,
+    'Thời gian hết hạn phải sau thời gian bắt đầu',
+  )
+  .refine(
+    (value) =>
+      value.schedule_mode !== PromotionScheduleMode.WEEKLY || value.schedule_weekdays.length > 0,
+    'Vui lòng chọn ít nhất một ngày trong tuần',
+  )
+  .refine(
+    (value) =>
+      value.schedule_mode === PromotionScheduleMode.ONCE ||
+      Boolean(value.schedule_start_time && value.schedule_end_time && value.expires_at),
+    'Lịch lặp cần có ngày kết thúc và khung giờ bắt đầu/kết thúc',
+  );
 
 export const UpdatePromotionSchema = PromotionBaseSchema.partial()
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
@@ -209,6 +237,13 @@ export const UpdatePromotionSchema = PromotionBaseSchema.partial()
   .refine(
     (value) => !value.expires_at || !value.starts_at || value.expires_at > value.starts_at,
     'Thời gian hết hạn phải sau thời gian bắt đầu',
+  )
+  .refine(
+    (value) =>
+      value.schedule_mode !== PromotionScheduleMode.WEEKLY ||
+      !value.schedule_weekdays ||
+      value.schedule_weekdays.length > 0,
+    'Vui lòng chọn ít nhất một ngày trong tuần',
   );
 
 export const PromotionIdParamsSchema = z.object({

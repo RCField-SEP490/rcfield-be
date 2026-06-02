@@ -110,6 +110,12 @@ export enum PromoApplicableTo {
   BYOC = 'BYOC',
 }
 
+export enum PromotionScheduleMode {
+  ONCE = 'ONCE',
+  DAILY = 'DAILY',
+  WEEKLY = 'WEEKLY',
+}
+
 // ── Inspection ────────────────────────────────────────────────────────────────
 
 export enum InspectionType {

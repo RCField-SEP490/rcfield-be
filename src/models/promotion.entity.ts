@@ -6,7 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { DiscountType, PromoApplicableTo } from '../types';
+import { DiscountType, PromoApplicableTo, PromotionScheduleMode } from '../types';
 
 @Entity('promotions')
 @Index(['cafeId'])
@@ -64,6 +64,24 @@ export class Promotion {
 
   @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
   expiresAt: Date | null;
+
+  @Column({
+    name: 'schedule_mode',
+    type: 'enum',
+    enum: PromotionScheduleMode,
+    enumName: 'promotion_schedule_mode_enum',
+    default: PromotionScheduleMode.ONCE,
+  })
+  scheduleMode: PromotionScheduleMode;
+
+  @Column({ name: 'schedule_start_time', type: 'time', nullable: true })
+  scheduleStartTime: string | null;
+
+  @Column({ name: 'schedule_end_time', type: 'time', nullable: true })
+  scheduleEndTime: string | null;
+
+  @Column({ name: 'schedule_weekdays', type: 'text', array: true, default: () => "'{}'" })
+  scheduleWeekdays: string[];
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
