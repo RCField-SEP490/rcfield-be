@@ -1,7 +1,13 @@
 import { Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Promotion } from '../models/promotion.entity';
-import { AppError, DiscountType, PromoApplicableTo, UserRole } from '../types';
+import {
+  AppError,
+  DiscountType,
+  PromoApplicableTo,
+  PromotionScheduleMode,
+  UserRole,
+} from '../types';
 import { getManagedCafeOrThrow } from './cafe.service';
 
 interface Viewer {
@@ -21,6 +27,10 @@ export interface PromotionBody {
   applicable_to?: PromoApplicableTo;
   starts_at: Date;
   expires_at?: Date | null;
+  schedule_mode?: PromotionScheduleMode;
+  schedule_start_time?: string | null;
+  schedule_end_time?: string | null;
+  schedule_weekdays?: string[];
   is_active?: boolean;
 }
 
@@ -96,6 +106,10 @@ export async function createPromotion(
     cafeId,
     startsAt: body.starts_at,
     expiresAt: body.expires_at ?? null,
+    scheduleMode: body.schedule_mode ?? PromotionScheduleMode.ONCE,
+    scheduleStartTime: body.schedule_start_time ?? null,
+    scheduleEndTime: body.schedule_end_time ?? null,
+    scheduleWeekdays: body.schedule_weekdays ?? [],
     isActive: body.is_active ?? true,
     createdBy: viewer.userId,
   });
@@ -133,6 +147,11 @@ export async function updatePromotion(
   if (body.applicable_to !== undefined) promotion.applicableTo = body.applicable_to;
   if (body.starts_at !== undefined) promotion.startsAt = body.starts_at;
   if (body.expires_at !== undefined) promotion.expiresAt = body.expires_at;
+  if (body.schedule_mode !== undefined) promotion.scheduleMode = body.schedule_mode;
+  if (body.schedule_start_time !== undefined)
+    promotion.scheduleStartTime = body.schedule_start_time;
+  if (body.schedule_end_time !== undefined) promotion.scheduleEndTime = body.schedule_end_time;
+  if (body.schedule_weekdays !== undefined) promotion.scheduleWeekdays = body.schedule_weekdays;
   if (body.is_active !== undefined) {
     if (body.is_active) await assertUniqueActiveCode(cafeId, promotion.code, promotion.id);
     promotion.isActive = body.is_active;
