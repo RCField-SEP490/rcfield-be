@@ -54,7 +54,7 @@ describe('GET /api-docs.json', () => {
         expect.objectContaining({
           name: 'track_type',
           in: 'query',
-          schema: expect.objectContaining({ example: 'DRIFT' }),
+          schema: expect.objectContaining({ example: '550e8400-e29b-41d4-a716-446655440000' }),
         }),
       ]),
     );
@@ -72,8 +72,8 @@ describe('GET /api-docs.json', () => {
       'RC Arena Sai Gon',
     );
     expect(res.body.components.schemas.CreateCafeRequest.properties.track_types.example).toEqual([
-      'DRIFT',
-      'OBSTACLE',
+      '550e8400-e29b-41d4-a716-446655440000',
+      '550e8400-e29b-41d4-a716-446655440001',
     ]);
 
     expect(cafeDetail.get.parameters).toEqual([

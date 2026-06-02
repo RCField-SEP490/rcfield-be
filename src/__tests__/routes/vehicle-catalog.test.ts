@@ -24,6 +24,16 @@ async function activateProvider(providerId: string): Promise<void> {
   );
 }
 
+let driftId: string;
+
+beforeAll(async () => {
+  const trackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
+  const trackTypeMap = new Map<string, string>(
+    trackTypes.map((t: { id: string; code: string }) => [t.code, t.id]),
+  );
+  driftId = trackTypeMap.get('DRIFT')!;
+});
+
 function vehicleCatalogBody(overrides: Record<string, unknown> = {}) {
   return {
     name: 'Tamiya TT-02 Drift Spec',
@@ -32,7 +42,7 @@ function vehicleCatalogBody(overrides: Record<string, unknown> = {}) {
     hourly_rate: 40000,
     security_deposit: 200000,
     damage_multiplier: 1.0,
-    compatible_track_types: ['DRIFT'],
+    compatible_track_types: [driftId],
     cover_image_url: 'https://cdn.rcfield.vn/vehicles/tamiya-cover.jpg',
     images: [
       { url: 'https://cdn.rcfield.vn/vehicles/tamiya-detail1.jpg', sort_order: 0 },

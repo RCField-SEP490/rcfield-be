@@ -7,7 +7,7 @@ import {
   DeleteDateColumn,
   Index,
 } from 'typeorm';
-import { CafeOperatingHours, CafeStatus, TrackType } from '../types';
+import { CafeOperatingHours, CafeStatus } from '../types';
 
 @Entity('cafes')
 @Index(['providerId'])
@@ -57,8 +57,8 @@ export class Cafe {
   @Column({ name: 'operating_hours', type: 'jsonb', default: {} })
   operatingHours: CafeOperatingHours;
 
-  @Column({ name: 'track_types', type: 'text', array: true, default: [] })
-  trackTypes: TrackType[];
+  @Column({ name: 'track_types', type: 'uuid', array: true, default: [] })
+  trackTypes: string[];
 
   @Column({ name: 'slot_duration_minutes', type: 'int', default: 60 })
   slotDurationMinutes: number;

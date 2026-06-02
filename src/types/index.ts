@@ -28,10 +28,13 @@ export enum CafeStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
-export enum TrackType {
-  DRIFT = 'DRIFT',
-  OBSTACLE = 'OBSTACLE',
-  HILL_CLIMB = 'HILL_CLIMB',
+export interface TrackTypeDTO {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  sortOrder: number;
 }
 
 export interface CafeOperatingHour {
