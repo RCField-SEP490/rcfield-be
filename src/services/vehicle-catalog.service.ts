@@ -4,7 +4,8 @@ import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { VehicleCatalogImage } from '../models/vehicle-catalog-image.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { getManagedCafeOrThrow, Viewer } from './cafe.service';
-import { AppError, UserRole, VehicleStatus, AssetTier, TrackType } from '../types';
+import { TrackType } from '../models/track-type.entity';
+import { AppError, UserRole, VehicleStatus, AssetTier } from '../types';
 
 interface CatalogImageInput {
   url: string;
@@ -18,7 +19,7 @@ export interface CreateVehicleCatalogInput {
   hourly_rate: number;
   security_deposit: number;
   damage_multiplier?: number;
-  compatible_track_types: TrackType[];
+  compatible_track_types: string[];
   cover_image_url?: string | null;
   images?: CatalogImageInput[];
 }
@@ -30,7 +31,7 @@ export interface UpdateVehicleCatalogInput {
   hourly_rate?: number;
   security_deposit?: number;
   damage_multiplier?: number;
-  compatible_track_types?: TrackType[];
+  compatible_track_types?: string[];
   cover_image_url?: string | null;
   images?: CatalogImageInput[];
 }
@@ -84,8 +85,23 @@ export async function listVehicleCatalogs(cafeId: string): Promise<Record<string
     };
   }
 
+  // Batch load all referenced track types to avoid N+1 queries
+  const allTrackTypeIds = Array.from(
+    new Set(catalogs.flatMap((c) => c.compatibleTrackTypes || [])),
+  );
+  const trackTypes =
+    allTrackTypeIds.length > 0
+      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(allTrackTypeIds) })
+      : [];
+  const trackTypeMap = new Map(trackTypes.map((t) => [t.id, t]));
+
   return catalogs.map((c) => {
     const stats = countsMap[c.id] || { total: 0, available: 0, maintenance: 0 };
+    const mappedTracks = (c.compatibleTrackTypes || [])
+      .map((id) => trackTypeMap.get(id))
+      .filter((t): t is TrackType => !!t)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+
     return {
       id: c.id,
       cafeId: c.cafeId,
@@ -95,7 +111,7 @@ export async function listVehicleCatalogs(cafeId: string): Promise<Record<string
       hourlyRate: c.hourlyRate,
       securityDeposit: c.securityDeposit,
       damageMultiplier: c.damageMultiplier,
-      compatibleTrackTypes: c.compatibleTrackTypes,
+      compatibleTrackTypes: mappedTracks,
       coverImageUrl: c.coverImageUrl,
       createdAt: c.createdAt,
       updatedAt: c.updatedAt,
@@ -145,6 +161,18 @@ export async function getVehicleCatalogDetail(
     }
   }
 
+  // Load track type objects dynamically without filtering by isActive to preserve historical references
+  const trackTypes =
+    catalog.compatibleTrackTypes.length > 0
+      ? await AppDataSource.getRepository(TrackType).findBy({
+          id: In(catalog.compatibleTrackTypes),
+        })
+      : [];
+  const trackTypesSorted = (catalog.compatibleTrackTypes || [])
+    .map((uuid) => trackTypes.find((t) => t.id === uuid))
+    .filter((t): t is TrackType => !!t)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
   const visibleUnits = isOperator ? units : units.filter((u) => u.status !== VehicleStatus.RETIRED);
 
   return {
@@ -156,7 +184,7 @@ export async function getVehicleCatalogDetail(
     hourlyRate: catalog.hourlyRate,
     securityDeposit: catalog.securityDeposit,
     damageMultiplier: catalog.damageMultiplier,
-    compatibleTrackTypes: catalog.compatibleTrackTypes,
+    compatibleTrackTypes: trackTypesSorted,
     coverImageUrl: catalog.coverImageUrl,
     createdAt: catalog.createdAt,
     updatedAt: catalog.updatedAt,

@@ -2,7 +2,8 @@ import { FindOptionsWhere, In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Cafe } from '../models/cafe.entity';
 import { AmenityCatalog } from '../models/amenity-catalog.entity';
-import { AppError, CafeOperatingHours, CafeStatus, TrackType, UserRole } from '../types';
+import { TrackType } from '../models/track-type.entity';
+import { AppError, CafeOperatingHours, CafeStatus, UserRole } from '../types';
 import { checkBranchQuota } from './subscription.service';
 
 export interface Viewer {
@@ -33,7 +34,7 @@ export interface CreateCafeBody {
   latitude?: number | null;
   longitude?: number | null;
   operating_hours: CafeOperatingHours;
-  track_types: TrackType[];
+  track_types: string[];
   slot_duration_minutes: number;
   slot_fee_rate: number;
   max_concurrent_bookings: number;
@@ -101,7 +102,10 @@ export async function getManagedCafeOrThrow(id: string, viewer: Viewer): Promise
   throw new AppError('Bạn không có quyền truy cập hoặc quản lý chi nhánh này', 403, 'FORBIDDEN');
 }
 
-export async function createCafe(providerId: string, body: CreateCafeBody): Promise<Cafe> {
+export async function createCafe(
+  providerId: string,
+  body: CreateCafeBody,
+): Promise<Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[]; amenities: AmenityCatalog[] }> {
   await checkBranchQuota(providerId);
 
   const repo = AppDataSource.getRepository(Cafe);
@@ -111,7 +115,7 @@ export async function createCafe(providerId: string, body: CreateCafeBody): Prom
   cafe.slug = await makeUniqueSlug(body.name);
   cafe.description = body.description ?? null;
   cafe.phone = body.phone ?? null;
-  cafe.status = CafeStatus.ACTIVE;
+  cafe.status = CafeStatus.PENDING;
   cafe.coverImageUrl = body.cover_image_url ?? null;
   cafe.address = body.address;
   cafe.district = body.district;
@@ -128,10 +132,13 @@ export async function createCafe(providerId: string, body: CreateCafeBody): Prom
   cafe.amenityIds = body.amenity_ids ?? [];
   cafe.rules = body.rules ?? [];
 
-  return repo.save(cafe);
+  const saved = await repo.save(cafe);
+  return getCafeDetail(saved.id, { userId: providerId, role: UserRole.PROVIDER });
 }
 
-export async function listCafes(options: ListOptions): Promise<{ data: Cafe[]; total: number }> {
+export async function listCafes(
+  options: ListOptions,
+): Promise<{ data: (Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[] })[]; total: number }> {
   const { page, limit, scope, slug, district, city, track_type, status, viewer } = options;
   const qb = AppDataSource.getRepository(Cafe)
     .createQueryBuilder('cafe')
@@ -160,13 +167,29 @@ export async function listCafes(options: ListOptions): Promise<{ data: Cafe[]; t
     .take(limit)
     .getManyAndCount();
 
-  return { data, total };
+  // Batch load all referenced track types to avoid N+1 queries
+  const allTrackTypeIds = Array.from(new Set(data.flatMap((c) => c.trackTypes || [])));
+  const trackTypes =
+    allTrackTypeIds.length > 0
+      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(allTrackTypeIds) })
+      : [];
+  const trackTypeMap = new Map(trackTypes.map((t) => [t.id, t]));
+
+  const mappedData = data.map((c) => ({
+    ...c,
+    trackTypes: (c.trackTypes || [])
+      .map((id) => trackTypeMap.get(id))
+      .filter((t): t is TrackType => !!t)
+      .sort((a, b) => a.sortOrder - b.sortOrder),
+  }));
+
+  return { data: mappedData, total };
 }
 
 export async function getCafeDetail(
   id: string,
   viewer?: Viewer,
-): Promise<Cafe & { amenities: AmenityCatalog[] }> {
+): Promise<Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[]; amenities: AmenityCatalog[] }> {
   const cafe = await getCafeOrThrow(id);
   const canViewInactive =
     viewer?.role === UserRole.ADMIN ||
@@ -182,14 +205,28 @@ export async function getCafeDetail(
       : [];
   amenities.sort((a, b) => a.sortOrder - b.sortOrder);
 
-  return Object.assign(cafe, { amenities });
+  // Load track type objects dynamically without filtering by isActive to preserve historical references
+  const trackTypes =
+    cafe.trackTypes.length > 0
+      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(cafe.trackTypes) })
+      : [];
+  const trackTypesSorted = (cafe.trackTypes || [])
+    .map((uuid) => trackTypes.find((t) => t.id === uuid))
+    .filter((t): t is TrackType => !!t)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  return {
+    ...cafe,
+    trackTypes: trackTypesSorted,
+    amenities,
+  };
 }
 
 export async function updateCafe(
   id: string,
   providerId: string,
   body: UpdateCafeBody,
-): Promise<Cafe> {
+): Promise<Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[]; amenities: AmenityCatalog[] }> {
   const cafe = await getCafeOrThrow(id);
   assertCafeOwner(cafe, providerId);
 
@@ -218,7 +255,8 @@ export async function updateCafe(
   if (body.amenity_ids !== undefined) cafe.amenityIds = body.amenity_ids;
   if (body.rules !== undefined) cafe.rules = body.rules;
 
-  return AppDataSource.getRepository(Cafe).save(cafe);
+  await AppDataSource.getRepository(Cafe).save(cafe);
+  return getCafeDetail(id, { userId: providerId, role: UserRole.PROVIDER });
 }
 
 export async function updateCafeStatus(

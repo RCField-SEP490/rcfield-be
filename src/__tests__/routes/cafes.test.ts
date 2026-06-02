@@ -24,6 +24,18 @@ async function activateProvider(providerId: string): Promise<void> {
   );
 }
 
+let driftId: string;
+let obstacleId: string;
+
+beforeAll(async () => {
+  const trackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
+  const trackTypeMap = new Map<string, string>(
+    trackTypes.map((t: { id: string; code: string }) => [t.code, t.id]),
+  );
+  driftId = trackTypeMap.get('DRIFT')!;
+  obstacleId = trackTypeMap.get('OBSTACLE')!;
+});
+
 function cafeBody(overrides: Record<string, unknown> = {}) {
   return {
     name: 'RC Test Track',
@@ -35,7 +47,7 @@ function cafeBody(overrides: Record<string, unknown> = {}) {
     operating_hours: {
       mon: { open: '09:00', close: '22:00', is_closed: false },
     },
-    track_types: ['DRIFT', 'OBSTACLE'],
+    track_types: [driftId, obstacleId],
     slot_duration_minutes: 60,
     slot_fee_rate: 150000,
     max_concurrent_bookings: 10,
@@ -170,7 +182,9 @@ describe('Cafe routes', () => {
     expect(visible.status).toBe(200);
     expect(visible.body.data.address).toBeDefined();
     expect(visible.body.data.operatingHours).toBeDefined();
-    expect(visible.body.data.trackTypes).toEqual(expect.arrayContaining(['DRIFT']));
+    expect(visible.body.data.trackTypes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'DRIFT' })]),
+    );
     expect(visible.body.data.status).toBe(CafeStatus.PENDING);
   });
 

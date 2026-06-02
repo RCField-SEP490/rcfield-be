@@ -58,11 +58,28 @@ interface CreateCafeOptions {
 }
 
 export async function createTestCafe(options: CreateCafeOptions = {}) {
-  const { status = 'ACTIVE', track_types = ['DRIFT', 'CIRCUIT'], byoc_capacity = 5 } = options;
+  const { status = 'ACTIVE', track_types = ['DRIFT', 'OBSTACLE'], byoc_capacity = 5 } = options;
 
   const provider_id = options.provider_id ?? (await createTestUser({ role: UserRole.PROVIDER })).id;
 
   const slug = `test-cafe-${Date.now()}`;
+
+  const dbTrackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
+  const trackTypeMap = new Map<string, string>(
+    dbTrackTypes.map((t: { id: string; code: string }) => [t.code, t.id]),
+  );
+  const mappedTrackIds = track_types
+    .map((codeOrUuid) => {
+      if (trackTypeMap.has(codeOrUuid)) {
+        return trackTypeMap.get(codeOrUuid)!;
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(codeOrUuid)) {
+        return codeOrUuid;
+      }
+      return trackTypeMap.get('DRIFT') || dbTrackTypes[0]?.id;
+    })
+    .filter(Boolean);
 
   const [cafe] = await AppDataSource.query(
     `INSERT INTO cafes
@@ -80,7 +97,7 @@ export async function createTestCafe(options: CreateCafeOptions = {}) {
       'Hồ Chí Minh',
       150000,
       status,
-      track_types,
+      mappedTrackIds,
       byoc_capacity,
       JSON.stringify({ mon: { open: '09:00', close: '22:00', is_closed: false } }),
     ],
@@ -100,13 +117,30 @@ interface CreateVehicleOptions {
 export async function createTestVehicle(options: CreateVehicleOptions) {
   const { cafe_id, tier = 'STANDARD', status = 'AVAILABLE', compatible_track_types = [] } = options;
 
+  const dbTrackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
+  const trackTypeMap = new Map<string, string>(
+    dbTrackTypes.map((t: { id: string; code: string }) => [t.code, t.id]),
+  );
+  const mappedCompatTrackIds = compatible_track_types
+    .map((codeOrUuid) => {
+      if (trackTypeMap.has(codeOrUuid)) {
+        return trackTypeMap.get(codeOrUuid)!;
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(codeOrUuid)) {
+        return codeOrUuid;
+      }
+      return trackTypeMap.get('DRIFT') || dbTrackTypes[0]?.id;
+    })
+    .filter(Boolean);
+
   // Insert catalog first
   const [catalog] = await AppDataSource.query(
     `INSERT INTO vehicle_catalogs
        (cafe_id, name, tier, hourly_rate, security_deposit, damage_multiplier, compatible_track_types)
      VALUES ($1,$2,$3,$4,$5,$6,$7)
      RETURNING *`,
-    [cafe_id, 'Traxxas Slash 4x4', tier, 50000, 500000, 1.0, compatible_track_types],
+    [cafe_id, 'Traxxas Slash 4x4', tier, 50000, 500000, 1.0, mappedCompatTrackIds],
   );
 
   // Insert vehicle pointing to catalog

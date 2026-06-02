@@ -15,9 +15,11 @@ import { cafeRouter } from './cafe.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
+import { adminTrackTypeRouter } from './admin-track-type.routes';
 import { AppDataSource } from '../config/database';
 import { SubscriptionPlan } from '../models/subscription-plan.entity';
 import { AmenityCatalog } from '../models/amenity-catalog.entity';
+import { TrackType } from '../models/track-type.entity';
 
 const router = Router();
 
@@ -66,12 +68,33 @@ router.get('/amenities', async (_req, res, next) => {
   }
 });
 
+router.get('/track-types', async (_req, res, next) => {
+  try {
+    const items = await AppDataSource.getRepository(TrackType).find({
+      where: { isActive: true },
+      order: { sortOrder: 'ASC', code: 'ASC' },
+    });
+    res.json(
+      items.map((t) => ({
+        id: t.id,
+        code: t.code,
+        name: t.name,
+        description: t.description,
+        sortOrder: t.sortOrder,
+      })),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use('/auth', authRouter);
 router.use('/auth', providerOnboardingRouter);
 router.use('/admin/providers', adminProviderRouter);
 router.use('/admin/payment-requests', adminPaymentRequestRouter);
 router.use('/admin/subscription-plans', adminSubscriptionPlanRouter);
 router.use('/admin/amenities', adminAmenityRouter);
+router.use('/admin/track-types', adminTrackTypeRouter);
 router.use('/provider/notifications', notificationRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/system', systemRouter);

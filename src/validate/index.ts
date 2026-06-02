@@ -6,7 +6,6 @@ import {
   DiscountType,
   PromotionScheduleMode,
   PromoApplicableTo,
-  TrackType,
   VehicleStatus,
 } from '../types';
 
@@ -94,7 +93,27 @@ export const UploadDocumentSchema = z.object({
 
 // ── cafes ────────────────────────────────────────────────────────────────────
 
-const TrackTypeSchema = z.nativeEnum(TrackType);
+const TrackTypeSchema = z.string().uuid();
+
+export const CreateTrackTypeSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .max(50)
+    .regex(/^[A-Z0-9_]+$/)
+    .openapi({ example: 'DRIFT' }),
+  name: z.string().min(1).max(100).openapi({ example: 'Drift' }),
+  description: z.string().max(1000).nullable().optional().openapi({ example: 'Đường đua drift' }),
+  is_active: z.boolean().optional().default(true),
+  sort_order: z.number().int().optional().default(0),
+});
+
+export const UpdateTrackTypeSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().max(1000).nullable().optional(),
+  is_active: z.boolean().optional(),
+  sort_order: z.number().int().optional(),
+});
 
 const OperatingHourSchema = z.object({
   open: z
@@ -117,7 +136,9 @@ export const CafeListQuerySchema = z.object({
   slug: z.string().min(1).max(120).optional().openapi({ example: 'rc-arena-sai-gon' }),
   district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
   city: z.string().min(1).max(100).optional().openapi({ example: 'TP. Ho Chi Minh' }),
-  track_type: TrackTypeSchema.optional().openapi({ example: TrackType.DRIFT }),
+  track_type: TrackTypeSchema.optional().openapi({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  }),
   status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
 });
 
@@ -145,7 +166,9 @@ export const CreateCafeSchema = z.object({
   track_types: z
     .array(TrackTypeSchema)
     .min(1)
-    .openapi({ example: [TrackType.DRIFT, TrackType.OBSTACLE] }),
+    .openapi({
+      example: ['550e8400-e29b-41d4-a716-446655440000', '550e8400-e29b-41d4-a716-446655440001'],
+    }),
   slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60).openapi({
     example: 60,
   }),
@@ -287,7 +310,7 @@ export const CafeResponseSchema = z.object({
   longitude: z.number().nullable().openapi({ example: 106.712 }),
   operatingHours: z.record(OperatingHourSchema),
   trackTypes: z.array(TrackTypeSchema).openapi({
-    example: [TrackType.DRIFT, TrackType.OBSTACLE],
+    example: ['550e8400-e29b-41d4-a716-446655440000', '550e8400-e29b-41d4-a716-446655440001'],
   }),
   slotDurationMinutes: z.number().int().openapi({ example: 60 }),
   slotFeeRate: z.string().openapi({ example: '50000.00' }),
@@ -499,7 +522,7 @@ export const CreateVehicleCatalogSchema = z.object({
   compatible_track_types: z
     .array(TrackTypeSchema)
     .min(1)
-    .openapi({ example: [TrackType.DRIFT] }),
+    .openapi({ example: ['550e8400-e29b-41d4-a716-446655440000'] }),
   cover_image_url: z
     .string()
     .url()

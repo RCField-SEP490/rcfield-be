@@ -7,7 +7,7 @@ import {
   DeleteDateColumn,
   Index,
 } from 'typeorm';
-import { AssetTier, TrackType } from '../types';
+import { AssetTier } from '../types';
 
 @Entity('vehicle_catalogs')
 @Index(['cafeId'])
@@ -36,8 +36,8 @@ export class VehicleCatalog {
   @Column({ name: 'damage_multiplier', type: 'numeric', precision: 4, scale: 2, default: 1.0 })
   damageMultiplier: number;
 
-  @Column({ name: 'compatible_track_types', type: 'text', array: true, default: [] })
-  compatibleTrackTypes: TrackType[];
+  @Column({ name: 'compatible_track_types', type: 'uuid', array: true, default: [] })
+  compatibleTrackTypes: string[];
 
   @Column({ name: 'cover_image_url', type: 'text', nullable: true })
   coverImageUrl: string | null;
