@@ -33,6 +33,7 @@ export interface UserProfile {
   phone: string | null;
   avatarUrl: string | null;
   role: UserRole;
+  assignedCafeId?: string | null;
 }
 
 export interface RegisterInput {
@@ -73,6 +74,22 @@ class AuthService {
       avatarUrl: user.avatar_url,
       role: user.role,
     };
+  }
+
+  private async getAssignedCafeId(userId: string): Promise<string | null> {
+    const [assignment] = await AppDataSource.query(
+      `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+      [userId],
+    );
+    return assignment ? assignment.cafe_id : null;
+  }
+
+  private async toUserProfileAsync(user: User): Promise<UserProfile> {
+    const profile = this.toUserProfile(user);
+    if (user.role === UserRole.STAFF) {
+      profile.assignedCafeId = await this.getAssignedCafeId(user.id);
+    }
+    return profile;
   }
 
   private async issueTokenPair(user: User): Promise<TokenPair> {
@@ -135,7 +152,7 @@ class AuthService {
     }
     return {
       ...tokens,
-      user: { ...this.toUserProfile(user), registrationStatus },
+      user: { ...(await this.toUserProfileAsync(user)), registrationStatus },
     };
   }
 
@@ -170,7 +187,7 @@ class AuthService {
     }
     return {
       ...tokens,
-      user: { ...this.toUserProfile(user), registrationStatus: regStatus },
+      user: { ...(await this.toUserProfileAsync(user)), registrationStatus: regStatus },
     };
   }
 
@@ -241,14 +258,14 @@ class AuthService {
     }
     return {
       ...tokens,
-      user: { ...this.toUserProfile(user), registrationStatus },
+      user: { ...(await this.toUserProfileAsync(user)), registrationStatus },
     };
   }
 
   async getMe(userId: string): Promise<UserProfile> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new AppError('Người dùng không tồn tại', 404, 'USER_NOT_FOUND');
-    return this.toUserProfile(user);
+    return await this.toUserProfileAsync(user);
   }
 
   async updateMe(
@@ -263,7 +280,7 @@ class AuthService {
     if (input.avatar_url !== undefined) user.avatar_url = input.avatar_url;
 
     const saved = await this.userRepo.save(user);
-    return this.toUserProfile(saved);
+    return await this.toUserProfileAsync(saved);
   }
 
   async refreshTokens(rawToken: string): Promise<TokenPair> {
