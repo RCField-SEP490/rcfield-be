@@ -52,6 +52,18 @@ export const UpdateMeSchema = z
   })
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
 
+export const CreateStaffSchema = z.object({
+  cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
+  full_name: z.string().trim().min(2).max(255),
+  email: z.string().trim().email('Email không hợp lệ').max(255),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ')
+    .optional(),
+  password: z.string().min(6, 'Mật khẩu tối thiểu 6 ký tự').max(100),
+});
+
 // ── ai-chat ───────────────────────────────────────────────────────────────────
 
 export const ForgotPasswordSchema = z.object({

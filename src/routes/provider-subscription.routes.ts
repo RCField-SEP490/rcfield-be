@@ -3,12 +3,15 @@ import { authenticate, authorize, requireActiveProvider } from '../middlewares/a
 import { UserRole } from '../types';
 import { paymentRequestController } from '../controllers/payment-request.controller';
 import { providerOnboardingController } from '../controllers/provider-onboarding.controller';
+import { staffController } from '../controllers/staff.controller';
 
 export const providerSubscriptionRouter = Router();
 
 providerSubscriptionRouter.use(authenticate, authorize(UserRole.PROVIDER));
 
 providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe);
+
+providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
 
 providerSubscriptionRouter.get(
   '/subscription',
