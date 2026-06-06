@@ -64,6 +64,41 @@ export const CreateStaffSchema = z.object({
   password: z.string().min(6, 'Mật khẩu tối thiểu 6 ký tự').max(100),
 });
 
+export const StaffListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ').optional(),
+  is_active: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+});
+
+export const StaffIdParamsSchema = z.object({
+  staffId: z.string().uuid('staffId phải là UUID hợp lệ'),
+});
+
+export const UpdateStaffSchema = z
+  .object({
+    full_name: z.string().trim().min(2).max(255).optional(),
+    email: z.string().trim().email('Email không hợp lệ').max(255).optional(),
+    phone: z
+      .string()
+      .trim()
+      .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ')
+      .nullable()
+      .optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
+
+export const UpdateStaffAssignmentSchema = z.object({
+  cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
+});
+
+export const UpdateStaffStatusSchema = z.object({
+  is_active: z.boolean(),
+});
+
 // ── ai-chat ───────────────────────────────────────────────────────────────────
 
 export const ForgotPasswordSchema = z.object({

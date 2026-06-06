@@ -11,7 +11,29 @@ providerSubscriptionRouter.use(authenticate, authorize(UserRole.PROVIDER));
 
 providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe);
 
+providerSubscriptionRouter.get('/staff', requireActiveProvider, staffController.listStaff);
 providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
+providerSubscriptionRouter.get('/staff/:staffId', requireActiveProvider, staffController.getStaff);
+providerSubscriptionRouter.patch(
+  '/staff/:staffId',
+  requireActiveProvider,
+  staffController.updateStaff,
+);
+providerSubscriptionRouter.patch(
+  '/staff/:staffId/assignment',
+  requireActiveProvider,
+  staffController.updateAssignment,
+);
+providerSubscriptionRouter.patch(
+  '/staff/:staffId/status',
+  requireActiveProvider,
+  staffController.updateStatus,
+);
+providerSubscriptionRouter.post(
+  '/staff/:staffId/reset-password',
+  requireActiveProvider,
+  staffController.resetPassword,
+);
 
 providerSubscriptionRouter.get(
   '/subscription',
