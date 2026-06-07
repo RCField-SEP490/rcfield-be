@@ -4,6 +4,7 @@ import {
   AssetTier,
   CafeStatus,
   DiscountType,
+  PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
   VehicleStatus,
@@ -283,6 +284,39 @@ export const UpdatePromotionSchema = PromotionBaseSchema.partial()
 
 export const PromotionIdParamsSchema = z.object({
   promotionId: z.string().uuid(),
+});
+
+const PackageBaseSchema = z.object({
+  code: z
+    .string()
+    .min(3)
+    .max(50)
+    .regex(/^[A-Z0-9-]+$/i, 'Mã gói chỉ gồm chữ, số hoặc dấu gạch ngang')
+    .transform((value) => value.trim().toUpperCase()),
+  name: z.string().trim().min(2).max(255),
+  description: z.string().trim().max(2000).nullable().optional(),
+  slot_count: z.coerce.number().int().positive(),
+  billing_period: z.nativeEnum(PackageBillingPeriod),
+  price: z.coerce.number().positive(),
+  benefits: z.array(z.string().trim().min(1).max(255)).optional().default([]),
+  applicable_play_modes: z
+    .array(z.enum(['RENTAL', 'BYOC']))
+    .min(1)
+    .optional()
+    .default(['RENTAL', 'BYOC']),
+  is_popular: z.boolean().optional().default(false),
+  is_active: z.boolean().optional().default(true),
+});
+
+export const CreatePackageSchema = PackageBaseSchema;
+
+export const UpdatePackageSchema = PackageBaseSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const PackageIdParamsSchema = z.object({
+  packageId: z.string().uuid(),
 });
 
 export const CafeImageCreateSchema = z.object({

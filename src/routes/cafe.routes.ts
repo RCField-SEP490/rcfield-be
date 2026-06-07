@@ -12,6 +12,7 @@ import { vehicleController } from '../controllers/vehicle.controller';
 import { menuController } from '../controllers/menu.controller';
 import { menuRouter } from './menu.routes';
 import { promotionController } from '../controllers/promotion.controller';
+import { packageController } from '../controllers/package.controller';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -50,6 +51,30 @@ cafeRouter.delete(
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.ADMIN),
   promotionController.remove,
+);
+cafeRouter.get(
+  '/:cafeId/packages',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  packageController.list,
+);
+cafeRouter.post(
+  '/:cafeId/packages',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  packageController.create,
+);
+cafeRouter.patch(
+  '/:cafeId/packages/:packageId',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  packageController.update,
+);
+cafeRouter.delete(
+  '/:cafeId/packages/:packageId',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  packageController.remove,
 );
 cafeRouter.post(
   '/',
