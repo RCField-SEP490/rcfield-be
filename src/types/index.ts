@@ -119,6 +119,17 @@ export enum PromotionScheduleMode {
   WEEKLY = 'WEEKLY',
 }
 
+export enum PackageBillingPeriod {
+  WEEK = 'WEEK',
+  MONTH = 'MONTH',
+}
+
+export enum PackageStatus {
+  ACTIVE = 'ACTIVE',
+  INACTIVE = 'INACTIVE',
+  ARCHIVED = 'ARCHIVED',
+}
+
 // ── Inspection ────────────────────────────────────────────────────────────────
 
 export enum InspectionType {
