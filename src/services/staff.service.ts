@@ -37,6 +37,7 @@ export interface StaffListItem {
   status: 'PENDING' | 'ACTIVE' | 'DISABLED';
   createdAt: string;
   activatedAt: string | null;
+  inviteExpiresAt: string | null;
 }
 
 export interface TodayBookingItem {
@@ -185,6 +186,7 @@ export async function listStaffForProvider(
       created_at: Date;
       activated_at: Date | null;
       has_active_token: boolean;
+      invite_expires_at: Date | null;
     }[]
   >(
     `SELECT
@@ -202,7 +204,14 @@ export async function listStaffForProvider(
          WHERE t.user_id = u.id
            AND t.used_at IS NULL
            AND t.expires_at > NOW()
-       ) AS has_active_token
+       ) AS has_active_token,
+       (
+         SELECT t.expires_at FROM staff_invite_tokens t
+         WHERE t.user_id = u.id
+           AND t.used_at IS NULL
+         ORDER BY t.created_at DESC
+         LIMIT 1
+       ) AS invite_expires_at
      FROM users u
      JOIN staff_cafe_assignments a ON a.staff_id = u.id
      JOIN cafes c ON c.id = a.cafe_id
@@ -233,6 +242,8 @@ export async function listStaffForProvider(
       status,
       createdAt: row.created_at.toISOString(),
       activatedAt: status === 'ACTIVE' && row.activated_at ? row.activated_at.toISOString() : null,
+      inviteExpiresAt:
+        status === 'PENDING' && row.invite_expires_at ? row.invite_expires_at.toISOString() : null,
     };
   });
 }
@@ -446,6 +457,43 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
     mode: row.mode,
     vehicleName: row.vehicle_name,
   }));
+}
+
+export async function transferStaff(
+  providerId: string,
+  staffId: string,
+  newCafeId: string,
+): Promise<void> {
+  await getStaffOwnedByProvider(providerId, staffId);
+
+  const [newCafe] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM cafes WHERE id = $1 AND provider_id = $2 AND deleted_at IS NULL`,
+    [newCafeId, providerId],
+  );
+
+  if (!newCafe) {
+    throw new AppError(
+      'Chi nhánh không tồn tại hoặc không thuộc Provider này',
+      404,
+      'CAFE_NOT_FOUND',
+    );
+  }
+
+  const [current] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffId],
+  );
+
+  if (current?.cafe_id === newCafeId) {
+    throw new AppError('Nhân viên đã thuộc chi nhánh này', 409, 'STAFF_ALREADY_IN_CAFE');
+  }
+
+  await AppDataSource.query(`UPDATE staff_cafe_assignments SET cafe_id = $1 WHERE staff_id = $2`, [
+    newCafeId,
+    staffId,
+  ]);
+
+  logger.info('Staff', 'staff transferred', { providerId, staffId, newCafeId });
 }
 
 async function getStaffOwnedByProvider(providerId: string, staffId: string): Promise<User> {

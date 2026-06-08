@@ -28,6 +28,11 @@ providerSubscriptionRouter.post(
   requireActiveProvider,
   staffController.resendInvite,
 );
+providerSubscriptionRouter.patch(
+  '/staff/:staffId/branch',
+  requireActiveProvider,
+  staffController.transferStaff,
+);
 
 providerSubscriptionRouter.get(
   '/subscription',

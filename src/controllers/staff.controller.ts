@@ -1,6 +1,6 @@
 import type { Response, NextFunction } from 'express';
 import { logger } from '../config/logger';
-import { CreateStaffSchema } from '../validate';
+import { CreateStaffSchema, TransferStaffSchema } from '../validate';
 import { AppError, AuthRequest } from '../types';
 import * as staffService from '../services/staff.service';
 
@@ -74,6 +74,23 @@ export const staffController = {
         staffId: req.params.staffId,
       });
       res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/provider/staff/:staffId/branch  [auth]
+  async transferStaff(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { cafe_id } = TransferStaffSchema.parse(req.body);
+      await staffService.transferStaff(req.user.userId, req.params.staffId, cafe_id);
+      logger.info('Staff', 'transferred', {
+        providerId: req.user.userId,
+        staffId: req.params.staffId,
+        newCafeId: cafe_id,
+      });
+      res.json({ success: true });
     } catch (err) {
       next(err);
     }

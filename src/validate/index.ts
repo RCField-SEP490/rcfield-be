@@ -69,6 +69,10 @@ export const ActivateStaffSchema = z.object({
   password: z.string().min(8, 'Mật khẩu tối thiểu 8 ký tự').max(100),
 });
 
+export const TransferStaffSchema = z.object({
+  cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
+});
+
 // ── ai-chat ───────────────────────────────────────────────────────────────────
 
 export const ForgotPasswordSchema = z.object({
