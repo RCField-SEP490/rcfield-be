@@ -12,6 +12,22 @@ providerSubscriptionRouter.use(authenticate, authorize(UserRole.PROVIDER));
 providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe);
 
 providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
+providerSubscriptionRouter.get('/staff', requireActiveProvider, staffController.listStaff);
+providerSubscriptionRouter.patch(
+  '/staff/:staffId/deactivate',
+  requireActiveProvider,
+  staffController.deactivateStaff,
+);
+providerSubscriptionRouter.patch(
+  '/staff/:staffId/reactivate',
+  requireActiveProvider,
+  staffController.reactivateStaff,
+);
+providerSubscriptionRouter.post(
+  '/staff/:staffId/resend-invite',
+  requireActiveProvider,
+  staffController.resendInvite,
+);
 
 providerSubscriptionRouter.get(
   '/subscription',

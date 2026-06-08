@@ -92,9 +92,11 @@ class AuthService {
     return profile;
   }
 
-  private async issueTokenPair(user: User): Promise<TokenPair> {
+  async issueTokenPair(user: User): Promise<TokenPair> {
+    const cafeId = user.role === UserRole.STAFF ? await this.getAssignedCafeId(user.id) : undefined;
+
     const access_token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
+      { userId: user.id, email: user.email, role: user.role, ...(cafeId && { cafeId }) },
       env.jwt.secret,
       { expiresIn: '1h' },
     );

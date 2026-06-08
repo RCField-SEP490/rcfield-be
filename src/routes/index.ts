@@ -9,6 +9,8 @@ import { adminProviderRouter } from './admin-provider.routes';
 import { adminPaymentRequestRouter } from './admin-payment-request.routes';
 import { notificationRouter } from './notification.routes';
 import { providerSubscriptionRouter } from './provider-subscription.routes';
+import { staffInviteRouter } from './staff-invite.routes';
+import { staffRouter } from './staff.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { adminAmenityRouter } from './admin-amenity.routes';
 import { cafeRouter } from './cafe.routes';
@@ -89,6 +91,7 @@ router.get('/track-types', async (_req, res, next) => {
 });
 
 router.use('/auth', authRouter);
+router.use('/auth/staff-invite', staffInviteRouter);
 router.use('/auth', providerOnboardingRouter);
 router.use('/admin/providers', adminProviderRouter);
 router.use('/admin/payment-requests', adminPaymentRequestRouter);
@@ -97,6 +100,7 @@ router.use('/admin/amenities', adminAmenityRouter);
 router.use('/admin/track-types', adminTrackTypeRouter);
 router.use('/provider/notifications', notificationRouter);
 router.use('/provider', providerSubscriptionRouter);
+router.use('/staff', staffRouter);
 router.use('/system', systemRouter);
 router.use('/uploads', uploadRouter);
 router.use('/cafes', cafeRouter);

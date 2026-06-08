@@ -62,7 +62,11 @@ export const CreateStaffSchema = z.object({
     .trim()
     .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ')
     .optional(),
-  password: z.string().min(6, 'Mật khẩu tối thiểu 6 ký tự').max(100),
+});
+
+export const ActivateStaffSchema = z.object({
+  token: z.string().min(1, 'Token không được để trống'),
+  password: z.string().min(8, 'Mật khẩu tối thiểu 8 ký tự').max(100),
 });
 
 // ── ai-chat ───────────────────────────────────────────────────────────────────

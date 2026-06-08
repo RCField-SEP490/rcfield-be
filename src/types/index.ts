@@ -217,6 +217,7 @@ export interface AuthPayload {
   userId: string;
   role: UserRole;
   email: string;
+  cafeId?: string;
   impersonated_by?: string;
 }
 
