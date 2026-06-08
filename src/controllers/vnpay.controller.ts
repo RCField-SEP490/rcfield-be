@@ -3,6 +3,8 @@ import { env } from '../config/env';
 import { AppError, AuthRequest } from '../types';
 import { CreateVnpayPaymentSchema } from '../validate';
 import { createPaymentUrl, verifyVnpayParams } from '../services/vnpay.service';
+import { processConfirmation } from '../services/payment.service';
+import { logger } from '../config/logger';
 
 function getClientIp(req: AuthRequest): string {
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -12,6 +14,7 @@ function getClientIp(req: AuthRequest): string {
   return req.ip || req.socket.remoteAddress || '127.0.0.1';
 }
 
+// POST /api/v1/payments/vnpay/create  [auth]
 export async function createVnpayPayment(
   req: AuthRequest,
   res: Response,
@@ -41,26 +44,36 @@ export async function createVnpayPayment(
   }
 }
 
+// GET /api/v1/payments/vnpay/return
 export async function handleVnpayReturn(
   req: AuthRequest,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const result = verifyVnpayParams(req.query);
-    const status = result.isSuccess ? 'success' : 'failed';
+    const result = await processConfirmation(req.query as Record<string, unknown>);
     const target = new URL('/payment/result', env.frontendUrl);
 
-    target.searchParams.set('gateway', 'vnpay');
-    target.searchParams.set('status', status);
-    target.searchParams.set('txn_ref', result.txnRef);
-    target.searchParams.set('response_code', result.responseCode);
+    if (result.rspCode === '00') {
+      // Extract bookingId from txnRef (reverse: pad to 32 chars hex → UUID format)
+      const verified = verifyVnpayParams(req.query);
+      target.searchParams.set('status', 'success');
+      target.searchParams.set('txn_ref', verified.txnRef);
+    } else if (result.rspCode === '02') {
+      // Already confirmed — idempotent, still show success
+      const verified = verifyVnpayParams(req.query);
+      target.searchParams.set('status', 'success');
+      target.searchParams.set('txn_ref', verified.txnRef);
+      target.searchParams.set('already_confirmed', '1');
+    } else {
+      target.searchParams.set('status', 'failed');
+      target.searchParams.set('response_code', result.rspCode);
+    }
 
     res.redirect(target.toString());
   } catch (err) {
     if (err instanceof AppError) {
       const target = new URL('/payment/result', env.frontendUrl);
-      target.searchParams.set('gateway', 'vnpay');
       target.searchParams.set('status', 'failed');
       target.searchParams.set('reason', err.code ?? 'unknown');
       res.redirect(target.toString());
@@ -70,31 +83,19 @@ export async function handleVnpayReturn(
   }
 }
 
+// GET /api/v1/payments/vnpay/ipn  (VNPay server-to-server callback)
 export async function handleVnpayIpn(
   req: AuthRequest,
   res: Response,
-  next: NextFunction,
+  _next: NextFunction,
 ): Promise<void> {
   try {
-    const result = verifyVnpayParams(req.query);
-
-    if (!result.isValid) {
-      res.json({ RspCode: '97', Message: 'Invalid signature' });
-      return;
-    }
-
-    res.json({
-      RspCode: result.isSuccess ? '00' : '02',
-      Message: result.isSuccess ? 'Confirm Success' : 'Payment failed',
-      data: {
-        txn_ref: result.txnRef,
-        amount: result.amount,
-        response_code: result.responseCode,
-        transaction_status: result.transactionStatus,
-        transaction_no: result.transactionNo,
-      },
-    });
+    const result = await processConfirmation(req.query as Record<string, unknown>);
+    logger.info('VNPay', `IPN processed rspCode=${result.rspCode}`);
+    res.json({ RspCode: result.rspCode, Message: result.message });
   } catch (err) {
-    next(err);
+    // VNPay requires a response even on internal errors
+    logger.error('VNPay', 'IPN handler error', err);
+    res.json({ RspCode: '99', Message: 'Unknown error' });
   }
 }

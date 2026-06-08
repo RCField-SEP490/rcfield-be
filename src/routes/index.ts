@@ -19,6 +19,10 @@ import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
 import { adminTrackTypeRouter } from './admin-track-type.routes';
 import { vnpayRouter } from './vnpay.routes';
+import { bookingRouter } from './booking.routes';
+import { bookingController } from '../controllers/booking.controller';
+import { authenticate, authorize } from '../middlewares/auth.middleware';
+import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
 import { SubscriptionPlan } from '../models/subscription-plan.entity';
 import { AmenityCatalog } from '../models/amenity-catalog.entity';
@@ -111,6 +115,13 @@ router.use('/cafes/:cafeId', chatRouter);
 router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
+router.use('/bookings', bookingRouter);
+router.get(
+  '/provider/cafes/:cafeId/bookings',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  bookingController.listCafeBookings,
+);
 
 // router.use('/bookings', bookingsRouter);
 // router.use('/vehicles', vehiclesRouter);

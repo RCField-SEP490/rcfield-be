@@ -2,6 +2,9 @@ import { z } from 'zod';
 import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
 import {
   AssetTier,
+  BookingParticipantType,
+  BookingMode,
+  BookingStatus,
   CafeStatus,
   DiscountType,
   PackageBillingPeriod,
@@ -665,4 +668,54 @@ export const UpsertWidgetConfigSchema = z.object({
   system_prompt: z.string().max(4000).nullable().optional(),
   is_enabled: z.boolean().optional(),
   full_page_enabled: z.boolean().optional(),
+});
+
+// ── bookings ──────────────────────────────────────────────────────────────────
+
+const ParticipantSchema = z.object({
+  user_id: z.string().uuid().optional(),
+  participant_type: z.nativeEnum(BookingParticipantType),
+  guest_name: z.string().max(255).optional(),
+  guest_phone: z.string().max(20).optional(),
+});
+
+const FnbItemSchema = z.object({
+  menu_item_id: z.string().uuid(),
+  quantity: z.number().int().min(1),
+  notes: z.string().max(500).optional(),
+});
+
+export const CreateBookingSchema = z.object({
+  cafe_id: z.string().uuid(),
+  play_mode: z.nativeEnum(BookingMode),
+  slot_start: z.string().datetime({ offset: true }),
+  slot_end: z.string().datetime({ offset: true }),
+  vehicle_ids: z.array(z.string().uuid()).default([]),
+  participants: z.array(ParticipantSchema).min(0).default([]),
+  fnb_items: z.array(FnbItemSchema).default([]),
+  promotion_code: z.string().max(50).optional(),
+  track_type_id: z.string().uuid().optional(),
+});
+
+export const CancelBookingSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+
+export const ListCafeBookingsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.nativeEnum(BookingStatus).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const ListMyBookingsSchema = z.object({
+  status: z.nativeEnum(BookingStatus).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+export const CheckAvailabilitySchema = z.object({
+  slot_start: z.string().datetime({ offset: true }),
+  slot_end: z.string().datetime({ offset: true }),
+  play_mode: z.nativeEnum(BookingMode),
 });

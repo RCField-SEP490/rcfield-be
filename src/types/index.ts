@@ -75,12 +75,15 @@ export enum BookingSource {
 export enum BookingStatus {
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',
-  ACTIVE = 'ACTIVE',
-  EXTENDING = 'EXTENDING',
-  CHECKING_OUT = 'CHECKING_OUT',
-  DISPUTED = 'DISPUTED',
+  NO_SHOW = 'NO_SHOW',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
+}
+
+export enum BookingParticipantType {
+  BOOKER = 'BOOKER',
+  REGISTERED_USER = 'REGISTERED_USER',
+  WALK_IN_GUEST = 'WALK_IN_GUEST',
 }
 
 // ── Payment ───────────────────────────────────────────────────────────────────
@@ -100,6 +103,17 @@ export enum PaymentComponentStatus {
   DISBURSED = 'DISBURSED',
   REFUNDED = 'REFUNDED',
   PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
+}
+
+export enum PaymentTransactionType {
+  PAYMENT = 'PAYMENT',
+  REFUND = 'REFUND',
+}
+
+export enum PaymentTransactionStatus {
+  PENDING = 'PENDING',
+  SUCCESS = 'SUCCESS',
+  FAILED = 'FAILED',
 }
 
 export enum DiscountType {

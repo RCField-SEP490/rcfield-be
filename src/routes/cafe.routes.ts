@@ -28,6 +28,7 @@ cafeRouter.use('/:cafeId/menu', menuRouter);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);
+cafeRouter.get('/:cafeId/availability', optionalAuthenticate, cafeController.getAvailability);
 cafeRouter.get(
   '/:cafeId/promotions',
   authenticate,

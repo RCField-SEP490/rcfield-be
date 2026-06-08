@@ -5,10 +5,16 @@ import {
   UpdateCafeSchema,
   UpdateCafeStatusSchema,
   UpsertWidgetConfigSchema,
+  CheckAvailabilitySchema,
 } from '../validate';
-import { AppError, AuthRequest, CafeStatus, UserRole } from '../types';
+import { AppError, AuthRequest, BookingMode, CafeStatus, UserRole, VehicleStatus } from '../types';
 import * as cafeService from '../services/cafe.service';
 import { getWidgetConfigForCafe, upsertWidgetConfig } from '../services/chat.service';
+import { AppDataSource } from '../config/database';
+import { redis } from '../config/redis';
+import { Cafe } from '../models/cafe.entity';
+import { Vehicle } from '../models/vehicle.entity';
+import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 
 function viewerFromRequest(req: AuthRequest) {
   return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
@@ -147,6 +153,78 @@ export const cafeController = {
         ...(body.full_page_enabled !== undefined && { fullPageEnabled: body.full_page_enabled }),
       });
       res.json({ success: true, data: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/cafes/:cafeId/availability
+  async getAvailability(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cafeId = req.params.cafeId;
+      const query = CheckAvailabilitySchema.parse(req.query);
+      const slotStart = new Date(query.slot_start);
+
+      const cafeRepo = AppDataSource.getRepository(Cafe);
+      const cafe = await cafeRepo.findOne({ where: { id: cafeId } });
+      if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+      if (cafe.status !== CafeStatus.ACTIVE) {
+        throw new AppError('Cafe is not accepting bookings', 400, 'CAFE_NOT_ACTIVE');
+      }
+
+      if (query.play_mode === BookingMode.BYOC) {
+        const counterKey = `slot:byoc:${cafeId}:${slotStart.getTime()}`;
+        const current = Number((await redis.get(counterKey)) ?? 0);
+        const remaining = Math.max(0, cafe.byocCapacity - current);
+        res.json({
+          success: true,
+          data: {
+            play_mode: 'BYOC',
+            available: remaining > 0,
+            byoc_remaining: remaining,
+            vehicles: [],
+          },
+        });
+        return;
+      }
+
+      // RENTAL: return all AVAILABLE vehicles not currently Redis-locked for this slot
+      const vehicleRepo = AppDataSource.getRepository(Vehicle);
+      const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+
+      const vehicles = await vehicleRepo.find({
+        where: { cafeId, status: VehicleStatus.AVAILABLE },
+      });
+
+      const slotEpoch = slotStart.getTime();
+      const available = await Promise.all(
+        vehicles.map(async (v) => {
+          const lockKey = `slot:lock:vehicle:${v.id}:${slotEpoch}`;
+          const locked = await redis.get(lockKey);
+          if (locked) return null;
+          const catalog = await catalogRepo.findOne({ where: { id: v.catalogId } });
+          return catalog
+            ? {
+                vehicle_id: v.id,
+                vehicle_identifier: v.identifier,
+                catalog_name: catalog.name,
+                tier: catalog.tier,
+                rental_fee_per_hour: Number(catalog.hourlyRate),
+                security_deposit: Number(catalog.securityDeposit),
+              }
+            : null;
+        }),
+      );
+
+      const filteredVehicles = available.filter(Boolean);
+      res.json({
+        success: true,
+        data: {
+          play_mode: 'RENTAL',
+          available: filteredVehicles.length > 0,
+          vehicles: filteredVehicles,
+        },
+      });
     } catch (err) {
       next(err);
     }
