@@ -475,6 +475,15 @@ export const FbChannelQuerySchema = z.object({
   returnPath: z.string().startsWith('/').optional(),
 });
 
+export const CreateVnpayPaymentSchema = z.object({
+  amount: z.coerce.number().int().positive('amount phải lớn hơn 0'),
+  txn_ref: z.string().trim().min(1).max(100),
+  order_info: z.string().trim().min(1).max(255),
+  order_type: z.string().trim().min(1).max(100).optional(),
+  bank_code: z.string().trim().min(1).max(20).optional(),
+  return_url: z.string().url().optional(),
+});
+
 // ── provider-onboarding & subscription ───────────────────────────────────────
 
 export const RegisterProviderSchema = z.object({
