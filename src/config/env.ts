@@ -59,6 +59,16 @@ export const env = {
     slotLockTtlSeconds: parseInt(process.env.SLOT_LOCK_TTL_SECONDS ?? '1800', 10),
   },
 
+  vnpay: {
+    tmnCode: process.env.VNPAY_TMN_CODE ?? '',
+    hashSecret: process.env.VNPAY_HASH_SECRET ?? '',
+    paymentUrl: process.env.VNPAY_URL ?? 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+    returnUrl: process.env.VNPAY_RETURN_URL ?? 'http://localhost:3000/api/v1/payments/vnpay/return',
+    ipnUrl: process.env.VNPAY_IPN_URL ?? 'http://localhost:3000/api/v1/payments/vnpay/ipn',
+    locale: process.env.VNPAY_LOCALE ?? 'vn',
+    currCode: process.env.VNPAY_CURR_CODE ?? 'VND',
+  },
+
   ai: {
     googleApiKey: process.env.GOOGLE_API_KEY ?? '',
     embeddingModel: process.env.GOOGLE_EMBEDDING_MODEL ?? 'gemini-embedding-001',

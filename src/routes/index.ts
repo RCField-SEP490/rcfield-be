@@ -16,6 +16,7 @@ import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
 import { adminTrackTypeRouter } from './admin-track-type.routes';
+import { vnpayRouter } from './vnpay.routes';
 import { AppDataSource } from '../config/database';
 import { SubscriptionPlan } from '../models/subscription-plan.entity';
 import { AmenityCatalog } from '../models/amenity-catalog.entity';
@@ -105,6 +106,7 @@ router.use('/cafes/:cafeId/vehicle-catalogs', vehicleCatalogRouter);
 router.use('/cafes/:cafeId', chatRouter);
 router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);
+router.use('/payments/vnpay', vnpayRouter);
 
 // router.use('/bookings', bookingsRouter);
 // router.use('/vehicles', vehiclesRouter);
