@@ -4,6 +4,7 @@ import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import { ProviderStatus, SubscriptionStatus, UserRole } from '../../types';
 import { createTestCafe, createTestUser, generateToken } from '../helpers';
+import { emailService } from '../../services/email.service';
 
 async function activateProvider(providerId: string): Promise<void> {
   await AppDataSource.query(
@@ -25,6 +26,23 @@ async function activateProvider(providerId: string): Promise<void> {
 }
 
 describe('POST /api/v1/provider/staff', () => {
+  let sendInviteSpy: jest.SpyInstance;
+  let capturedInviteUrl = '';
+
+  beforeEach(() => {
+    capturedInviteUrl = '';
+    sendInviteSpy = jest
+      .spyOn(emailService, 'sendStaffInvite')
+      .mockImplementation(async (input) => {
+        capturedInviteUrl = input.inviteUrl;
+        return Promise.resolve();
+      });
+  });
+
+  afterEach(() => {
+    sendInviteSpy.mockRestore();
+  });
+
   it('provider ACTIVE tạo được tài khoản STAFF và gán vào cafe của mình', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
@@ -38,7 +56,6 @@ describe('POST /api/v1/provider/staff', () => {
         full_name: 'Nguyen Staff',
         email: 'Staff.New@Example.com',
         phone: '0901234567',
-        password: 'secret123',
       })
       .expect(201);
 
@@ -56,14 +73,20 @@ describe('POST /api/v1/provider/staff', () => {
     expect(res.body.data).not.toHaveProperty('refresh_token');
 
     const [staff] = await AppDataSource.query<
-      { id: string; email: string; role: string; password_hash: string; is_active: boolean }[]
+      {
+        id: string;
+        email: string;
+        role: string;
+        password_hash: string | null;
+        is_active: boolean;
+      }[]
     >(`SELECT id, email, role, password_hash, is_active FROM users WHERE id = $1`, [
       res.body.data.id,
     ]);
     expect(staff.email).toBe('staff.new@example.com');
     expect(staff.role).toBe(UserRole.STAFF);
-    expect(staff.is_active).toBe(true);
-    await expect(bcrypt.compare('secret123', staff.password_hash)).resolves.toBe(true);
+    expect(staff.is_active).toBe(false);
+    expect(staff.password_hash).toBeNull();
 
     const [assignment] = await AppDataSource.query<
       { staff_id: string; cafe_id: string; assigned_by: string }[]
@@ -75,6 +98,32 @@ describe('POST /api/v1/provider/staff', () => {
       cafe_id: cafe.id,
       assigned_by: provider.id,
     });
+
+    // Verify token was sent in the email invite
+    expect(sendInviteSpy).toHaveBeenCalled();
+    const urlObj = new URL(capturedInviteUrl);
+    const token = urlObj.searchParams.get('token');
+    expect(token).toBeTruthy();
+
+    // Now test the activation flow
+    const activateRes = await request(app)
+      .post('/api/v1/auth/staff-invite/activate')
+      .send({
+        token,
+        password: 'secret123',
+      })
+      .expect(200);
+
+    expect(activateRes.body.success).toBe(true);
+    expect(activateRes.body.data).toHaveProperty('access_token');
+    expect(activateRes.body.data).toHaveProperty('refresh_token');
+
+    // Verify user is now active in database and has correct password
+    const [activatedStaff] = await AppDataSource.query<
+      { id: string; password_hash: string; is_active: boolean }[]
+    >(`SELECT id, password_hash, is_active FROM users WHERE id = $1`, [staff.id]);
+    expect(activatedStaff.is_active).toBe(true);
+    await expect(bcrypt.compare('secret123', activatedStaff.password_hash)).resolves.toBe(true);
   });
 
   it('không cho tạo staff khi không đăng nhập', async () => {
