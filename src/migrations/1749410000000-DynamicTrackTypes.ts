@@ -33,8 +33,8 @@ export class DynamicTrackTypes1749410000000 implements MigrationInterface {
     `);
     await queryRunner.query(`
       UPDATE cafes c
-      SET track_type_ids = (
-        SELECT COALESCE(array_agg(t.id), '{}')
+      SET track_type_ids = ARRAY(
+        SELECT t.id
         FROM unnest(c.track_types) AS val
         JOIN track_types t ON t.code = val
       );
@@ -52,8 +52,8 @@ export class DynamicTrackTypes1749410000000 implements MigrationInterface {
     `);
     await queryRunner.query(`
       UPDATE vehicle_catalogs vc
-      SET compatible_track_type_ids = (
-        SELECT COALESCE(array_agg(t.id), '{}')
+      SET compatible_track_type_ids = ARRAY(
+        SELECT t.id
         FROM unnest(vc.compatible_track_types) AS val
         JOIN track_types t ON t.code = val
       );
@@ -133,8 +133,8 @@ export class DynamicTrackTypes1749410000000 implements MigrationInterface {
     `);
     await queryRunner.query(`
       UPDATE vehicle_catalogs vc
-      SET compatible_track_types_old = (
-        SELECT COALESCE(array_agg(t.code), '{}')
+      SET compatible_track_types_old = ARRAY(
+        SELECT t.code
         FROM unnest(vc.compatible_track_types) AS val
         JOIN track_types t ON t.id = val
       );
@@ -152,8 +152,8 @@ export class DynamicTrackTypes1749410000000 implements MigrationInterface {
     `);
     await queryRunner.query(`
       UPDATE cafes c
-      SET track_types_old = (
-        SELECT COALESCE(array_agg(t.code), '{}')
+      SET track_types_old = ARRAY(
+        SELECT t.code
         FROM unnest(c.track_types) AS val
         JOIN track_types t ON t.id = val
       );
