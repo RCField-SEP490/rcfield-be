@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class DynamicTrackTypes1749700000000 implements MigrationInterface {
+export class DynamicTrackTypes1749410000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. Create track_types table
     await queryRunner.query(`
