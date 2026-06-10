@@ -29,6 +29,13 @@ bookingRouter.post(
 );
 
 bookingRouter.post(
+  '/:id/mock-checkout',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  bookingController.mockCheckout,
+);
+
+bookingRouter.post(
   '/:id/cancel',
   authenticate,
   authorize(UserRole.CUSTOMER, UserRole.PROVIDER),

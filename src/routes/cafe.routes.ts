@@ -8,6 +8,7 @@ import {
 } from '../middlewares/auth.middleware';
 import { cafeController } from '../controllers/cafe.controller';
 import { cafeImageController } from '../controllers/cafe-image.controller';
+import { cafeTrackConfigController } from '../controllers/cafe-track-config.controller';
 import { vehicleController } from '../controllers/vehicle.controller';
 import { menuController } from '../controllers/menu.controller';
 import { menuRouter } from './menu.routes';
@@ -105,12 +106,36 @@ cafeRouter.post(
   upload.array('files', 20),
   cafeImageController.createImages,
 );
+// ── track configs ─────────────────────────────────────────────────────────────
 cafeRouter.get(
-  '/:cafeId/widget-config',
-  authenticate,
-  authorize(UserRole.PROVIDER, UserRole.ADMIN),
-  cafeController.getWidgetConfig,
+  '/:cafeId/track-configs',
+  optionalAuthenticate,
+  cafeTrackConfigController.listConfigs,
 );
+cafeRouter.post(
+  '/:cafeId/track-configs',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  cafeTrackConfigController.createConfig,
+);
+cafeRouter.patch(
+  '/:cafeId/track-configs/:configId',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  cafeTrackConfigController.updateConfig,
+);
+cafeRouter.post(
+  '/:cafeId/track-configs/:configId/images',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  upload.array('files', 20),
+  cafeTrackConfigController.uploadImages,
+);
+
+cafeRouter.get('/:cafeId/widget-config', cafeController.getWidgetConfig);
 cafeRouter.put(
   '/:cafeId/widget-config',
   authenticate,

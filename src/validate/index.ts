@@ -670,6 +670,27 @@ export const UpsertWidgetConfigSchema = z.object({
   full_page_enabled: z.boolean().optional(),
 });
 
+// ── cafe_track_configs ────────────────────────────────────────────────────────
+
+export const CreateCafeTrackConfigSchema = z.object({
+  track_type_id: z.string().uuid(),
+  max_concurrent: z.number().int().min(1),
+  byoc_capacity: z.number().int().min(0),
+  description: z.string().max(500).optional(),
+  sort_order: z.number().int().min(0).optional().default(0),
+});
+
+export const UpdateCafeTrackConfigSchema = z
+  .object({
+    max_concurrent: z.number().int().min(1).optional(),
+    byoc_capacity: z.number().int().min(0).optional(),
+    description: z.string().max(500).nullable().optional(),
+    images: z.array(z.string().url()).max(20).optional(),
+    sort_order: z.number().int().min(0).optional(),
+    is_active: z.boolean().optional(),
+  })
+  .refine((b) => Object.keys(b).length > 0, { message: 'At least one field required' });
+
 // ── bookings ──────────────────────────────────────────────────────────────────
 
 const ParticipantSchema = z.object({
@@ -688,13 +709,13 @@ const FnbItemSchema = z.object({
 export const CreateBookingSchema = z.object({
   cafe_id: z.string().uuid(),
   play_mode: z.nativeEnum(BookingMode),
+  track_config_id: z.string().uuid(),
   slot_start: z.string().datetime({ offset: true }),
   slot_end: z.string().datetime({ offset: true }),
   vehicle_ids: z.array(z.string().uuid()).default([]),
   participants: z.array(ParticipantSchema).min(0).default([]),
   fnb_items: z.array(FnbItemSchema).default([]),
   promotion_code: z.string().max(50).optional(),
-  track_type_id: z.string().uuid().optional(),
 });
 
 export const CancelBookingSchema = z.object({
@@ -718,4 +739,5 @@ export const CheckAvailabilitySchema = z.object({
   slot_start: z.string().datetime({ offset: true }),
   slot_end: z.string().datetime({ offset: true }),
   play_mode: z.nativeEnum(BookingMode),
+  track_config_id: z.string().uuid().optional(),
 });
