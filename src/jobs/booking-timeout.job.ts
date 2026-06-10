@@ -30,6 +30,7 @@ export function scheduleBookingTimeout(): void {
         `SELECT id FROM bookings
          WHERE status = 'CONFIRMED'
            AND slot_start + INTERVAL '30 minutes' < NOW()
+           AND updated_at <= slot_start
            AND deleted_at IS NULL`,
       );
 

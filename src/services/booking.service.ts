@@ -215,7 +215,28 @@ export async function createBooking(
     },
   });
   if (existingBooking) {
-    throw new AppError('A pending booking already exists for this slot', 409, 'DUPLICATE_BOOKING');
+    if (existingBooking.paymentExpiresAt > new Date()) {
+      return {
+        booking_id: existingBooking.id,
+        status: BookingStatus.PENDING,
+        payment_expires_at: existingBooking.paymentExpiresAt,
+        total_amount: Number(
+          (existingBooking.snapshot as { total_charged?: number } | null)?.total_charged ?? 0,
+        ),
+        breakdown: {
+          slot_fee: 0,
+          rental_fee: 0,
+          security_deposit: 0,
+          fnb_total: 0,
+          discount: Number(existingBooking.discountAmount),
+          total: Number(
+            (existingBooking.snapshot as { total_charged?: number } | null)?.total_charged ?? 0,
+          ),
+        },
+      };
+    }
+
+    await transition(existingBooking.id, 'PAYMENT_TIMEOUT');
   }
 
   const cafeRepo = AppDataSource.getRepository(Cafe);

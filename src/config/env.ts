@@ -60,13 +60,23 @@ export const env = {
   },
 
   vnpay: {
-    tmnCode: process.env.VNPAY_TMN_CODE ?? '',
-    hashSecret: process.env.VNPAY_HASH_SECRET ?? '',
-    paymentUrl: process.env.VNPAY_URL ?? 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
-    returnUrl: process.env.VNPAY_RETURN_URL ?? 'http://localhost:3000/api/v1/payments/vnpay/return',
-    ipnUrl: process.env.VNPAY_IPN_URL ?? 'http://localhost:3000/api/v1/payments/vnpay/ipn',
+    tmnCode: process.env.VNPAY_TMN_CODE ?? process.env.VNP_TMN_CODE ?? '',
+    hashSecret: process.env.VNPAY_HASH_SECRET ?? process.env.VNP_HASH_SECRET ?? '',
+    paymentUrl:
+      process.env.VNPAY_URL ??
+      process.env.VNP_URL ??
+      'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+    returnUrl:
+      process.env.VNPAY_RETURN_URL ??
+      process.env.VNP_RETURN_URL ??
+      'http://localhost:3000/api/payments/vnpay-return',
+    ipnUrl:
+      process.env.VNPAY_IPN_URL ??
+      process.env.VNP_IPN_URL ??
+      'http://localhost:3000/api/payments/vnpay-ipn',
     locale: process.env.VNPAY_LOCALE ?? 'vn',
     currCode: process.env.VNPAY_CURR_CODE ?? 'VND',
+    mockEnabled: parseBoolean(process.env.VNPAY_MOCK_ENABLED),
   },
 
   ai: {
@@ -76,7 +86,7 @@ export const env = {
     supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.0-flash',
   },
 
-  frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:5173',
+  frontendUrl: process.env.FRONTEND_URL ?? process.env.CLIENT_URL ?? 'http://localhost:5173',
 
   facebook: {
     appId: process.env.FB_APP_ID ?? '',

@@ -1,5 +1,7 @@
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
+import { Cafe } from '../models/cafe.entity';
 import { TrackType } from '../models/track-type.entity';
 import { Booking } from '../models/booking.entity';
 import { AppError, BookingStatus, UserRole } from '../types';
@@ -52,6 +54,43 @@ function formatConfig(config: CafeTrackConfig, trackType?: TrackType) {
   };
 }
 
+async function listFallbackTrackConfigs(
+  cafeId: string,
+): Promise<ReturnType<typeof formatConfig>[]> {
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: cafeId } });
+  if (!cafe || cafe.deletedAt) {
+    throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  }
+
+  const trackTypes = cafe.trackTypes.length
+    ? await AppDataSource.getRepository(TrackType).findBy({ id: In(cafe.trackTypes) })
+    : [];
+  const trackTypeMap = new Map(trackTypes.map((trackType) => [trackType.id, trackType]));
+
+  return cafe.trackTypes
+    .map((trackTypeId) => trackTypeMap.get(trackTypeId))
+    .filter((trackType): trackType is TrackType => Boolean(trackType?.isActive))
+    .map((trackType, index) => ({
+      id: trackType.id,
+      cafe_id: cafe.id,
+      track_type_id: trackType.id,
+      track_type: {
+        id: trackType.id,
+        code: trackType.code,
+        name: trackType.name,
+        description: trackType.description,
+      },
+      max_concurrent: cafe.maxConcurrentBookings,
+      byoc_capacity: cafe.byocCapacity,
+      images: [],
+      description: trackType.description,
+      sort_order: trackType.sortOrder ?? index,
+      is_active: trackType.isActive,
+      created_at: cafe.createdAt,
+      updated_at: cafe.updatedAt,
+    }));
+}
+
 export async function listTrackConfigs(
   cafeId: string,
   viewer?: Viewer,
@@ -69,11 +108,18 @@ export async function listTrackConfigs(
     .addOrderBy('ctc.created_at', 'ASC');
 
   if (!isProvider) {
-    // Public: only active configs that have at least 1 image
-    qb.andWhere('ctc.is_active = true').andWhere('array_length(ctc.images, 1) > 0');
+    qb.andWhere('ctc.is_active = true');
   }
 
-  const configs = await qb.getMany();
+  let configs: CafeTrackConfig[];
+  try {
+    configs = await qb.getMany();
+  } catch (error) {
+    if ((error as { code?: string }).code === '42P01') {
+      return listFallbackTrackConfigs(cafeId);
+    }
+    throw error;
+  }
 
   const trackTypeIds = [...new Set(configs.map((c) => c.trackTypeId))];
   const trackTypes = trackTypeIds.length ? await trackTypeRepo.findByIds(trackTypeIds) : [];

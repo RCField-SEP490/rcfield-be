@@ -709,7 +709,8 @@ const FnbItemSchema = z.object({
 export const CreateBookingSchema = z.object({
   cafe_id: z.string().uuid(),
   play_mode: z.nativeEnum(BookingMode),
-  track_config_id: z.string().uuid(),
+  track_type_id: z.string().uuid().optional(),
+  track_config_id: z.string().uuid().optional(),
   slot_start: z.string().datetime({ offset: true }),
   slot_end: z.string().datetime({ offset: true }),
   vehicle_ids: z.array(z.string().uuid()).default([]),
@@ -739,5 +740,6 @@ export const CheckAvailabilitySchema = z.object({
   slot_start: z.string().datetime({ offset: true }),
   slot_end: z.string().datetime({ offset: true }),
   play_mode: z.nativeEnum(BookingMode),
+  track_type_id: z.string().uuid().optional(),
   track_config_id: z.string().uuid().optional(),
 });
