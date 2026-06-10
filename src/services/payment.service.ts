@@ -1,4 +1,5 @@
 import { AppDataSource } from '../config/database';
+import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
@@ -166,11 +167,12 @@ export async function createCheckoutUrl(
   // txnRef = bookingId without dashes, max 32 chars
   const txnRef = bookingId.replace(/-/g, '').substring(0, 32);
 
-  const paymentUrl = createPaymentUrl({
+  const vnpayPaymentUrl = createPaymentUrl({
     amount: totalCharged,
     txnRef,
-    orderInfo: `Thanh toan dat san RC - ${bookingId.substring(0, 8)}`,
+    orderInfo: `RCField booking ${bookingId.substring(0, 8)}`,
     ipAddr,
+    bankCode: 'VNBANK',
   });
 
   // Record pending transaction
@@ -189,9 +191,22 @@ export async function createCheckoutUrl(
     await txRepo.save(tx);
   }
 
+  if (env.vnpay.mockEnabled) {
+    await processMockConfirmation(txnRef);
+    const target = new URL('/payment/result', env.frontendUrl);
+    target.searchParams.set('status', 'success');
+    target.searchParams.set('txn_ref', txnRef);
+    target.searchParams.set('mock', '1');
+    logger.info(
+      'PaymentService',
+      `mock checkout confirmed txnRef=${txnRef} bookingId=${bookingId}`,
+    );
+    return { payment_url: target.toString(), txn_ref: txnRef, total_amount: totalCharged };
+  }
+
   logger.info('PaymentService', `checkout created txnRef=${txnRef} bookingId=${bookingId}`);
 
-  return { payment_url: paymentUrl, txn_ref: txnRef, total_amount: totalCharged };
+  return { payment_url: vnpayPaymentUrl, txn_ref: txnRef, total_amount: totalCharged };
 }
 
 // ── createPaymentComponents ───────────────────────────────────────────────────
@@ -299,6 +314,38 @@ export async function processConfirmation(
 
   logger.info('PaymentService', `confirmed bookingId=${tx.bookingId} txnRef=${result.txnRef}`);
   return { rspCode: '00', message: 'Confirm Success' };
+}
+
+export async function processMockConfirmation(
+  txnRef: string,
+): Promise<{ rspCode: string; message: string }> {
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  const tx = await txRepo.findOne({ where: { txnRef } });
+
+  if (!tx) {
+    return { rspCode: '01', message: 'Order not found' };
+  }
+
+  if (tx.status === PaymentTransactionStatus.SUCCESS) {
+    return { rspCode: '02', message: 'Order already confirmed' };
+  }
+
+  await txRepo.update(tx.id, {
+    status: PaymentTransactionStatus.SUCCESS,
+    rawResponse: { mock: true, txnRef },
+  });
+
+  const booking = await transition(tx.bookingId, 'PAYMENT_CONFIRMED');
+  const bvRepo = AppDataSource.getRepository(BookingVehicle);
+  const bookingVehicles = await bvRepo.find({ where: { bookingId: tx.bookingId } });
+  const snapshot = booking.snapshot as unknown as BookingSnapshot | null;
+
+  if (snapshot) {
+    await createPaymentComponents(booking, snapshot, bookingVehicles);
+  }
+
+  logger.info('PaymentService', `mock confirmed bookingId=${tx.bookingId} txnRef=${txnRef}`);
+  return { rspCode: '00', message: 'Mock Confirm Success' };
 }
 
 // ── processRefund ─────────────────────────────────────────────────────────────

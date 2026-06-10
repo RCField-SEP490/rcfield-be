@@ -4,6 +4,7 @@ import { AppError } from '../types';
 
 const VNPAY_VERSION = '2.1.0';
 const VNPAY_COMMAND = 'pay';
+const DEFAULT_PAYMENT_TTL_MINUTES = 15;
 
 export interface CreateVnpayPaymentInput {
   amount: number;
@@ -48,6 +49,22 @@ function formatVnpayDate(date = new Date()): string {
   return `${year}${month}${day}${hours}${minutes}${seconds}`;
 }
 
+function addMinutes(date: Date, minutes: number): Date {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+function normalizeOrderInfo(orderInfo: string): string {
+  return orderInfo
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .replace(/[^a-zA-Z0-9 .:_-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 255);
+}
+
 function sortedParams(params: VnpayParams): VnpayParams {
   return Object.keys(params)
     .sort()
@@ -72,12 +89,14 @@ function sign(params: VnpayParams): string {
 }
 
 function normalizeIp(ipAddr: string): string {
-  return ipAddr.replace(/^::ffff:/, '') || '127.0.0.1';
+  const normalized = ipAddr.replace(/^::ffff:/, '').trim();
+  return !normalized || normalized === '::1' ? '127.0.0.1' : normalized;
 }
 
 export function createPaymentUrl(input: CreateVnpayPaymentInput): string {
   assertConfigured();
 
+  const createDate = new Date();
   const params: VnpayParams = {
     vnp_Version: VNPAY_VERSION,
     vnp_Command: VNPAY_COMMAND,
@@ -85,16 +104,17 @@ export function createPaymentUrl(input: CreateVnpayPaymentInput): string {
     vnp_Amount: String(Math.round(input.amount) * 100),
     vnp_CurrCode: env.vnpay.currCode,
     vnp_TxnRef: input.txnRef,
-    vnp_OrderInfo: input.orderInfo,
+    vnp_OrderInfo: normalizeOrderInfo(input.orderInfo),
     vnp_OrderType: input.orderType ?? 'other',
     vnp_Locale: env.vnpay.locale,
     vnp_ReturnUrl: input.returnUrl ?? env.vnpay.returnUrl,
     vnp_IpAddr: normalizeIp(input.ipAddr),
-    vnp_CreateDate: formatVnpayDate(),
+    vnp_CreateDate: formatVnpayDate(createDate),
+    vnp_ExpireDate: formatVnpayDate(addMinutes(createDate, DEFAULT_PAYMENT_TTL_MINUTES)),
   };
 
   if (input.bankCode) {
-    params.vnp_BankCode = input.bankCode;
+    params.vnp_BankCode = input.bankCode.trim().toUpperCase();
   }
 
   const signedParams = sortedParams(params);

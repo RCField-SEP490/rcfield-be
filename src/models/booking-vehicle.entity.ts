@@ -20,6 +20,9 @@ export class BookingVehicle {
   @Column({ name: 'vehicle_id', type: 'uuid' })
   vehicleId: string;
 
+  @Column({ name: 'hourly_rate_snapshot', type: 'numeric', precision: 15, scale: 2 })
+  hourlyRateSnapshot: number;
+
   @Column({ name: 'rental_fee_snapshot', type: 'numeric', precision: 15, scale: 2 })
   rentalFeeSnapshot: number;
 
