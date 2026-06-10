@@ -1,4 +1,4 @@
-import type { Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import {
   CafeListQuerySchema,
   CreateCafeSchema,
@@ -7,14 +7,25 @@ import {
   UpsertWidgetConfigSchema,
   CheckAvailabilitySchema,
 } from '../validate';
-import { AppError, AuthRequest, BookingMode, CafeStatus, UserRole, VehicleStatus } from '../types';
+import {
+  AppError,
+  AuthRequest,
+  BookingMode,
+  BookingStatus,
+  CafeStatus,
+  UserRole,
+  VehicleStatus,
+} from '../types';
 import * as cafeService from '../services/cafe.service';
 import { getWidgetConfigForCafe, upsertWidgetConfig } from '../services/chat.service';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { Cafe } from '../models/cafe.entity';
+import { Booking } from '../models/booking.entity';
+import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
+import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 
 function viewerFromRequest(req: AuthRequest) {
   return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
@@ -103,13 +114,10 @@ export const cafeController = {
   },
 
   // GET /api/v1/cafes/:cafeId/widget-config  [auth]
-  async getWidgetConfig(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  // GET /api/v1/cafes/:cafeId/widget-config  (public)
+  async getWidgetConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const cafe = await cafeService.getManagedCafeOrThrow(req.params.cafeId, {
-        userId: req.user.userId,
-        role: req.user.role,
-      });
+      const cafe = await cafeService.getCafeOrThrow(req.params.cafeId);
       const config = await getWidgetConfigForCafe(req.params.cafeId);
       res.json({
         success: true,
@@ -172,10 +180,45 @@ export const cafeController = {
         throw new AppError('Cafe is not accepting bookings', 400, 'CAFE_NOT_ACTIVE');
       }
 
+      const activeStatuses = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
+      const slotEnd = new Date(query.slot_end);
+
+      // Resolve per-track capacity when track_config_id is provided
+      let trackConfig: CafeTrackConfig | null = null;
+      if (query.track_config_id) {
+        trackConfig = await AppDataSource.getRepository(CafeTrackConfig).findOne({
+          where: { id: query.track_config_id, cafeId, isActive: true },
+        });
+        if (!trackConfig || trackConfig.deletedAt) {
+          throw new AppError('Track config not found or inactive', 400, 'TRACK_CONFIG_NOT_FOUND');
+        }
+      }
+
       if (query.play_mode === BookingMode.BYOC) {
-        const counterKey = `slot:byoc:${cafeId}:${slotStart.getTime()}`;
-        const current = Number((await redis.get(counterKey)) ?? 0);
-        const remaining = Math.max(0, cafe.byocCapacity - current);
+        const capacity = trackConfig ? trackConfig.byocCapacity : cafe.byocCapacity;
+
+        // Range-overlap query: bookings that overlap [slotStart, slotEnd)
+        const qb = AppDataSource.getRepository(Booking)
+          .createQueryBuilder('b')
+          .where('b.cafe_id = :cafeId', { cafeId })
+          .andWhere('b.play_mode = :mode', { mode: BookingMode.BYOC })
+          .andWhere('b.slot_start < :slotEnd', { slotEnd })
+          .andWhere('b.slot_end > :slotStart', { slotStart })
+          .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses });
+
+        if (trackConfig) {
+          qb.andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id });
+        }
+
+        const dbCount = await qb.getCount();
+
+        // Redis counter covers in-flight checkouts not yet confirmed
+        const counterKey = trackConfig
+          ? `slot:byoc:${cafeId}:${trackConfig.id}:${slotStart.getTime()}`
+          : `slot:byoc:${cafeId}:${slotStart.getTime()}`;
+        const redisCount = Number((await redis.get(counterKey)) ?? 0);
+        const occupied = Math.max(dbCount, redisCount);
+        const remaining = Math.max(0, capacity - occupied);
         res.json({
           success: true,
           data: {
@@ -188,7 +231,7 @@ export const cafeController = {
         return;
       }
 
-      // RENTAL: return all AVAILABLE vehicles not currently Redis-locked for this slot
+      // RENTAL: exclude vehicles already booked (DB) or in checkout (Redis) for this slot
       const vehicleRepo = AppDataSource.getRepository(Vehicle);
       const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
 
@@ -196,27 +239,68 @@ export const cafeController = {
         where: { cafeId, status: VehicleStatus.AVAILABLE },
       });
 
+      // Fetch vehicle IDs with confirmed/pending bookings that cover this slot
+      const bookedVehicleRows = await AppDataSource.getRepository(BookingVehicle)
+        .createQueryBuilder('bv')
+        .innerJoin(Booking, 'b', 'b.id = bv.booking_id')
+        .where('b.cafe_id = :cafeId', { cafeId })
+        .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
+        .andWhere('b.slot_start < :slotEnd', { slotEnd })
+        .andWhere('b.slot_end > :slotStart', { slotStart })
+        .select('bv.vehicle_id', 'vehicleId')
+        .getRawMany<{ vehicleId: string }>();
+
+      const dbBookedIds = new Set(bookedVehicleRows.map((r) => r.vehicleId));
+
       const slotEpoch = slotStart.getTime();
       const available = await Promise.all(
         vehicles.map(async (v) => {
+          // Skip if booked in DB or locked in Redis (checkout in progress)
+          if (dbBookedIds.has(v.id)) return null;
           const lockKey = `slot:lock:vehicle:${v.id}:${slotEpoch}`;
           const locked = await redis.get(lockKey);
           if (locked) return null;
           const catalog = await catalogRepo.findOne({ where: { id: v.catalogId } });
-          return catalog
-            ? {
-                vehicle_id: v.id,
-                vehicle_identifier: v.identifier,
-                catalog_name: catalog.name,
-                tier: catalog.tier,
-                rental_fee_per_hour: Number(catalog.hourlyRate),
-                security_deposit: Number(catalog.securityDeposit),
-              }
-            : null;
+          if (!catalog) return null;
+          // Filter by track type compatibility when a track is selected
+          // If catalog has explicit track restrictions, enforce them; empty = compatible with all
+          if (
+            trackConfig &&
+            catalog.compatibleTrackTypes.length > 0 &&
+            !catalog.compatibleTrackTypes.includes(trackConfig.trackTypeId)
+          ) {
+            return null;
+          }
+          return {
+            vehicle_id: v.id,
+            vehicle_identifier: v.identifier,
+            catalog_name: catalog.name,
+            tier: catalog.tier,
+            rental_fee_per_hour: Number(catalog.hourlyRate),
+            security_deposit: Number(catalog.securityDeposit),
+          };
         }),
       );
 
-      const filteredVehicles = available.filter(Boolean);
+      let filteredVehicles = available.filter(Boolean);
+
+      // Per-track capacity cap: if track has a max_concurrent limit, enforce it
+      if (trackConfig) {
+        const currentRentalCount = await AppDataSource.getRepository(Booking)
+          .createQueryBuilder('b')
+          .where('b.cafe_id = :cafeId', { cafeId })
+          .andWhere('b.play_mode = :mode', { mode: BookingMode.RENTAL })
+          .andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id })
+          .andWhere('b.slot_start < :slotEnd', { slotEnd })
+          .andWhere('b.slot_end > :slotStart', { slotStart })
+          .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
+          .getCount();
+
+        const maxConcurrent = trackConfig.maxConcurrent ?? 10;
+        const remainingSlots = Math.max(0, maxConcurrent - currentRentalCount);
+        filteredVehicles = filteredVehicles.slice(0, remainingSlots);
+      }
+
       res.json({
         success: true,
         data: {

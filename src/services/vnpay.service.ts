@@ -65,27 +65,22 @@ function normalizeOrderInfo(orderInfo: string): string {
     .slice(0, 255);
 }
 
-function sortedParams(params: VnpayParams): VnpayParams {
+function filterParams(params: VnpayParams): VnpayParams {
   return Object.keys(params)
     .sort()
     .reduce<VnpayParams>((acc, key) => {
       const value = params[key];
-      if (value !== undefined && value !== null && value !== '') {
-        acc[key] = value;
+      if (value !== undefined && value !== null && String(value) !== '') {
+        acc[key] = String(value);
       }
       return acc;
     }, {});
 }
 
-function toQueryString(params: VnpayParams): string {
-  return new URLSearchParams(sortedParams(params)).toString();
-}
-
-function sign(params: VnpayParams): string {
-  return crypto
-    .createHmac('sha512', env.vnpay.hashSecret)
-    .update(toQueryString(params))
-    .digest('hex');
+// VNPay PHP server verifies using urlencode() which encodes spaces as '+'.
+// URLSearchParams.toString() matches this behavior — DO NOT use raw strings.
+function buildSignData(params: VnpayParams): string {
+  return new URLSearchParams(filterParams(params)).toString();
 }
 
 function normalizeIp(ipAddr: string): string {
@@ -117,10 +112,20 @@ export function createPaymentUrl(input: CreateVnpayPaymentInput): string {
     params.vnp_BankCode = input.bankCode.trim().toUpperCase();
   }
 
-  const signedParams = sortedParams(params);
-  signedParams.vnp_SecureHash = sign(signedParams);
+  // Build URL using URL API — same URLSearchParams encoding used for signing
+  const redirectUrl = new URL(env.vnpay.paymentUrl);
+  Object.entries(filterParams(params)).forEach(([key, value]) =>
+    redirectUrl.searchParams.append(key, value),
+  );
 
-  return `${env.vnpay.paymentUrl}?${new URLSearchParams(signedParams).toString()}`;
+  const signData = redirectUrl.search.slice(1); // query string without leading '?'
+  const secureHash = crypto
+    .createHmac('sha512', env.vnpay.hashSecret)
+    .update(Buffer.from(signData, 'utf-8'))
+    .digest('hex');
+
+  redirectUrl.searchParams.append('vnp_SecureHash', secureHash);
+  return redirectUrl.toString();
 }
 
 export function verifyVnpayParams(params: Record<string, unknown>): VnpayVerificationResult {
@@ -134,7 +139,12 @@ export function verifyVnpayParams(params: Record<string, unknown>): VnpayVerific
     return acc;
   }, {});
 
-  const expectedHash = sign(signingParams);
+  const signData = buildSignData(signingParams);
+  const expectedHash = crypto
+    .createHmac('sha512', env.vnpay.hashSecret)
+    .update(Buffer.from(signData, 'utf-8'))
+    .digest('hex');
+
   const isValid =
     receivedHash.length === expectedHash.length &&
     crypto.timingSafeEqual(Buffer.from(receivedHash), Buffer.from(expectedHash));

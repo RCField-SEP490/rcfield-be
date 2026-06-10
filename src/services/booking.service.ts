@@ -11,6 +11,8 @@ import { Cafe } from '../models/cafe.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { MenuItem } from '../models/menu-item.entity';
+import { CafeTrackConfig } from '../models/cafe-track-config.entity';
+import { TrackType } from '../models/track-type.entity';
 import {
   AppError,
   BookingMode,
@@ -167,6 +169,7 @@ export interface CreateBookingBody {
   fnb_items: FnbItemInput[];
   promotion_code?: string;
   track_type_id?: string;
+  track_config_id?: string;
 }
 
 export interface BookingBreakdown {
@@ -195,6 +198,10 @@ export async function createBooking(
 
   if (slotStart >= slotEnd) {
     throw new AppError('slot_start must be before slot_end', 400, 'INVALID_SLOT');
+  }
+
+  if (slotStart <= new Date()) {
+    throw new AppError('Cannot book a slot in the past', 400, 'SLOT_IN_PAST');
   }
 
   // Duplicate booking guard
@@ -237,7 +244,24 @@ export async function createBooking(
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
   if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
 
+  const slotDuration = cafe.slotDurationMinutes;
   const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;
+
+  // Slot range validation: must be aligned with slotDurationMinutes and ≤ 8 slots
+  if (slotMinutes % slotDuration !== 0) {
+    throw new AppError(
+      `Slot range must be a multiple of ${slotDuration} minutes`,
+      400,
+      'INVALID_SLOT_RANGE',
+    );
+  }
+  if (slotMinutes > slotDuration * 8) {
+    throw new AppError(
+      `Maximum booking duration is ${slotDuration * 8} minutes`,
+      400,
+      'SLOT_RANGE_TOO_LONG',
+    );
+  }
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
   const slotFee = Number(cafe.slotFeeRate) * slotCount;
 
@@ -260,13 +284,28 @@ export async function createBooking(
     const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
 
     for (const vehicleId of body.vehicle_ids) {
-      const vehicle = await vehicleRepo.findOne({ where: { id: vehicleId, cafeId: body.cafe_id } });
-      if (!vehicle) throw new AppError(`Vehicle ${vehicleId} not found`, 404, 'VEHICLE_NOT_FOUND');
-      if (vehicle.status !== VehicleStatus.AVAILABLE) {
+      // Accept either a unit ID or a catalog ID — if catalog, auto-pick an available unit
+      let vehicle = await vehicleRepo.findOne({ where: { id: vehicleId, cafeId: body.cafe_id } });
+      const catalog = vehicle
+        ? await catalogRepo.findOne({ where: { id: vehicle.catalogId } })
+        : await catalogRepo.findOne({ where: { id: vehicleId, cafeId: body.cafe_id } });
+
+      if (!vehicle) {
+        if (!catalog)
+          throw new AppError(`Vehicle ${vehicleId} not found`, 404, 'VEHICLE_NOT_FOUND');
+        vehicle = await vehicleRepo.findOne({
+          where: { catalogId: catalog.id, cafeId: body.cafe_id, status: VehicleStatus.AVAILABLE },
+        });
+        if (!vehicle)
+          throw new AppError(
+            `No available unit for catalog ${catalog.id}`,
+            400,
+            'VEHICLE_UNAVAILABLE',
+          );
+      } else if (vehicle.status !== VehicleStatus.AVAILABLE) {
         throw new AppError(`Vehicle ${vehicleId} is not available`, 400, 'VEHICLE_UNAVAILABLE');
       }
 
-      const catalog = await catalogRepo.findOne({ where: { id: vehicle.catalogId } });
       if (!catalog) throw new AppError('Vehicle catalog not found', 500, 'CATALOG_NOT_FOUND');
 
       const hourlyRate = Number(catalog.hourlyRate);
@@ -274,7 +313,7 @@ export async function createBooking(
       rentalFeeTotal += rentalFee;
       depositTotal += Number(catalog.securityDeposit);
       vehiclePricings.push({
-        vehicleId,
+        vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
         securityDeposit: Number(catalog.securityDeposit),
@@ -283,9 +322,48 @@ export async function createBooking(
     }
   }
 
+  // Resolve track config (required for new bookings; optional for legacy compat)
+  let resolvedTrackConfig: CafeTrackConfig | null = null;
+  let resolvedTrackType: TrackType | null = null;
+  if (body.track_config_id) {
+    resolvedTrackConfig = await AppDataSource.getRepository(CafeTrackConfig).findOne({
+      where: { id: body.track_config_id, cafeId: body.cafe_id, isActive: true },
+    });
+    if (!resolvedTrackConfig || resolvedTrackConfig.deletedAt) {
+      throw new AppError('Track config not found or inactive', 400, 'TRACK_CONFIG_NOT_FOUND');
+    }
+    resolvedTrackType = await AppDataSource.getRepository(TrackType).findOne({
+      where: { id: resolvedTrackConfig.trackTypeId },
+    });
+  }
+
   if (body.play_mode === BookingMode.BYOC) {
-    const locked = await acquireByocSlot(body.cafe_id, slotStart, cafe.byocCapacity);
+    const capacity = resolvedTrackConfig ? resolvedTrackConfig.byocCapacity : cafe.byocCapacity;
+    const locked = await acquireByocSlot(body.cafe_id, slotStart, capacity);
     if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+  }
+
+  // Validate vehicle compat with track type for RENTAL
+  if (body.play_mode === BookingMode.RENTAL && resolvedTrackConfig) {
+    const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+    for (const vehicleId of body.vehicle_ids) {
+      // vehicleId may be a unit ID or catalog ID
+      const unit = await AppDataSource.getRepository(Vehicle).findOne({ where: { id: vehicleId } });
+      const catalog = unit
+        ? await catalogRepo.findOne({ where: { id: unit.catalogId } })
+        : await catalogRepo.findOne({ where: { id: vehicleId } });
+      if (
+        catalog &&
+        catalog.compatibleTrackTypes.length > 0 &&
+        !catalog.compatibleTrackTypes.includes(resolvedTrackConfig.trackTypeId)
+      ) {
+        throw new AppError(
+          `Vehicle ${vehicleId} is not compatible with this track type`,
+          400,
+          'VEHICLE_TRACK_INCOMPATIBLE',
+        );
+      }
+    }
   }
 
   let fnbTotal = 0;
@@ -342,14 +420,28 @@ export async function createBooking(
 
   try {
     const booking = await AppDataSource.transaction(async (em) => {
-      const trackTypeId = body.track_type_id ?? cafe.trackTypes?.[0];
+      // Determine track_type_id: prefer from track config, fall back to legacy field or cafe default
+      const trackTypeId =
+        resolvedTrackConfig?.trackTypeId ?? body.track_type_id ?? cafe.trackTypes?.[0];
       if (!trackTypeId) {
         throw new AppError('Cafe has no track types configured', 400, 'NO_TRACK_TYPE');
       }
+
+      const snapshot = resolvedTrackConfig
+        ? {
+            track_config_id: resolvedTrackConfig.id,
+            track_type_id: resolvedTrackConfig.trackTypeId,
+            track_type_code: resolvedTrackType?.code ?? null,
+            track_type_name: resolvedTrackType?.name ?? null,
+            byoc_capacity_at_booking: resolvedTrackConfig.byocCapacity,
+          }
+        : null;
+
       const newBooking = em.create(Booking, {
         customerId,
         cafeId: body.cafe_id,
         trackTypeId,
+        trackConfigId: resolvedTrackConfig?.id ?? null,
         playMode: body.play_mode,
         source: BookingSource.APP,
         status: BookingStatus.PENDING,
@@ -357,6 +449,7 @@ export async function createBooking(
         slotEnd,
         paymentExpiresAt,
         discountAmount: 0,
+        snapshot,
       });
       await em.save(newBooking);
 

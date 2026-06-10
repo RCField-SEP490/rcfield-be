@@ -27,6 +27,16 @@ export class Booking {
   @Column({ name: 'track_type_id', type: 'uuid' })
   trackTypeId: string;
 
+  @Column({
+    name: 'track_config_id',
+    type: 'uuid',
+    nullable: true,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  trackConfigId: string | null;
+
   @Column({ name: 'play_mode', type: 'varchar', length: 10, enum: BookingMode })
   playMode: BookingMode;
 

@@ -8,7 +8,8 @@ import {
   ListCafeBookingsSchema,
 } from '../validate';
 import * as bookingService from '../services/booking.service';
-import { createCheckoutUrl, processRefund } from '../services/payment.service';
+import { createCheckoutUrl, mockConfirmPayment, processRefund } from '../services/payment.service';
+import { env } from '../config/env';
 import { Booking } from '../models/booking.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
@@ -130,6 +131,19 @@ export const bookingController = {
       await bookingService.cancelBooking(bookingId, req.user!.userId, req.user!.role, body.reason);
       const refund = await processRefund(bookingId, req.user!.role);
       res.json({ success: true, data: { bookingId, refund } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/:id/mock-checkout  [auth CUSTOMER] [dev only]
+  async mockCheckout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (env.NODE_ENV === 'production') {
+        throw new AppError('Not available in production', 403, 'FORBIDDEN');
+      }
+      const result = await mockConfirmPayment(req.params.id);
+      res.json({ success: true, data: result });
     } catch (err) {
       next(err);
     }

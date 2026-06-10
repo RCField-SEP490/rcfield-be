@@ -175,6 +175,11 @@ export async function createCheckoutUrl(
     bankCode: 'VNBANK',
   });
 
+  logger.debug(
+    'VNPay',
+    `payment URL params: amount=${totalCharged} txnRef=${txnRef} url=${vnpayPaymentUrl}`,
+  );
+
   // Record pending transaction
   const txRepo = AppDataSource.getRepository(PaymentTransaction);
   const existingTx = await txRepo.findOne({ where: { txnRef } });
@@ -346,6 +351,81 @@ export async function processMockConfirmation(
 
   logger.info('PaymentService', `mock confirmed bookingId=${tx.bookingId} txnRef=${txnRef}`);
   return { rspCode: '00', message: 'Mock Confirm Success' };
+}
+
+// ── mockConfirmPayment (dev only) ─────────────────────────────────────────────
+
+/** Bypasses VNPay — freezes snapshot, confirms booking, creates payment components.
+ *  Only callable when NODE_ENV !== 'production'. */
+export async function mockConfirmPayment(
+  bookingId: string,
+): Promise<{ redirect_url: string; txn_ref: string }> {
+  const bookingRepo = AppDataSource.getRepository(Booking);
+  const booking = await bookingRepo.findOne({ where: { id: bookingId } });
+  if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.status !== 'PENDING') {
+    throw new AppError('Booking is not in PENDING state', 400, 'BOOKING_NOT_PENDING');
+  }
+
+  const bvRepo = AppDataSource.getRepository(BookingVehicle);
+  const bookingVehicles = await bvRepo.find({ where: { bookingId } });
+
+  const fnbRepo = AppDataSource.getRepository(FnbOrder);
+  const fnbOrders = await fnbRepo.find({ where: { bookingId, orderType: FnbOrderType.PRE_ORDER } });
+  const fnbTotal = fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
+
+  const rentalFeeTotal = bookingVehicles.reduce((sum, v) => sum + Number(v.rentalFeeSnapshot), 0);
+  const depositTotal = bookingVehicles.reduce(
+    (sum, v) => sum + Number(v.securityDepositSnapshot),
+    0,
+  );
+
+  const cafeRepo = AppDataSource.getRepository(Cafe);
+  const cafe = await cafeRepo.findOne({ where: { id: booking.cafeId } });
+  if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+
+  const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
+  const slotCount = slotMinutes / cafe.slotDurationMinutes;
+  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount);
+  const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+
+  const snapshot: BookingSnapshot = {
+    slot_fee_total: slotFee,
+    vehicles: bookingVehicles.map((v) => ({
+      rental_fee: Number(v.rentalFeeSnapshot),
+      security_deposit: Number(v.securityDepositSnapshot),
+    })),
+    fnb_total: fnbTotal,
+    discount_amount: Number(booking.discountAmount),
+    total_charged: totalCharged,
+    platform_fee_pct: 0,
+    captured_at: new Date().toISOString(),
+  };
+
+  await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
+
+  const txnRef = `mock_${bookingId.replace(/-/g, '').substring(0, 24)}`;
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  const tx = txRepo.create({
+    bookingId,
+    type: PaymentTransactionType.PAYMENT,
+    gateway: 'MOCK',
+    txnRef,
+    amount: totalCharged,
+    status: PaymentTransactionStatus.SUCCESS,
+    rawRequest: { mock: true },
+    rawResponse: { mock: true, confirmedAt: new Date().toISOString() },
+  });
+  await txRepo.save(tx);
+
+  await transition(bookingId, 'PAYMENT_CONFIRMED');
+  await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+  logger.info('PaymentService', `mock payment confirmed bookingId=${bookingId}`);
+
+  const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+  const redirect_url = `${frontendUrl}/payment/result?status=success&txn_ref=${txnRef}`;
+  return { redirect_url, txn_ref: txnRef };
 }
 
 // ── processRefund ─────────────────────────────────────────────────────────────
