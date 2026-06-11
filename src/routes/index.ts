@@ -21,6 +21,7 @@ import { adminTrackTypeRouter } from './admin-track-type.routes';
 import { vnpayRouter } from './vnpay.routes';
 import { bookingRouter } from './booking.routes';
 import { contestRouter } from './contest.routes';
+import { contestRegistrationRouter } from './contest-registration.routes';
 import { bookingController } from '../controllers/booking.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
@@ -118,6 +119,7 @@ router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
 router.use('/contests', contestRouter);
+router.use('/contest-registrations', contestRegistrationRouter);
 router.get(
   '/provider/cafes/:cafeId/bookings',
   authenticate,

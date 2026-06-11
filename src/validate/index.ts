@@ -398,6 +398,10 @@ export const ContestIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
+export const ContestRegistrationIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
 export const ContestListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   limit: z.coerce.number().int().positive().max(100).optional().default(20),
@@ -412,6 +416,30 @@ export const ContestListQuerySchema = z.object({
     .positive()
     .max(24 * 30)
     .optional(),
+});
+
+export const RegisterContestSchema = z
+  .object({
+    vehicle_source: z.nativeEnum(VehicleSource).optional().default(VehicleSource.BYOC),
+    vehicle_id: z.string().uuid().nullable().optional(),
+    customer_vehicle_id: z.string().uuid().nullable().optional(),
+    metadata: z.record(z.any()).optional().default({}),
+  })
+  .refine(
+    (value) => value.vehicle_source !== VehicleSource.RENTAL || Boolean(value.vehicle_id),
+    'Đăng ký xe thuê cần vehicle_id',
+  )
+  .refine(
+    (value) => value.vehicle_source !== VehicleSource.BYOC || !value.vehicle_id,
+    'Đăng ký BYOC không dùng vehicle_id thuê của cafe',
+  );
+
+export const CheckInContestRegistrationSchema = z.object({
+  cafe_id: z.string().uuid(),
+});
+
+export const CancelContestRegistrationSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
 });
 
 export const CafeImageCreateSchema = z.object({

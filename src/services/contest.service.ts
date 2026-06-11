@@ -418,6 +418,25 @@ export async function cancelContest(contestId: string, providerId: string): Prom
       );
     }
     contest.status = ContestStatus.CANCELLED;
+    await manager
+      .getRepository(ContestRegistration)
+      .createQueryBuilder()
+      .update(ContestRegistration)
+      .set({
+        status: ContestRegistrationStatus.CANCELLED,
+        cancelledBy: providerId,
+        cancelledAt: new Date(),
+        cancellationReason: 'Contest cancelled by provider',
+      })
+      .where('contest_id = :contestId', { contestId })
+      .andWhere('status IN (:...statuses)', {
+        statuses: [
+          ContestRegistrationStatus.PENDING,
+          ContestRegistrationStatus.CONFIRMED,
+          ContestRegistrationStatus.CHECKED_IN,
+        ],
+      })
+      .execute();
     const saved = await manager.getRepository(Contest).save(contest);
     return toContestDto(manager, saved);
   });

@@ -3,6 +3,7 @@ import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import {
   CafeStatus,
+  ContestRegistrationStatus,
   ContestStatus,
   ProviderStatus,
   SubscriptionStatus,
@@ -27,6 +28,18 @@ async function activateProvider(providerId: string): Promise<void> {
        (provider_id, plan_id, status, started_at, expires_at, ai_quota_reset_at)
      VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '30 days', NOW() + INTERVAL '1 month')`,
     [providerId, plan.id, SubscriptionStatus.TRIAL],
+  );
+}
+
+async function assignStaffToCafe(
+  staffId: string,
+  cafeId: string,
+  assignedBy: string,
+): Promise<void> {
+  await AppDataSource.query(
+    `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
+     VALUES ($1, $2, $3)`,
+    [staffId, cafeId, assignedBy],
   );
 }
 
@@ -80,6 +93,16 @@ async function createProviderContest(status: ContestStatus, cafeIds: string[]) {
   }
 
   return { provider, contest: createRes.body.data };
+}
+
+async function registerContest(
+  contestId: string,
+  user: { id: string; email: string; role: UserRole },
+) {
+  return request(app)
+    .post(`/api/v1/contests/${contestId}/register`)
+    .set('Authorization', `Bearer ${generateToken(user)}`)
+    .send({ vehicle_source: 'BYOC' });
 }
 
 describe('Contest management routes', () => {
@@ -217,5 +240,147 @@ describe('Contest management routes', () => {
     );
     expect(excluded.status).toBe(200);
     expect(excluded.body.data).toHaveLength(0);
+  });
+});
+
+describe('Contest registration and check-in routes', () => {
+  it('customer đăng ký contest thành công', async () => {
+    const { contest } = await createProviderContest(ContestStatus.OPEN, []);
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+
+    const res = await registerContest(contest.id, customer);
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.user_id).toBe(customer.id);
+    expect(res.body.data.status).toBe(ContestRegistrationStatus.CONFIRMED);
+  });
+
+  it('duplicate registration bị chặn', async () => {
+    const { contest } = await createProviderContest(ContestStatus.OPEN, []);
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+
+    const first = await registerContest(contest.id, customer);
+    const duplicate = await registerContest(contest.id, customer);
+
+    expect(first.status).toBe(201);
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.code).toBe('CONTEST_REGISTRATION_EXISTS');
+  });
+
+  it('capacity lock không cho overbook', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.ACTIVE });
+    const createRes = await request(app)
+      .post('/api/v1/contests')
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send(contestBody([cafe.id], { capacity: 1 }));
+    expect(createRes.status).toBe(201);
+    const openRes = await request(app)
+      .post(`/api/v1/contests/${createRes.body.data.id}/open`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`);
+    expect(openRes.status).toBe(200);
+
+    const firstCustomer = await createTestUser({ role: UserRole.CUSTOMER });
+    const secondCustomer = await createTestUser({ role: UserRole.CUSTOMER });
+    const first = await registerContest(openRes.body.data.id, firstCustomer);
+    const second = await registerContest(openRes.body.data.id, secondCustomer);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(409);
+    expect(second.body.code).toBe('CONTEST_CAPACITY_FULL');
+  });
+
+  it('provider self-register bị chặn nhưng provider khác đăng ký được', async () => {
+    const { provider, contest } = await createProviderContest(ContestStatus.OPEN, []);
+    const otherProvider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(otherProvider.id);
+
+    const self = await registerContest(contest.id, provider);
+    const other = await registerContest(contest.id, otherProvider);
+
+    expect(self.status).toBe(403);
+    expect(self.body.code).toBe('CONTEST_SELF_REGISTRATION_FORBIDDEN');
+    expect(other.status).toBe(201);
+    expect(other.body.data.participant_role_snapshot).toBe(UserRole.PROVIDER);
+  });
+
+  it('staff check-in sai cafe thất bại, đúng cafe thành công', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const includedCafe = await createTestCafe({
+      provider_id: provider.id,
+      status: CafeStatus.ACTIVE,
+    });
+    const wrongCafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.ACTIVE });
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    await assignStaffToCafe(staff.id, wrongCafe.id, provider.id);
+
+    const createRes = await request(app)
+      .post('/api/v1/contests')
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send(contestBody([includedCafe.id]));
+    expect(createRes.status).toBe(201);
+    const openRes = await request(app)
+      .post(`/api/v1/contests/${createRes.body.data.id}/open`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`);
+    expect(openRes.status).toBe(200);
+
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const registration = await registerContest(openRes.body.data.id, customer);
+    expect(registration.status).toBe(201);
+
+    const wrong = await request(app)
+      .post(`/api/v1/contest-registrations/${registration.body.data.id}/check-in`)
+      .set('Authorization', `Bearer ${generateToken(staff)}`)
+      .send({ cafe_id: wrongCafe.id });
+    expect(wrong.status).toBe(403);
+    expect(wrong.body.code).toBe('CONTEST_CHECK_IN_CAFE_INVALID');
+
+    await AppDataSource.query(`DELETE FROM staff_cafe_assignments WHERE staff_id = $1`, [staff.id]);
+    await assignStaffToCafe(staff.id, includedCafe.id, provider.id);
+    const correct = await request(app)
+      .post(`/api/v1/contest-registrations/${registration.body.data.id}/check-in`)
+      .set('Authorization', `Bearer ${generateToken(staff)}`)
+      .send({ cafe_id: includedCafe.id });
+
+    expect(correct.status).toBe(200);
+    expect(correct.body.data.status).toBe(ContestRegistrationStatus.CHECKED_IN);
+    expect(correct.body.data.checked_in_cafe_id).toBe(includedCafe.id);
+  });
+
+  it('participant hủy registration thành công', async () => {
+    const { contest } = await createProviderContest(ContestStatus.OPEN, []);
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const registration = await registerContest(contest.id, customer);
+    expect(registration.status).toBe(201);
+
+    const res = await request(app)
+      .post(`/api/v1/contest-registrations/${registration.body.data.id}/cancel`)
+      .set('Authorization', `Bearer ${generateToken(customer)}`)
+      .send({ reason: 'Busy' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe(ContestRegistrationStatus.CANCELLED);
+    expect(res.body.data.cancellation_reason).toBe('Busy');
+  });
+
+  it('provider hủy contest thì active registrations cũng bị hủy', async () => {
+    const { provider, contest } = await createProviderContest(ContestStatus.OPEN, []);
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const registration = await registerContest(contest.id, customer);
+    expect(registration.status).toBe(201);
+
+    const cancelContest = await request(app)
+      .post(`/api/v1/contests/${contest.id}/cancel`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`);
+    expect(cancelContest.status).toBe(200);
+    expect(cancelContest.body.data.status).toBe(ContestStatus.CANCELLED);
+
+    const rows = await AppDataSource.query<{ status: ContestRegistrationStatus }[]>(
+      `SELECT status FROM contest_registrations WHERE id = $1`,
+      [registration.body.data.id],
+    );
+    expect(rows[0].status).toBe(ContestRegistrationStatus.CANCELLED);
   });
 });

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { contestController } from '../controllers/contest.controller';
+import { contestRegistrationController } from '../controllers/contest-registration.controller';
 import {
   authenticate,
   authorize,
@@ -17,6 +18,19 @@ contestRouter.post(
   authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.create,
+);
+contestRouter.post(
+  '/:id/register',
+  authenticate,
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  contestRegistrationController.register,
+);
+contestRouter.get(
+  '/:id/registrations',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestRegistrationController.listByContest,
 );
 contestRouter.get('/:id', optionalAuthenticate, contestController.detail);
 contestRouter.patch(
