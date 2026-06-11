@@ -5,8 +5,162 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:3000/api/v1" },
-    { "key": "password", "value": "123456" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000/api/v1"
+    },
+    {
+      "key": "password",
+      "value": "123456"
+    },
+    {
+      "key": "demo_provider_token",
+      "value": ""
+    },
+    {
+      "key": "demo_staff_token",
+      "value": ""
+    },
+    {
+      "key": "demo_track_type_id",
+      "value": ""
+    },
+    {
+      "key": "demo_cafe_id",
+      "value": ""
+    },
+    {
+      "key": "demo_runtime_contest_id",
+      "value": ""
+    },
+    {
+      "key": "demo_class_id",
+      "value": ""
+    },
+    {
+      "key": "quarter_round_id",
+      "value": ""
+    },
+    {
+      "key": "semi_round_id",
+      "value": ""
+    },
+    {
+      "key": "final_round_id",
+      "value": ""
+    },
+    {
+      "key": "quarter_match_1_id",
+      "value": ""
+    },
+    {
+      "key": "quarter_match_2_id",
+      "value": ""
+    },
+    {
+      "key": "quarter_match_3_id",
+      "value": ""
+    },
+    {
+      "key": "quarter_match_4_id",
+      "value": ""
+    },
+    {
+      "key": "semi_match_1_id",
+      "value": ""
+    },
+    {
+      "key": "semi_match_2_id",
+      "value": ""
+    },
+    {
+      "key": "final_match_id",
+      "value": ""
+    },
+    {
+      "key": "winner_registration_id",
+      "value": ""
+    },
+    {
+      "key": "demo_registration_opens_at",
+      "value": ""
+    },
+    {
+      "key": "demo_registration_closes_at",
+      "value": ""
+    },
+    {
+      "key": "demo_starts_at",
+      "value": ""
+    },
+    {
+      "key": "demo_ends_at",
+      "value": ""
+    },
+    {
+      "key": "player01_token",
+      "value": ""
+    },
+    {
+      "key": "player01_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player02_token",
+      "value": ""
+    },
+    {
+      "key": "player02_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player03_token",
+      "value": ""
+    },
+    {
+      "key": "player03_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player04_token",
+      "value": ""
+    },
+    {
+      "key": "player04_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player05_token",
+      "value": ""
+    },
+    {
+      "key": "player05_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player06_token",
+      "value": ""
+    },
+    {
+      "key": "player06_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player07_token",
+      "value": ""
+    },
+    {
+      "key": "player07_registration_id",
+      "value": ""
+    },
+    {
+      "key": "player08_token",
+      "value": ""
+    },
+    {
+      "key": "player08_registration_id",
+      "value": ""
+    }
   ],
   "item": [
     {
@@ -16,41 +170,114 @@
           "name": "Login Provider",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/auth/login",
-            "body": { "mode": "raw", "raw": "{\"email\":\"provider@gmail.com\",\"password\":\"{{password}}\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"provider@gmail.com\",\"password\":\"{{password}}\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('provider login ok', () => pm.response.to.have.status(200));", "const json = pm.response.json();", "pm.collectionVariables.set('provider_token', json.data.access_token);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('provider login ok', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('provider_token', json.data.access_token);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Login Staff",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/auth/login",
-            "body": { "mode": "raw", "raw": "{\"email\":\"staff@gmail.com\",\"password\":\"{{password}}\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"staff@gmail.com\",\"password\":\"{{password}}\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('staff login ok', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('staff_token', pm.response.json().data.access_token);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('staff login ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('staff_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Login Customer",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/auth/login",
-            "body": { "mode": "raw", "raw": "{\"email\":\"customer@gmail.com\",\"password\":\"{{password}}\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"customer@gmail.com\",\"password\":\"{{password}}\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('customer login ok', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('customer_token', pm.response.json().data.access_token);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer login ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('customer_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Login Other Provider",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/auth/login",
-            "body": { "mode": "raw", "raw": "{\"email\":\"provider_other@gmail.com\",\"password\":\"{{password}}\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"provider_other@gmail.com\",\"password\":\"{{password}}\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('other provider login ok', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('provider_other_token', pm.response.json().data.access_token);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('other provider login ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('provider_other_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -59,17 +286,49 @@
       "item": [
         {
           "name": "Get Track Types",
-          "request": { "method": "GET", "url": "{{baseUrl}}/track-types" },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('track types ok', () => pm.response.to.have.status(200));", "const first = pm.response.json()[0];", "pm.expect(first, 'seed track type').to.exist;", "pm.collectionVariables.set('track_type_id', first.id);"] } }]
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/track-types"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('track types ok', () => pm.response.to.have.status(200));",
+                  "const first = pm.response.json()[0];",
+                  "pm.expect(first, 'seed track type').to.exist;",
+                  "pm.collectionVariables.set('track_type_id', first.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "List Provider Active Cafes",
           "request": {
             "method": "GET",
-            "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              }
+            ],
             "url": "{{baseUrl}}/cafes?scope=managed&status=ACTIVE&limit=10"
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('managed cafes ok', () => pm.response.to.have.status(200));", "const cafes = pm.response.json().data || [];", "pm.expect(cafes.length, 'provider needs one ACTIVE cafe').to.be.above(0);", "pm.collectionVariables.set('cafe_id', cafes[0].id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('managed cafes ok', () => pm.response.to.have.status(200));",
+                  "const cafes = pm.response.json().data || [];",
+                  "pm.expect(cafes.length, 'provider needs one ACTIVE cafe').to.be.above(0);",
+                  "pm.collectionVariables.set('cafe_id', cafes[0].id);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -81,8 +340,14 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contests",
             "body": {
@@ -90,16 +355,63 @@
               "raw": "{\"name\":\"Postman Spec Cup {{$timestamp}}\",\"description\":\"Contest created from Postman\",\"track_type_id\":\"{{track_type_id}}\",\"vehicle_rule\":{\"allowed_sources\":[\"BYOC\",\"RENTAL\"]},\"starts_at\":\"2030-06-18T10:00:00.000Z\",\"ends_at\":\"2030-06-18T12:00:00.000Z\",\"registration_opens_at\":\"2026-06-11T00:00:00.000Z\",\"registration_closes_at\":\"2030-06-17T10:00:00.000Z\",\"capacity\":24,\"entry_fee\":0,\"participating_cafe_ids\":[\"{{cafe_id}}\"],\"config\":{\"format\":\"TIME_ATTACK\"}}"
             }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('contest created', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('contest_id', pm.response.json().data.id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('contest created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('contest_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Open Contest",
-          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }], "url": "{{baseUrl}}/contests/{{contest_id}}/open" },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('contest opened', () => pm.response.to.have.status(200));", "pm.expect(pm.response.json().data.status).to.eql('OPEN');"] } }]
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/open"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('contest opened', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('OPEN');"
+                ]
+              }
+            }
+          ]
         },
-        { "name": "List Public Contests", "request": { "method": "GET", "url": "{{baseUrl}}/contests?upcoming=true" } },
-        { "name": "Contest Detail", "request": { "method": "GET", "url": "{{baseUrl}}/contests/{{contest_id}}" } },
-        { "name": "Cafe Contest List", "request": { "method": "GET", "url": "{{baseUrl}}/cafes/{{cafe_id}}/contests" } }
+        {
+          "name": "List Public Contests",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/contests?upcoming=true"
+          }
+        },
+        {
+          "name": "Contest Detail",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/contests/{{contest_id}}"
+          }
+        },
+        {
+          "name": "Cafe Contest List",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/cafes/{{cafe_id}}/contests"
+          }
+        }
       ]
     },
     {
@@ -110,29 +422,66 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{customer_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contests/{{contest_id}}/register",
-            "body": { "mode": "raw", "raw": "{\"vehicle_source\":\"BYOC\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('customer registered', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('registration_id', pm.response.json().data.id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Provider Other Register",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_other_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_other_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contests/{{contest_id}}/register",
-            "body": { "mode": "raw", "raw": "{\"vehicle_source\":\"BYOC\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\"}"
+            }
           }
         },
         {
           "name": "List Registrations",
-          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }], "url": "{{baseUrl}}/contests/{{contest_id}}/registrations" }
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/registrations"
+          }
         }
       ]
     },
@@ -144,13 +493,31 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contest-registrations/{{registration_id}}/check-in",
-            "body": { "mode": "raw", "raw": "{\"cafe_id\":\"{{cafe_id}}\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{cafe_id}}\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('checked in', () => pm.response.to.have.status(200));"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('checked in', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -162,77 +529,215 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contests/{{contest_id}}/classes",
-            "body": { "mode": "raw", "raw": "{\"code\":\"POSTMAN\",\"name\":\"Postman Class\"}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"code\":\"POSTMAN\",\"name\":\"Postman Class\"}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('class created', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('contest_class_id', pm.response.json().data.id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('class created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('contest_class_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Create Round",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contests/{{contest_id}}/rounds",
-            "body": { "mode": "raw", "raw": "{\"contest_class_id\":\"{{contest_class_id}}\",\"round_type\":\"QUALIFYING\",\"round_no\":1}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"contest_class_id\":\"{{contest_class_id}}\",\"round_type\":\"QUALIFYING\",\"round_no\":1}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('round created', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('round_id', pm.response.json().data.id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('round created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('round_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Create Heat",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contest-rounds/{{round_id}}/heats",
-            "body": { "mode": "raw", "raw": "{\"heat_no\":1}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"heat_no\":1}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('heat created', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('heat_id', pm.response.json().data.id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('heat created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('heat_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Add Heat Entry",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contest-heats/{{heat_id}}/entries",
-            "body": { "mode": "raw", "raw": "{\"registration_id\":\"{{registration_id}}\",\"contest_class_id\":\"{{contest_class_id}}\",\"grid_position\":1}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"registration_id\":\"{{registration_id}}\",\"contest_class_id\":\"{{contest_class_id}}\",\"grid_position\":1}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('entry added', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('heat_entry_id', pm.response.json().data.id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('entry added', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('heat_entry_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Submit Time Attack Result",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Authorization", "value": "Bearer {{provider_token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "url": "{{baseUrl}}/contest-heats/{{heat_id}}/results",
-            "body": { "mode": "raw", "raw": "{\"result_type\":\"TIME_ATTACK\",\"results\":[{\"heat_entry_id\":\"{{heat_entry_id}}\",\"best_lap_ms\":18000}]}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"result_type\":\"TIME_ATTACK\",\"results\":[{\"heat_entry_id\":\"{{heat_entry_id}}\",\"best_lap_ms\":18000}]}"
+            }
           },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('result submitted', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('result_id', pm.response.json().data[0].id);"] } }]
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('result submitted', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('result_id', pm.response.json().data[0].id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Verify Result",
-          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contest-results/{{result_id}}/verify", "body": { "mode": "raw", "raw": "{}" } }
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-results/{{result_id}}/verify",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
         }
       ]
     },
     {
       "name": "Leaderboard",
       "item": [
-        { "name": "Get Public Leaderboard", "request": { "method": "GET", "url": "{{baseUrl}}/contests/{{contest_id}}/leaderboard" } },
-        { "name": "Publish Leaderboard", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contests/{{contest_id}}/leaderboard/publish", "body": { "mode": "raw", "raw": "{}" } } }
+        {
+          "name": "Get Public Leaderboard",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/contests/{{contest_id}}/leaderboard"
+          }
+        },
+        {
+          "name": "Publish Leaderboard",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/leaderboard/publish",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
       ]
     },
     {
@@ -242,14 +747,64 @@
           "name": "Create Reward",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/contests/{{contest_id}}/rewards",
-            "body": { "mode": "raw", "raw": "{\"title\":\"Postman Trophy\",\"reward_type\":\"TROPHY\",\"position\":1}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\"title\":\"Postman Trophy\",\"reward_type\":\"TROPHY\",\"position\":1}"
+            }
           }
         },
-        { "name": "List Rewards", "request": { "method": "GET", "url": "{{baseUrl}}/contests/{{contest_id}}/rewards" } },
-        { "name": "Issue Rewards", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contests/{{contest_id}}/rewards/issue", "body": { "mode": "raw", "raw": "{}" } } },
-        { "name": "My Reward Claims", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{customer_token}}" }], "url": "{{baseUrl}}/me/contest-reward-claims" } }
+        {
+          "name": "List Rewards",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/contests/{{contest_id}}/rewards"
+          }
+        },
+        {
+          "name": "Issue Rewards",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/rewards/issue",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "My Reward Claims",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/me/contest-reward-claims"
+          }
+        }
       ]
     },
     {
@@ -257,23 +812,1658 @@
       "item": [
         {
           "name": "Provider Self Register Should Fail",
-          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contests/{{contest_id}}/register", "body": { "mode": "raw", "raw": "{\"vehicle_source\":\"BYOC\"}" } },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('self registration forbidden', () => pm.response.to.have.status(403));"] } }]
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('self registration forbidden', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Duplicate Customer Register Should Fail",
-          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{customer_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contests/{{contest_id}}/register", "body": { "mode": "raw", "raw": "{\"vehicle_source\":\"BYOC\"}" } },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('duplicate registration conflict', () => pm.response.to.have.status(409));"] } }]
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('duplicate registration conflict', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Invalid Time Attack Result Should Fail",
-          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contest-heats/{{heat_id}}/results", "body": { "mode": "raw", "raw": "{\"result_type\":\"TIME_ATTACK\",\"results\":[{\"heat_entry_id\":\"{{heat_entry_id}}\",\"finish_position\":1}]}" } },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('invalid result validation error', () => pm.response.to.have.status(400));"] } }]
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-heats/{{heat_id}}/results",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"result_type\":\"TIME_ATTACK\",\"results\":[{\"heat_entry_id\":\"{{heat_entry_id}}\",\"finish_position\":1}]}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('invalid result validation error', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Duplicate Reward Issue Should Fail",
-          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{provider_token}}" }, { "key": "Content-Type", "value": "application/json" }], "url": "{{baseUrl}}/contests/{{contest_id}}/rewards/issue", "body": { "mode": "raw", "raw": "{}" } },
-          "event": [{ "listen": "test", "script": { "exec": ["pm.test('duplicate reward issue conflict', () => pm.response.to.have.status(409));"] } }]
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/rewards/issue",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('duplicate reward issue conflict', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Demo Seed Accounts",
+      "item": [
+        {
+          "name": "Login Demo Provider",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_provider@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Demo Provider ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('demo_provider_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Demo Staff",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_staff@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Demo Staff ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('demo_staff_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 01",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player01@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 01 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player01_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 02",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player02@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 02 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player02_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 03",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player03@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 03 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player03_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 04",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player04@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 04 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player04_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 05",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player05@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 05 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player05_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 06",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player06@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 06 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player06_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 07",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player07@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 07 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player07_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Player 08",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\":\"contest_player08@gmail.com\",\"password\":\"{{password}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login Player 08 ok', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('player08_token', pm.response.json().data.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Demo Get Track Types",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/track-types"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('track types ok', () => pm.response.to.have.status(200));",
+                  "const first = pm.response.json()[0];",
+                  "pm.expect(first).to.exist;",
+                  "pm.collectionVariables.set('demo_track_type_id', first.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Demo Get Provider Cafe",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/cafes?scope=managed&status=ACTIVE&limit=10"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('demo provider cafes ok', () => pm.response.to.have.status(200));",
+                  "const cafes = pm.response.json().data || [];",
+                  "pm.expect(cafes.length).to.be.above(0);",
+                  "const cafe = cafes.find((item) => item.slug === 'contest-demo-arena') || cafes[0];",
+                  "pm.collectionVariables.set('demo_cafe_id', cafe.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Demo Create Runtime Contest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Postman Demo Knockout {{$timestamp}}\",\"description\":\"Runtime contest for automated 8-player knockout flow.\",\"track_type_id\":\"{{demo_track_type_id}}\",\"starts_at\":\"{{demo_starts_at}}\",\"ends_at\":\"{{demo_ends_at}}\",\"registration_opens_at\":\"{{demo_registration_opens_at}}\",\"registration_closes_at\":\"{{demo_registration_closes_at}}\",\"capacity\":8,\"entry_fee\":0,\"vehicle_rule\":{\"source\":\"BYOC\"},\"participating_cafe_ids\":[\"{{demo_cafe_id}}\"],\"config\":{\"postman_demo\":true,\"bracket_size\":8}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const now = new Date();",
+                  "const starts = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);",
+                  "const ends = new Date(starts.getTime() + 6 * 60 * 60 * 1000);",
+                  "const closes = new Date(starts.getTime() - 60 * 60 * 1000);",
+                  "pm.collectionVariables.set('demo_registration_opens_at', now.toISOString());",
+                  "pm.collectionVariables.set('demo_registration_closes_at', closes.toISOString());",
+                  "pm.collectionVariables.set('demo_starts_at', starts.toISOString());",
+                  "pm.collectionVariables.set('demo_ends_at', ends.toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('runtime contest created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('demo_runtime_contest_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Demo Open Runtime Contest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/open",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('runtime contest opened', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('OPEN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 01 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player01_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":1}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 01 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player01_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 02 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player02_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":2}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 02 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player02_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 03 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player03_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":3}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 03 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player03_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 04 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player04_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":4}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 04 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player04_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 05 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player05_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":5}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 05 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player05_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 06 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player06_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":6}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 06 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player06_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 07 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player07_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":7}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 07 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player07_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 08 Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{player08_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":8}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 08 registered', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('player08_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 01 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player01_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 01 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 02 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player02_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 02 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 03 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player03_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 03 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 04 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player04_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 04 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 05 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player05_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 05 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 06 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player06_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 06 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 07 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player07_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 07 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Player 08 Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_staff_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{player08_registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{demo_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('player 08 checked in', () => pm.response.to.have.status(200));",
+                  "pm.expect(pm.response.json().data.status).to.eql('CHECKED_IN');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Demo Class",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/classes",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"code\":\"POSTMAN_KO\",\"name\":\"Postman Knockout\",\"capacity\":8,\"rules\":{\"format\":\"single_elimination\"}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('class created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('demo_class_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Quarter Round",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/rounds",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"contest_class_id\":\"{{demo_class_id}}\",\"round_type\":\"QUALIFYING\",\"round_no\":1,\"name\":\"Quarter Final\",\"rules\":{\"bracket\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('quarter round created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('quarter_round_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Semi Round",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/rounds",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"contest_class_id\":\"{{demo_class_id}}\",\"round_type\":\"QUALIFYING\",\"round_no\":2,\"name\":\"Semi Final\",\"rules\":{\"bracket\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('semi round created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('semi_round_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Final Round",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/rounds",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"contest_class_id\":\"{{demo_class_id}}\",\"round_type\":\"FINAL\",\"round_no\":1,\"name\":\"Final\",\"rules\":{\"bracket\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('final round created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('final_round_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Final Match",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{final_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":1,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Final Match\"}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Final Match created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('final_match_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Semi Match 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{semi_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":1,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Semi Match 1\"},\"next_match_id\":\"{{final_match_id}}\",\"next_slot\":\"A\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Semi Match 1 created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('semi_match_1_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Semi Match 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{semi_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":2,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Semi Match 2\"},\"next_match_id\":\"{{final_match_id}}\",\"next_slot\":\"B\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Semi Match 2 created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('semi_match_2_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Quarter Match 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{quarter_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":1,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Quarter Match 1\"},\"competitor_a_registration_id\":\"{{player01_registration_id}}\",\"competitor_b_registration_id\":\"{{player02_registration_id}}\",\"next_match_id\":\"{{semi_match_1_id}}\",\"next_slot\":\"A\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Quarter Match 1 created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('quarter_match_1_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Quarter Match 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{quarter_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":2,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Quarter Match 2\"},\"competitor_a_registration_id\":\"{{player03_registration_id}}\",\"competitor_b_registration_id\":\"{{player04_registration_id}}\",\"next_match_id\":\"{{semi_match_1_id}}\",\"next_slot\":\"B\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Quarter Match 2 created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('quarter_match_2_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Quarter Match 3",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{quarter_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":3,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Quarter Match 3\"},\"competitor_a_registration_id\":\"{{player05_registration_id}}\",\"competitor_b_registration_id\":\"{{player06_registration_id}}\",\"next_match_id\":\"{{semi_match_2_id}}\",\"next_slot\":\"A\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Quarter Match 3 created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('quarter_match_3_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Quarter Match 4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-rounds/{{quarter_round_id}}/bracket-matches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"match_no\":4,\"metadata\":{\"postman_demo\":true,\"label\":\"Create Quarter Match 4\"},\"competitor_a_registration_id\":\"{{player07_registration_id}}\",\"competitor_b_registration_id\":\"{{player08_registration_id}}\",\"next_match_id\":\"{{semi_match_2_id}}\",\"next_slot\":\"B\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Create Quarter Match 4 created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('quarter_match_4_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Quarter 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{quarter_match_1_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player01_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Quarter 1 decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player01_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player02_registration_id'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Quarter 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{quarter_match_2_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player03_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Quarter 2 decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player03_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player04_registration_id'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Quarter 3",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{quarter_match_3_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player05_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Quarter 3 decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player05_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player06_registration_id'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Quarter 4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{quarter_match_4_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player07_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Quarter 4 decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player07_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player08_registration_id'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Semi 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{semi_match_1_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player01_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Semi 1 decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player01_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player03_registration_id'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Semi 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{semi_match_2_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player05_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Semi 2 decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player05_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player07_registration_id'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Decide Final",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{demo_provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-bracket-matches/{{final_match_id}}/decide",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"winner_registration_id\":\"{{player01_registration_id}}\",\"metadata\":{\"decided_by_postman\":true}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Decide Final decided', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json().data;",
+                  "pm.expect(data.status).to.eql('COMPLETED');",
+                  "pm.expect(data.winnerRegistrationId || data.winner_registration_id).to.eql(pm.collectionVariables.get('player01_registration_id'));",
+                  "pm.expect(data.loserRegistrationId || data.loser_registration_id).to.eql(pm.collectionVariables.get('player05_registration_id'));",
+                  "pm.collectionVariables.set('winner_registration_id', pm.collectionVariables.get('player01_registration_id'));"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

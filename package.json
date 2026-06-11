@@ -21,6 +21,7 @@
     "seed:cafes": "ts-node --transpile-only src/seeds/seed-cafes.ts",
     "seed:menu": "ts-node --transpile-only src/seeds/seed-menu.ts",
     "seed:operations": "ts-node --transpile-only src/seeds/seed-operations.ts",
+    "seed:contest-demo": "ts-node --transpile-only src/seeds/seed-contest-demo.ts",
     "seed:all": "npm run seed && npm run seed:cafes && npm run seed:menu && npm run seed:operations",
     "reset:bookings": "ts-node --transpile-only src/scripts/reset-bookings.ts",
     "test:kb": "ts-node --transpile-only src/scripts/test-kb.ts",

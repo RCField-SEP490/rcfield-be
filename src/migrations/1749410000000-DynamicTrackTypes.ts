@@ -29,40 +29,56 @@ export class DynamicTrackTypes1749410000000 implements MigrationInterface {
 
     // 3. Migrate cafes.track_types (TEXT[] -> UUID[])
     await queryRunner.query(`
-      ALTER TABLE cafes ADD COLUMN IF NOT EXISTS track_type_ids UUID[] NOT NULL DEFAULT '{}';
-    `);
-    await queryRunner.query(`
-      UPDATE cafes c
-      SET track_type_ids = ARRAY(
-        SELECT t.id
-        FROM unnest(c.track_types) AS val
-        JOIN track_types t ON t.code = val
-      );
-    `);
-    await queryRunner.query(`
-      ALTER TABLE cafes DROP COLUMN IF EXISTS track_types;
-    `);
-    await queryRunner.query(`
-      ALTER TABLE cafes RENAME COLUMN track_type_ids TO track_types;
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = 'cafes'
+            AND column_name = 'track_types'
+            AND udt_name <> '_uuid'
+        ) THEN
+          ALTER TABLE cafes ADD COLUMN IF NOT EXISTS track_type_ids UUID[] NOT NULL DEFAULT '{}';
+
+          UPDATE cafes c
+          SET track_type_ids = ARRAY(
+            SELECT t.id
+            FROM unnest(c.track_types) AS val
+            JOIN track_types t ON t.code = val
+          );
+
+          ALTER TABLE cafes DROP COLUMN IF EXISTS track_types;
+          ALTER TABLE cafes RENAME COLUMN track_type_ids TO track_types;
+        END IF;
+      END $$;
     `);
 
     // 4. Migrate vehicle_catalogs.compatible_track_types (TEXT[] -> UUID[])
     await queryRunner.query(`
-      ALTER TABLE vehicle_catalogs ADD COLUMN IF NOT EXISTS compatible_track_type_ids UUID[] NOT NULL DEFAULT '{}';
-    `);
-    await queryRunner.query(`
-      UPDATE vehicle_catalogs vc
-      SET compatible_track_type_ids = ARRAY(
-        SELECT t.id
-        FROM unnest(vc.compatible_track_types) AS val
-        JOIN track_types t ON t.code = val
-      );
-    `);
-    await queryRunner.query(`
-      ALTER TABLE vehicle_catalogs DROP COLUMN IF EXISTS compatible_track_types;
-    `);
-    await queryRunner.query(`
-      ALTER TABLE vehicle_catalogs RENAME COLUMN compatible_track_type_ids TO compatible_track_types;
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = 'vehicle_catalogs'
+            AND column_name = 'compatible_track_types'
+            AND udt_name <> '_uuid'
+        ) THEN
+          ALTER TABLE vehicle_catalogs
+            ADD COLUMN IF NOT EXISTS compatible_track_type_ids UUID[] NOT NULL DEFAULT '{}';
+
+          UPDATE vehicle_catalogs vc
+          SET compatible_track_type_ids = ARRAY(
+            SELECT t.id
+            FROM unnest(vc.compatible_track_types) AS val
+            JOIN track_types t ON t.code = val
+          );
+
+          ALTER TABLE vehicle_catalogs DROP COLUMN IF EXISTS compatible_track_types;
+          ALTER TABLE vehicle_catalogs
+            RENAME COLUMN compatible_track_type_ids TO compatible_track_types;
+        END IF;
+      END $$;
     `);
 
     // 5. Migrate bookings.track_type (VARCHAR(50) -> UUID track_type_id)
@@ -70,23 +86,35 @@ export class DynamicTrackTypes1749410000000 implements MigrationInterface {
     await queryRunner.query(`DROP INDEX IF EXISTS idx_bookings_track_type;`);
 
     await queryRunner.query(`
-      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS track_type_uuid UUID;
-    `);
-    await queryRunner.query(`
-      UPDATE bookings b
-      SET track_type_uuid = COALESCE(
-        (SELECT id FROM track_types WHERE code = b.track_type),
-        (SELECT id FROM track_types WHERE code = 'DRIFT')
-      );
-    `);
-    await queryRunner.query(`
-      ALTER TABLE bookings DROP COLUMN IF EXISTS track_type;
-    `);
-    await queryRunner.query(`
-      ALTER TABLE bookings RENAME COLUMN track_type_uuid TO track_type_id;
-    `);
-    await queryRunner.query(`
-      ALTER TABLE bookings ALTER COLUMN track_type_id SET NOT NULL;
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = 'bookings'
+            AND column_name = 'track_type'
+        ) THEN
+          ALTER TABLE bookings ADD COLUMN IF NOT EXISTS track_type_uuid UUID;
+
+          UPDATE bookings b
+          SET track_type_uuid = COALESCE(
+            (SELECT id FROM track_types WHERE code = b.track_type),
+            (SELECT id FROM track_types WHERE code = 'DRIFT')
+          );
+
+          ALTER TABLE bookings DROP COLUMN IF EXISTS track_type;
+          ALTER TABLE bookings RENAME COLUMN track_type_uuid TO track_type_id;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = 'bookings'
+            AND column_name = 'track_type_id'
+        ) THEN
+          ALTER TABLE bookings ALTER COLUMN track_type_id SET NOT NULL;
+        END IF;
+      END $$;
     `);
 
     // 6. Recreate indexes
