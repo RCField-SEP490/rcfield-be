@@ -60,6 +60,11 @@ export enum VehicleStatus {
   RETIRED = 'RETIRED',
 }
 
+export enum VehicleSource {
+  RENTAL = 'RENTAL',
+  BYOC = 'BYOC',
+}
+
 // ── Booking ───────────────────────────────────────────────────────────────────
 
 export enum BookingMode {
@@ -84,6 +89,29 @@ export enum BookingParticipantType {
   BOOKER = 'BOOKER',
   REGISTERED_USER = 'REGISTERED_USER',
   WALK_IN_GUEST = 'WALK_IN_GUEST',
+}
+
+// ── Contest ──────────────────────────────────────────────────────────────────
+
+export enum ContestStatus {
+  DRAFT = 'DRAFT',
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestRegistrationStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  CANCELLED = 'CANCELLED',
+  CHECKED_IN = 'CHECKED_IN',
+}
+
+export enum ContestCafeRole {
+  HOST = 'HOST',
+  PARTICIPATING = 'PARTICIPATING',
 }
 
 // ── Payment ───────────────────────────────────────────────────────────────────
