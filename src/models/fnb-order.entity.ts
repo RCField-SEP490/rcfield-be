@@ -17,7 +17,7 @@ export class FnbOrder {
   @Column({ name: 'booking_id', type: 'uuid' })
   bookingId: string;
 
-  @Column({ name: 'order_type', type: 'varchar', length: 20 })
+  @Column({ name: 'type', type: 'varchar', length: 20 })
   orderType: FnbOrderType;
 
   @Column({ name: 'total_amount', type: 'numeric', precision: 15, scale: 2, default: 0 })

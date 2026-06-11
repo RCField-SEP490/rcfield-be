@@ -1,18 +1,19 @@
 import { DataSource } from 'typeorm';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, type Content } from '@google/genai';
 import { AppDataSource } from '../config/database';
 import { env } from '../config/env';
 import { classifyIntent } from '../config/nlu';
 import { logger } from '../config/logger';
-import { AppError, ChatResponse, SlotItem } from '../types';
+import { AppError, ChatResponse } from '../types';
 import { CafeWidgetConfig } from '../models/cafe-widget-config.entity';
 import { incrementAIQuota } from './subscription.service';
 import { kbService } from './kb.service';
 import { ragCache } from './rag-cache';
+import { toolDefinitions, dispatchTool } from './chat-tools';
 
 const ai = new GoogleGenAI({ apiKey: env.ai.googleApiKey });
 
-type ChatRoute = 'fast' | 'thanks' | 'farewell' | 'slot_check' | 'rag';
+type ChatRoute = 'fast' | 'thanks' | 'farewell' | 'rag';
 
 interface HistoryMessage {
   role: 'user' | 'model';
@@ -97,9 +98,7 @@ export async function route(message: string): Promise<{ route: ChatRoute; confid
   if (nlu.intent === 'farewell' && !nlu.needs_llm_fallback && nlu.confidence >= 0.6) {
     return { route: 'farewell', confidence: nlu.confidence };
   }
-  if (nlu.intent === 'slot_check' && !nlu.needs_llm_fallback && nlu.confidence >= 0.6) {
-    return { route: 'slot_check', confidence: nlu.confidence };
-  }
+  // slot_check intent: handled by Gemini function calling in ragChat — fall through to rag
   // needs_llm_fallback=true means NLU is uncertain → force Pro model (confidence=0)
   return { route: 'rag', confidence: nlu.needs_llm_fallback ? 0 : nlu.confidence };
 }
@@ -142,101 +141,6 @@ export function farewellAnswer(): ChatResponse {
     answer: replies[Math.floor(Math.random() * replies.length)],
     responseType: 'farewell',
     quickReplies: [],
-  };
-}
-
-// Parses Vietnamese date expressions from message text
-export function parseDate(message: string): Date {
-  const lower = message.toLowerCase();
-  const today = new Date();
-
-  if (lower.includes('ngày mai') || lower.includes('tomorrow')) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    return tomorrow;
-  }
-
-  // Match "thứ X" where X is 2-8 (Vietnamese weekdays: thứ 2=Monday ... thứ 8=Sunday)
-  const thuMatch = lower.match(/thứ\s*([2-8])/);
-  if (thuMatch) {
-    const thuNum = parseInt(thuMatch[1], 10);
-    // thứ 2=Mon(1), thứ 3=Tue(2), ..., thứ 7=Sat(6), chủ nhật/thứ 8=Sun(0)
-    const targetDay = thuNum === 8 ? 0 : thuNum - 1;
-    const result = new Date(today);
-    const currentDay = result.getDay();
-    let daysAhead = targetDay - currentDay;
-    if (daysAhead <= 0) daysAhead += 7;
-    result.setDate(today.getDate() + daysAhead);
-    return result;
-  }
-
-  if (lower.includes('cuối tuần')) {
-    const result = new Date(today);
-    const day = result.getDay();
-    const daysToSat = day === 6 ? 7 : 6 - day;
-    result.setDate(today.getDate() + daysToSat);
-    return result;
-  }
-
-  // Default to today
-  return today;
-}
-
-// Queries bookings table for available slots and returns slot_list response
-export async function slotCheck(cafeId: string, message: string): Promise<ChatResponse> {
-  const ds: DataSource = AppDataSource;
-  const date = parseDate(message);
-  const dateStr = date.toISOString().split('T')[0];
-
-  // Get cafe max_concurrent_bookings
-  const cafeRows = await ds.query<{ max_concurrent_bookings: number; name: string }[]>(
-    `SELECT max_concurrent_bookings, name FROM cafes WHERE id = $1`,
-    [cafeId],
-  );
-  if (!cafeRows.length) {
-    throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
-  }
-  const maxConcurrent = cafeRows[0].max_concurrent_bookings ?? 3;
-
-  const rows = await ds.query<{ slot_time: Date; available_count: number }[]>(
-    `SELECT
-       gs.slot_time,
-       $2::int - COUNT(b.id) AS available_count
-     FROM generate_series(
-       $3::date,
-       $3::date + interval '1 day' - interval '30 minutes',
-       interval '30 minutes'
-     ) AS gs(slot_time)
-     LEFT JOIN bookings b
-       ON b.cafe_id = $1
-       AND b.status IN ('PENDING', 'CONFIRMED')
-       AND b.slot_start <= gs.slot_time
-       AND b.slot_end > gs.slot_time
-     GROUP BY gs.slot_time
-     HAVING ($2::int - COUNT(b.id)) > 0
-     ORDER BY gs.slot_time`,
-    [cafeId, maxConcurrent, dateStr],
-  );
-
-  const slots: SlotItem[] = rows.map((r) => ({
-    time: new Date(r.slot_time).toTimeString().slice(0, 5),
-    availableCount: Number(r.available_count),
-  }));
-
-  if (!slots.length) {
-    return {
-      answer: `Rất tiếc, ngày ${dateStr} không còn slot trống. Bạn có muốn xem ngày khác không?`,
-      responseType: 'slot_list',
-      data: { date: dateStr, slots: [] },
-      quickReplies: ['Xem ngày mai', 'Xem cuối tuần'],
-    };
-  }
-
-  return {
-    answer: `Ngày ${dateStr} còn ${slots.length} khung giờ trống bạn nhé!`,
-    responseType: 'slot_list',
-    data: { date: dateStr, slots },
-    quickReplies: ['Đặt lịch ngay', 'Xem ngày khác'],
   };
 }
 
@@ -290,6 +194,13 @@ function buildSystemPrompt(
   chunks: string[],
   customSystemPrompt?: string | null,
 ): string {
+  const now = new Date();
+  // Vietnam timezone offset: UTC+7
+  const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const todayStr = vnNow.toISOString().split('T')[0]; // YYYY-MM-DD
+  const weekdays = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  const todayLabel = `${weekdays[vnNow.getUTCDay()]}, ngày ${vnNow.getUTCDate()}/${vnNow.getUTCMonth() + 1}/${vnNow.getUTCFullYear()}`;
+
   const parts: string[] = [];
 
   if (customSystemPrompt?.trim()) {
@@ -298,10 +209,24 @@ function buildSystemPrompt(
   }
 
   parts.push(`Bạn là trợ lý AI của cafe xe RC "${cafe.name}".`);
+  parts.push(`Hôm nay là ${todayLabel} (${todayStr}).`);
+  parts.push(`Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng.`);
+  parts.push('');
+  parts.push(`## Quy tắc sử dụng tool`);
+  parts.push(
+    `- Khi khách hỏi về lịch trống, slot còn không, đặt sân ngày nào: GỌI NGAY check_availability với ngày tốt nhất có thể suy ra.`,
+  );
+  parts.push(
+    `- KHÔNG hỏi lại ngày tháng năm nếu có thể suy ra từ context (ví dụ: "thứ 7 này" = thứ 7 gần nhất, "ngày mai", "tuần tới", "cuối tuần"…).`,
+  );
+  parts.push(
+    `- Nếu khách chỉ nói "ngày 12" mà không rõ tháng → dùng tháng hiện tại hoặc tháng kế tiếp, ĐỪNG hỏi lại.`,
+  );
+  parts.push('');
+  parts.push(`## Kiến thức về chi nhánh`);
   parts.push(
     `Chỉ trả lời dựa trên thông tin dưới đây. Nếu không có thông tin, nói thẳng là không biết và gợi ý liên hệ trực tiếp chi nhánh.`,
   );
-  parts.push(`Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng.`);
   parts.push(
     `Nếu các tài liệu có thông tin mâu thuẫn nhau, ưu tiên tài liệu có ngày cập nhật mới hơn.`,
   );
@@ -333,7 +258,7 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
   }
 }
 
-// Embeds the message, retrieves relevant KB chunks, and generates answer via Gemini 2.0 Flash
+// Embeds the message, retrieves relevant KB chunks, and generates answer via Gemini with function calling
 export async function ragChat(
   cafeId: string,
   message: string,
@@ -374,27 +299,70 @@ export async function ragChat(
   const sources = docRows.map((r) => r.title);
 
   const chunks = await kbService.retrieveChunks(ds, cafeId, queryEmbedding);
-
   const systemPrompt = buildSystemPrompt(cafe, chunks, widgetConfig?.systemPrompt);
-
-  const contents = [
-    ...history.map((h) => ({ role: h.role, parts: [{ text: h.content }] })),
-    { role: 'user', parts: [{ text: message }] },
-  ];
 
   const selectedModel = nluConfidence >= 0.7 ? env.ai.model : env.ai.supportModel;
   logger.info('Chat', `model selected: ${selectedModel}`, { cafeId, nluConfidence });
 
+  const baseContents: Content[] = [
+    ...history.map((h) => ({ role: h.role, parts: [{ text: h.content }] })),
+    { role: 'user', parts: [{ text: message }] },
+  ];
+
   try {
-    const [response, quickReplies] = await Promise.all([
-      ai.models.generateContent({
-        model: selectedModel,
-        config: { systemInstruction: systemPrompt },
-        contents,
-      }),
+    // First pass: model may call a tool
+    const firstResponse = await ai.models.generateContent({
+      model: selectedModel,
+      config: {
+        systemInstruction: systemPrompt,
+        tools: [{ functionDeclarations: toolDefinitions }],
+      },
+      contents: baseContents,
+    });
+
+    const functionCalls = firstResponse.functionCalls;
+    if (functionCalls?.length) {
+      const fc = functionCalls[0];
+      const fcName = fc.name ?? '';
+      logger.info('Chat', `function call: ${fcName}`, { cafeId, args: fc.args });
+
+      // cafeId comes from widget context — never from fc.args
+      const toolResult = await dispatchTool(
+        cafeId,
+        fcName,
+        (fc.args ?? {}) as Record<string, unknown>,
+      );
+      logger.info('Chat', `tool result: ${fcName}`, { cafeId, result: toolResult });
+
+      // Second pass: send tool result back, get final answer
+      const secondContents: Content[] = [
+        ...baseContents,
+        { role: 'model', parts: [{ functionCall: { name: fcName, args: fc.args } }] },
+        {
+          role: 'user',
+          parts: [{ functionResponse: { name: fcName, response: { result: toolResult } } }],
+        },
+      ];
+
+      const [finalResponse, quickReplies] = await Promise.all([
+        ai.models.generateContent({
+          model: selectedModel,
+          config: { systemInstruction: systemPrompt },
+          contents: secondContents,
+        }),
+        generateQuickReplies(message, cafe.name),
+      ]);
+
+      const answer = finalResponse.text ?? '';
+      ragCache.set(cafeId, message, queryEmbedding, answer, sources, quickReplies);
+      return { answer, responseType: 'text', sources, quickReplies };
+    }
+
+    // No function call — use response directly
+    const [answer, quickReplies] = await Promise.all([
+      Promise.resolve(firstResponse.text ?? ''),
       generateQuickReplies(message, cafe.name),
     ]);
-    const answer = response.text ?? '';
 
     ragCache.set(cafeId, message, queryEmbedding, answer, sources, quickReplies);
     return { answer, responseType: 'text', sources, quickReplies };
@@ -476,41 +444,107 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
   logger.info('RAG', `Retrieved ${chunks.length} chunk(s)  ${t()}`, { cafeId, sources });
 
   const systemPrompt = buildSystemPrompt(cafe, chunks, widgetConfig?.systemPrompt);
+  const selectedModel = env.ai.model;
+  const quickRepliesPromise = generateQuickReplies(message, cafe.name);
 
-  const contents = [
+  const baseContents: Content[] = [
     ...history.map((h) => ({ role: h.role, parts: [{ text: h.content }] })),
     { role: 'user', parts: [{ text: message }] },
   ];
 
-  const selectedModel = env.ai.model;
-  logger.info('RAG', `Calling ${selectedModel} Streaming  ${t()}`, { cafeId });
-
-  // Fire quick-replies generation in background — do NOT await before streaming starts
-  const quickRepliesPromise = generateQuickReplies(message, cafe.name);
-  const stream = await ai.models.generateContentStream({
-    model: selectedModel,
-    config: { systemInstruction: systemPrompt },
-    contents,
-  });
-
-  let firstToken = true;
   async function* tokenStream(): AsyncGenerator<string> {
     let fullAnswer = '';
-    for await (const chunk of stream) {
-      const text = chunk.text;
-      if (text) {
+    let firstToken = true;
+
+    // First pass: stream with tools. If model calls a function, no text is yielded.
+    logger.info('RAG', `Calling ${selectedModel} Streaming (with tools)  ${t()}`, { cafeId });
+    const firstStream = await ai.models.generateContentStream({
+      model: selectedModel,
+      config: {
+        systemInstruction: systemPrompt,
+        tools: [{ functionDeclarations: toolDefinitions }],
+      },
+      contents: baseContents,
+    });
+
+    let detectedFunctionCall: { name: string; args: Record<string, unknown> } | null = null;
+
+    for await (const chunk of firstStream) {
+      const fcs = chunk.functionCalls;
+      if (fcs?.length) {
+        // Model decided to call a tool — no text in this response
+        const fc = fcs[0];
+        detectedFunctionCall = {
+          name: fc.name ?? '',
+          args: (fc.args ?? {}) as Record<string, unknown>,
+        };
+        logger.info('RAG', `function call detected: ${detectedFunctionCall.name}  ${t()}`, {
+          cafeId,
+        });
+        break;
+      }
+      if (chunk.text) {
         if (firstToken) {
           logger.info('RAG', `First token  ${t()}`, { cafeId });
           firstToken = false;
         }
-        fullAnswer += text;
-        yield text;
+        fullAnswer += chunk.text;
+        yield chunk.text;
       }
     }
+
+    if (detectedFunctionCall) {
+      // Execute tool — cafeId from widget context, never from function call args
+      const toolResult = await dispatchTool(
+        cafeId,
+        detectedFunctionCall.name,
+        detectedFunctionCall.args,
+      );
+      logger.info('RAG', `tool executed: ${detectedFunctionCall.name}  ${t()}`, { cafeId });
+
+      // Second pass: stream final answer incorporating tool result
+      const secondContents: Content[] = [
+        ...baseContents,
+        {
+          role: 'model',
+          parts: [
+            { functionCall: { name: detectedFunctionCall.name, args: detectedFunctionCall.args } },
+          ],
+        },
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: detectedFunctionCall.name,
+                response: { result: toolResult },
+              },
+            },
+          ],
+        },
+      ];
+
+      const secondStream = await ai.models.generateContentStream({
+        model: selectedModel,
+        config: { systemInstruction: systemPrompt },
+        contents: secondContents,
+      });
+
+      for await (const chunk of secondStream) {
+        if (chunk.text) {
+          if (firstToken) {
+            logger.info('RAG', `First token (after tool)  ${t()}`, { cafeId });
+            firstToken = false;
+          }
+          fullAnswer += chunk.text;
+          yield chunk.text;
+        }
+      }
+    }
+
     logger.info('RAG', `Stream complete  ${t()}`, { cafeId });
     const quickReplies = await quickRepliesPromise;
     ragCache.set(cafeId, message, queryEmbedding, fullAnswer, sources, quickReplies);
-    logger.info('RAG', 'Answer: ', fullAnswer);
   }
 
   return { stream: tokenStream(), sources, quickRepliesPromise };

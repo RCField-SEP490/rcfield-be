@@ -6,7 +6,7 @@ export class FnbOrderItem {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'fnb_order_id', type: 'uuid' })
+  @Column({ name: 'order_id', type: 'uuid' })
   fnbOrderId: string;
 
   @Column({ name: 'menu_item_id', type: 'uuid' })

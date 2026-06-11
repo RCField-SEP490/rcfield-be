@@ -8,14 +8,25 @@ import {
   ListCafeBookingsSchema,
 } from '../validate';
 import * as bookingService from '../services/booking.service';
-import { createCheckoutUrl, mockConfirmPayment, processRefund } from '../services/payment.service';
+import {
+  createCheckoutUrl,
+  mockConfirmPayment,
+  processRefund,
+  createPaymentComponents,
+} from '../services/payment.service';
+import type { BookingSnapshot } from '../services/payment.service';
 import { env } from '../config/env';
 import { Booking } from '../models/booking.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { Vehicle } from '../models/vehicle.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { FnbOrderItem } from '../models/fnb-order-item.entity';
+import { Cafe } from '../models/cafe.entity';
+import { User } from '../models/user.entity';
+import { MenuItem } from '../models/menu-item.entity';
+import { TrackType } from '../models/track-type.entity';
 
 export const bookingController = {
   // POST /api/v1/bookings  [auth CUSTOMER]
@@ -72,18 +83,81 @@ export const bookingController = {
       }
 
       // Load related records
-      const [participants, vehicles, components, fnbOrder] = await Promise.all([
+      const [rawParticipants, vehicles, components, fnbOrder, cafe] = await Promise.all([
         AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
         AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
         AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
         AppDataSource.getRepository(FnbOrder).findOne({ where: { bookingId } }),
+        AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
       ]);
 
-      let fnbItems: FnbOrderItem[] = [];
+      // Enrich participants: resolve name/phone for registered users
+      const userIds = rawParticipants.map((p) => p.userId).filter(Boolean) as string[];
+      const users = userIds.length
+        ? await AppDataSource.getRepository(User).findByIds(userIds)
+        : [];
+      const userMap = new Map(users.map((u) => [u.id, u]));
+      const participants = rawParticipants.map((p) => ({
+        ...p,
+        resolvedName: p.guestName ?? userMap.get(p.userId ?? '')?.full_name ?? null,
+        resolvedPhone: p.guestPhone ?? userMap.get(p.userId ?? '')?.phone ?? null,
+      }));
+
+      // Enrich vehicles with catalog info (name, tier, identifier, color, image)
+      const vehicleIds = vehicles.map((v) => v.vehicleId);
+      const enrichedVehicles = await Promise.all(
+        vehicles.map(async (bv) => {
+          const vehicle = await AppDataSource.getRepository(Vehicle).findOne({
+            where: { id: bv.vehicleId },
+            relations: ['catalog'],
+          });
+          return {
+            ...bv,
+            catalogName: vehicle?.catalog?.name ?? null,
+            tier: vehicle?.catalog?.tier ?? null,
+            identifier: vehicle?.identifier ?? null,
+            color: vehicle?.color ?? null,
+            coverImageUrl: vehicle?.catalog?.coverImageUrl ?? vehicle?.distinctiveImageUrl ?? null,
+          };
+        }),
+      );
+      void vehicleIds; // suppress unused warning
+
+      // Enrich FnbOrder items with menu item names
+      let fnbItems: (FnbOrderItem & { itemName: string | null })[] = [];
       if (fnbOrder) {
-        fnbItems = await AppDataSource.getRepository(FnbOrderItem).find({
+        const rawItems = await AppDataSource.getRepository(FnbOrderItem).find({
           where: { fnbOrderId: fnbOrder.id },
         });
+        const menuItemIds = [...new Set(rawItems.map((i) => i.menuItemId))];
+        const menuItems = menuItemIds.length
+          ? await AppDataSource.getRepository(MenuItem).findByIds(menuItemIds)
+          : [];
+        const menuMap = new Map(menuItems.map((m) => [m.id, m.name]));
+        fnbItems = rawItems.map((i) => ({ ...i, itemName: menuMap.get(i.menuItemId) ?? null }));
+      }
+
+      // Backfill payment components if booking is confirmed but components are missing
+      if (
+        ['CONFIRMED', 'COMPLETED', 'NO_SHOW'].includes(booking.status) &&
+        components.length === 0 &&
+        booking.snapshot
+      ) {
+        const paymentSnapshot = booking.snapshot as unknown as BookingSnapshot;
+        await createPaymentComponents(booking, paymentSnapshot, vehicles);
+        components.push(
+          ...(await AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } })),
+        );
+      }
+
+      // Resolve track type name: snapshot first, then DB lookup
+      const snapshot = booking.snapshot as Record<string, unknown> | null;
+      let trackTypeName: string | null = (snapshot?.track_type_name as string) ?? null;
+      if (!trackTypeName && booking.trackTypeId) {
+        const tt = await AppDataSource.getRepository(TrackType).findOne({
+          where: { id: booking.trackTypeId },
+        });
+        trackTypeName = tt?.name ?? null;
       }
 
       res.json({
@@ -91,9 +165,11 @@ export const bookingController = {
         data: {
           ...booking,
           participants,
-          vehicles,
+          vehicles: enrichedVehicles,
           payment_components: components,
           fnb_order: fnbOrder ? { ...fnbOrder, items: fnbItems } : null,
+          cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
+          track_type_name: trackTypeName,
         },
       });
     } catch (err) {

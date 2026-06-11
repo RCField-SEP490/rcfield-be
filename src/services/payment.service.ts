@@ -3,6 +3,7 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { BookingParticipant } from '../models/booking-participant.entity';
 import { Cafe } from '../models/cafe.entity';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
@@ -18,6 +19,7 @@ import {
 } from '../types';
 import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
+import { emailService } from './email.service';
 
 // ── Snapshot types (Constitution Principle I: prices from snapshot, never live) ─
 
@@ -138,14 +140,19 @@ export async function createCheckoutUrl(
     0,
   );
 
-  // Compute slot fee from cafe rate × number of slots (Constitution Principle I)
+  // Compute slot fee from cafe rate × number of slots × player count (Constitution Principle I)
   const cafeRepo = AppDataSource.getRepository(Cafe);
   const cafe = await cafeRepo.findOne({ where: { id: booking.cafeId } });
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
 
+  const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
+    where: { bookingId },
+  });
+  const playerCount = Math.max(1, participantCount);
+
   const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
-  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount);
+  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount);
 
   const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
 
@@ -216,7 +223,7 @@ export async function createCheckoutUrl(
 
 // ── createPaymentComponents ───────────────────────────────────────────────────
 
-async function createPaymentComponents(
+export async function createPaymentComponents(
   booking: Booking,
   snapshot: BookingSnapshot,
   bookingVehicles: BookingVehicle[],
@@ -317,6 +324,15 @@ export async function processConfirmation(
     await createPaymentComponents(booking, snapshot, bookingVehicles);
   }
 
+  // Fire-and-forget: emails must not block or fail the IPN response
+  const confirmedBookingId = tx.bookingId;
+  Promise.all([
+    emailService.sendBookingConfirmation(confirmedBookingId),
+    emailService.sendBookingInvoice(confirmedBookingId),
+  ]).catch((err) => {
+    logger.error('PaymentService', 'post-payment email failed', err);
+  });
+
   logger.info('PaymentService', `confirmed bookingId=${tx.bookingId} txnRef=${result.txnRef}`);
   return { rspCode: '00', message: 'Confirm Success' };
 }
@@ -348,6 +364,14 @@ export async function processMockConfirmation(
   if (snapshot) {
     await createPaymentComponents(booking, snapshot, bookingVehicles);
   }
+
+  const mockBookingId = tx.bookingId;
+  Promise.all([
+    emailService.sendBookingConfirmation(mockBookingId),
+    emailService.sendBookingInvoice(mockBookingId),
+  ]).catch((err) => {
+    logger.error('PaymentService', 'post-payment email failed (mock)', err);
+  });
 
   logger.info('PaymentService', `mock confirmed bookingId=${tx.bookingId} txnRef=${txnRef}`);
   return { rspCode: '00', message: 'Mock Confirm Success' };

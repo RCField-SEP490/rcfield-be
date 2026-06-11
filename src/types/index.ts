@@ -94,7 +94,7 @@ export enum PaymentComponentType {
   SECURITY_DEPOSIT = 'SECURITY_DEPOSIT',
   EXTENSION_FEE = 'EXTENSION_FEE',
   DAMAGE_CHARGE = 'DAMAGE_CHARGE',
-  FB_PREORDER = 'FB_PREORDER',
+  FB_PREORDER = 'FNB_PREORDER',
 }
 
 export enum PaymentComponentStatus {

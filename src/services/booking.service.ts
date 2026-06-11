@@ -88,25 +88,28 @@ async function acquireByocSlot(
   cafeId: string,
   slotStart: Date,
   capacity: number,
+  count: number,
 ): Promise<boolean> {
   const key = byocCounterKey(cafeId, slotStart);
-  const count = await redis.incr(key);
+  const next = await redis.incrby(key, count);
   await redis.expire(key, env.platform.slotLockTtlSeconds);
-  if (count > capacity) {
-    await redis.del([key]);
+  if (next > capacity) {
+    await redis.decrby(key, count);
     return false;
   }
   return true;
 }
 
-async function releaseByocSlot(cafeId: string, slotStart: Date): Promise<void> {
+async function releaseByocSlot(cafeId: string, slotStart: Date, count: number): Promise<void> {
   const key = byocCounterKey(cafeId, slotStart);
   const current = Number((await redis.get(key)) ?? 0);
   if (current > 0) {
-    await AppDataSource.query(`UPDATE bookings SET updated_at = NOW() WHERE id = $1`, []).catch(
-      () => undefined,
+    await redis.set(
+      key,
+      String(Math.max(0, current - count)),
+      'EX',
+      env.platform.slotLockTtlSeconds,
     );
-    await redis.set(key, String(Math.max(0, current - 1)), 'EX', env.platform.slotLockTtlSeconds);
   }
 }
 
@@ -135,7 +138,10 @@ export async function transition(bookingId: string, event: string): Promise<Book
     const vehicleIds = vehicles.map((v) => v.vehicleId);
     await releaseVehicleLocks(vehicleIds, booking.slotStart);
     if (booking.playMode === BookingMode.BYOC) {
-      await releaseByocSlot(booking.cafeId, booking.slotStart);
+      const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
+        where: { bookingId },
+      });
+      await releaseByocSlot(booking.cafeId, booking.slotStart, participantCount || 1);
     }
     logger.info('BookingService', `transition → CANCELLED bookingId=${bookingId}`);
   }
@@ -263,7 +269,8 @@ export async function createBooking(
     );
   }
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
-  const slotFee = Number(cafe.slotFeeRate) * slotCount;
+  const playerCount = 1 + (body.participants?.length ?? 0); // booker + companions
+  const slotFee = Number(cafe.slotFeeRate) * slotCount * playerCount;
 
   let rentalFeeTotal = 0;
   let depositTotal = 0;
@@ -339,7 +346,7 @@ export async function createBooking(
 
   if (body.play_mode === BookingMode.BYOC) {
     const capacity = resolvedTrackConfig ? resolvedTrackConfig.byocCapacity : cafe.byocCapacity;
-    const locked = await acquireByocSlot(body.cafe_id, slotStart, capacity);
+    const locked = await acquireByocSlot(body.cafe_id, slotStart, capacity, playerCount);
     if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
   }
 
@@ -546,7 +553,7 @@ export async function createBooking(
     // Release locks on transaction failure
     await releaseVehicleLocks(lockedVehicleIds, slotStart);
     if (body.play_mode === BookingMode.BYOC) {
-      await releaseByocSlot(body.cafe_id, slotStart);
+      await releaseByocSlot(body.cafe_id, slotStart, playerCount);
     }
     throw err;
   }
@@ -586,7 +593,10 @@ export async function cancelBooking(
     booking.slotStart,
   );
   if (booking.playMode === BookingMode.BYOC) {
-    await releaseByocSlot(booking.cafeId, booking.slotStart);
+    const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
+      where: { bookingId },
+    });
+    await releaseByocSlot(booking.cafeId, booking.slotStart, participantCount || 1);
   }
 
   logger.info('BookingService', `cancelled bookingId=${bookingId} by ${role}`);
