@@ -80,6 +80,22 @@ async function setupOperationalContest() {
   return { provider, cafe, customer, contest: openRes.body.data, registration: checkIn.body.data };
 }
 
+async function addCheckedInParticipant(
+  contestId: string,
+  cafeId: string,
+  provider: { id: string; email: string; role: UserRole },
+) {
+  const customer = await createTestUser({ role: UserRole.CUSTOMER });
+  const registration = await registerContest(contestId, customer);
+  expect(registration.status).toBe(201);
+  const checkIn = await request(app)
+    .post(`/api/v1/contest-registrations/${registration.body.data.id}/check-in`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({ cafe_id: cafeId });
+  expect(checkIn.status).toBe(200);
+  return { customer, registration: checkIn.body.data };
+}
+
 async function createCompetitionResult(verified: boolean) {
   const { provider, customer, contest, registration } = await setupOperationalContest();
   const contestClass = await request(app)
@@ -622,6 +638,82 @@ describe('Contest competition core routes', () => {
 
     expect(editVerified.status).toBe(409);
     expect(editVerified.body.code).toBe('CONTEST_RESULT_ALREADY_VERIFIED');
+  });
+
+  it('bracket match đánh dấu thắng/thua và tự đẩy winner sang vòng sau', async () => {
+    const {
+      provider,
+      cafe,
+      contest,
+      registration: firstRegistration,
+    } = await setupOperationalContest();
+    const second = await addCheckedInParticipant(contest.id, cafe.id, provider);
+    const third = await addCheckedInParticipant(contest.id, cafe.id, provider);
+
+    const contestClass = await request(app)
+      .post(`/api/v1/contests/${contest.id}/classes`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ code: 'KO', name: 'Knockout' });
+    expect(contestClass.status).toBe(201);
+
+    const semiRound = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rounds`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        contest_class_id: contestClass.body.data.id,
+        round_type: 'QUALIFYING',
+        round_no: 1,
+        name: 'Semi Final',
+      });
+    expect(semiRound.status).toBe(201);
+
+    const finalRound = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rounds`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        contest_class_id: contestClass.body.data.id,
+        round_type: 'FINAL',
+        round_no: 1,
+        name: 'Final',
+      });
+    expect(finalRound.status).toBe(201);
+
+    const finalMatch = await request(app)
+      .post(`/api/v1/contest-rounds/${finalRound.body.data.id}/bracket-matches`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        match_no: 1,
+        competitor_a_registration_id: third.registration.id,
+      });
+    expect(finalMatch.status).toBe(201);
+
+    const semiMatch = await request(app)
+      .post(`/api/v1/contest-rounds/${semiRound.body.data.id}/bracket-matches`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        match_no: 1,
+        competitor_a_registration_id: firstRegistration.id,
+        competitor_b_registration_id: second.registration.id,
+        next_match_id: finalMatch.body.data.id,
+        next_slot: 'B',
+      });
+    expect(semiMatch.status).toBe(201);
+
+    const decide = await request(app)
+      .post(`/api/v1/contest-bracket-matches/${semiMatch.body.data.id}/decide`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ winner_registration_id: second.registration.id, metadata: { score: '2-1' } });
+
+    expect(decide.status).toBe(200);
+    expect(decide.body.data.status).toBe('COMPLETED');
+    expect(decide.body.data.winnerRegistrationId).toBe(second.registration.id);
+    expect(decide.body.data.loserRegistrationId).toBe(firstRegistration.id);
+
+    const [nextMatch] = await AppDataSource.query<{ competitor_b_registration_id: string }[]>(
+      `SELECT competitor_b_registration_id FROM contest_bracket_matches WHERE id = $1`,
+      [finalMatch.body.data.id],
+    );
+    expect(nextMatch.competitor_b_registration_id).toBe(second.registration.id);
   });
 });
 

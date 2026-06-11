@@ -6,12 +6,19 @@ import { UserRole } from '../types';
 export const contestRoundRouter = Router();
 export const contestHeatRouter = Router();
 export const contestResultRouter = Router();
+export const contestBracketMatchRouter = Router();
 
 contestRoundRouter.post(
   '/:id/heats',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestCompetitionController.createHeat,
+);
+contestRoundRouter.post(
+  '/:id/bracket-matches',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestCompetitionController.createBracketMatch,
 );
 
 contestHeatRouter.post(
@@ -32,4 +39,11 @@ contestResultRouter.post(
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestCompetitionController.verifyResult,
+);
+
+contestBracketMatchRouter.post(
+  '/:id/decide',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestCompetitionController.decideBracketMatch,
 );

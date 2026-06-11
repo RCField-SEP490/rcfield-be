@@ -474,6 +474,24 @@ export const ContestRoundIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
+export const CreateContestBracketMatchSchema = z.object({
+  match_no: z.coerce.number().int().positive(),
+  competitor_a_registration_id: z.string().uuid().nullable().optional(),
+  competitor_b_registration_id: z.string().uuid().nullable().optional(),
+  next_match_id: z.string().uuid().nullable().optional(),
+  next_slot: z.enum(['A', 'B']).nullable().optional(),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+export const ContestBracketMatchIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const DecideContestBracketMatchSchema = z.object({
+  winner_registration_id: z.string().uuid(),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
 export const CreateContestHeatSchema = z.object({
   heat_no: z.coerce.number().int().positive(),
   scheduled_at: z.coerce.date().nullable().optional(),

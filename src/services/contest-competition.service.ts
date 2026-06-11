@@ -1,6 +1,7 @@
 import { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Contest } from '../models/contest.entity';
+import { ContestBracketMatch } from '../models/contest-bracket-match.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestClass } from '../models/contest-class.entity';
 import { ContestHeatEntry } from '../models/contest-heat-entry.entity';
@@ -10,6 +11,7 @@ import { ContestResult } from '../models/contest-result.entity';
 import { ContestRound } from '../models/contest-round.entity';
 import {
   AppError,
+  ContestBracketMatchStatus,
   ContestRegistrationStatus,
   ContestResultStatus,
   ContestResultType,
@@ -69,6 +71,20 @@ export interface ContestResultItemBody {
 export interface SubmitContestHeatResultsBody {
   result_type: ContestResultType;
   results: ContestResultItemBody[];
+}
+
+export interface CreateContestBracketMatchBody {
+  match_no: number;
+  competitor_a_registration_id?: string | null;
+  competitor_b_registration_id?: string | null;
+  next_match_id?: string | null;
+  next_slot?: 'A' | 'B' | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DecideContestBracketMatchBody {
+  winner_registration_id: string;
+  metadata?: Record<string, unknown>;
 }
 
 function assertProviderOwner(contest: Contest, providerId: string): void {
@@ -148,6 +164,36 @@ async function getResultOrThrow(manager: EntityManager, resultId: string): Promi
   const result = await manager.getRepository(ContestResult).findOne({ where: { id: resultId } });
   if (!result) throw new AppError('Result không tồn tại', 404, 'CONTEST_RESULT_NOT_FOUND');
   return result;
+}
+
+async function getBracketMatchOrThrow(
+  manager: EntityManager,
+  matchId: string,
+): Promise<ContestBracketMatch> {
+  const match = await manager
+    .getRepository(ContestBracketMatch)
+    .findOne({ where: { id: matchId } });
+  if (!match)
+    throw new AppError('Bracket match không tồn tại', 404, 'CONTEST_BRACKET_MATCH_NOT_FOUND');
+  return match;
+}
+
+async function assertRegistrationInContest(
+  manager: EntityManager,
+  contestId: string,
+  registrationId: string | null | undefined,
+): Promise<void> {
+  if (!registrationId) return;
+  const registration = await manager
+    .getRepository(ContestRegistration)
+    .findOne({ where: { id: registrationId, contestId } });
+  if (!registration) {
+    throw new AppError(
+      'Registration không thuộc contest này',
+      404,
+      'CONTEST_REGISTRATION_NOT_FOUND',
+    );
+  }
 }
 
 function assertResultFields(resultType: ContestResultType, item: ContestResultItemBody): void {
@@ -238,6 +284,106 @@ export async function createContestHeat(
       config: body.config ?? {},
     });
     return manager.getRepository(ContestHeat).save(entity);
+  });
+}
+
+export async function createContestBracketMatch(
+  roundId: string,
+  viewer: Viewer,
+  body: CreateContestBracketMatchBody,
+): Promise<ContestBracketMatch> {
+  return AppDataSource.transaction(async (manager) => {
+    const round = await getRoundOrThrow(manager, roundId);
+    const contest = await getContestOrThrow(manager, round.contestId);
+    await assertOperator(manager, contest, viewer);
+    await assertRegistrationInContest(manager, contest.id, body.competitor_a_registration_id);
+    await assertRegistrationInContest(manager, contest.id, body.competitor_b_registration_id);
+
+    if (body.next_match_id) {
+      const nextMatch = await getBracketMatchOrThrow(manager, body.next_match_id);
+      if (nextMatch.contestId !== contest.id) {
+        throw new AppError(
+          'Next match không thuộc contest này',
+          400,
+          'CONTEST_BRACKET_MATCH_INVALID',
+        );
+      }
+      if (!body.next_slot) {
+        throw new AppError(
+          'Cần next_slot khi có next_match_id',
+          400,
+          'CONTEST_BRACKET_MATCH_INVALID',
+        );
+      }
+    }
+
+    const match = manager.getRepository(ContestBracketMatch).create({
+      contestId: contest.id,
+      contestRoundId: round.id,
+      matchNo: body.match_no,
+      competitorARegistrationId: body.competitor_a_registration_id ?? null,
+      competitorBRegistrationId: body.competitor_b_registration_id ?? null,
+      nextMatchId: body.next_match_id ?? null,
+      nextSlot: body.next_slot ?? null,
+      metadata: body.metadata ?? {},
+    });
+    return manager.getRepository(ContestBracketMatch).save(match);
+  });
+}
+
+export async function decideContestBracketMatch(
+  matchId: string,
+  viewer: Viewer,
+  body: DecideContestBracketMatchBody,
+): Promise<ContestBracketMatch> {
+  return AppDataSource.transaction(async (manager) => {
+    const match = await getBracketMatchOrThrow(manager, matchId);
+    const contest = await getContestOrThrow(manager, match.contestId);
+    await assertOperator(manager, contest, viewer);
+
+    if (match.status === ContestBracketMatchStatus.COMPLETED) {
+      throw new AppError(
+        'Bracket match đã được quyết định',
+        409,
+        'CONTEST_BRACKET_MATCH_COMPLETED',
+      );
+    }
+    const competitors = [match.competitorARegistrationId, match.competitorBRegistrationId].filter(
+      Boolean,
+    );
+    if (!competitors.includes(body.winner_registration_id)) {
+      throw new AppError(
+        'Winner phải là một competitor của bracket match',
+        400,
+        'CONTEST_BRACKET_WINNER_INVALID',
+      );
+    }
+
+    const loser = competitors.find(
+      (registrationId) => registrationId !== body.winner_registration_id,
+    );
+    match.winnerRegistrationId = body.winner_registration_id;
+    match.loserRegistrationId = loser ?? null;
+    match.status = ContestBracketMatchStatus.COMPLETED;
+    match.decidedBy = viewer.userId;
+    match.decidedAt = new Date();
+    match.metadata = { ...match.metadata, ...(body.metadata ?? {}) };
+    const saved = await manager.getRepository(ContestBracketMatch).save(match);
+
+    if (match.nextMatchId && match.nextSlot) {
+      const nextMatch = await getBracketMatchOrThrow(manager, match.nextMatchId);
+      if (nextMatch.status === ContestBracketMatchStatus.COMPLETED) {
+        throw new AppError('Next match đã hoàn tất', 409, 'CONTEST_BRACKET_NEXT_MATCH_COMPLETED');
+      }
+      if (match.nextSlot === 'A') {
+        nextMatch.competitorARegistrationId = body.winner_registration_id;
+      } else {
+        nextMatch.competitorBRegistrationId = body.winner_registration_id;
+      }
+      await manager.getRepository(ContestBracketMatch).save(nextMatch);
+    }
+
+    return saved;
   });
 }
 

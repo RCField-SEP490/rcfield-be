@@ -3,13 +3,16 @@ import { AppError, AuthRequest } from '../types';
 import * as competitionService from '../services/contest-competition.service';
 import {
   AddContestHeatEntrySchema,
+  ContestBracketMatchIdParamsSchema,
   ContestHeatIdParamsSchema,
   ContestIdParamsSchema,
   ContestResultIdParamsSchema,
   ContestRoundIdParamsSchema,
+  CreateContestBracketMatchSchema,
   CreateContestClassSchema,
   CreateContestHeatSchema,
   CreateContestRoundSchema,
+  DecideContestBracketMatchSchema,
   SubmitContestHeatResultsSchema,
   VerifyContestResultSchema,
 } from '../validate';
@@ -56,6 +59,30 @@ export const contestCompetitionController = {
       const body = CreateContestHeatSchema.parse(req.body);
       const data = await competitionService.createContestHeat(id, authViewer(req), body);
       res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/contest-rounds/:id/bracket-matches [auth]
+  async createBracketMatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestRoundIdParamsSchema.parse(req.params);
+      const body = CreateContestBracketMatchSchema.parse(req.body);
+      const data = await competitionService.createContestBracketMatch(id, authViewer(req), body);
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/contest-bracket-matches/:id/decide [auth]
+  async decideBracketMatch(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestBracketMatchIdParamsSchema.parse(req.params);
+      const body = DecideContestBracketMatchSchema.parse(req.body);
+      const data = await competitionService.decideContestBracketMatch(id, authViewer(req), body);
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }

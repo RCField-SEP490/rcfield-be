@@ -24,6 +24,7 @@ import { contestRouter } from './contest.routes';
 import { contestRegistrationRouter } from './contest-registration.routes';
 import {
   contestHeatRouter,
+  contestBracketMatchRouter,
   contestResultRouter,
   contestRoundRouter,
 } from './contest-competition.routes';
@@ -129,6 +130,7 @@ router.use('/contest-registrations', contestRegistrationRouter);
 router.use('/contest-rounds', contestRoundRouter);
 router.use('/contest-heats', contestHeatRouter);
 router.use('/contest-results', contestResultRouter);
+router.use('/contest-bracket-matches', contestBracketMatchRouter);
 router.get(
   '/me/contest-reward-claims',
   authenticate,

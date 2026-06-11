@@ -151,6 +151,12 @@ export enum ContestRewardClaimStatus {
   VOID = 'VOID',
 }
 
+export enum ContestBracketMatchStatus {
+  SCHEDULED = 'SCHEDULED',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
 // ── Payment ───────────────────────────────────────────────────────────────────
 
 export enum PaymentComponentType {
