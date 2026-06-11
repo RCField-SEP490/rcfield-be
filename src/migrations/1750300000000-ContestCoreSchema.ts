@@ -14,6 +14,11 @@ export class ContestCoreSchema1750300000000 implements MigrationInterface {
         ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}',
         ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
     `);
+    await queryRunner.query(`
+      ALTER TABLE contests
+        ALTER COLUMN cafe_id DROP NOT NULL,
+        ALTER COLUMN track_type DROP NOT NULL
+    `);
 
     await queryRunner.query(`
       UPDATE contests c

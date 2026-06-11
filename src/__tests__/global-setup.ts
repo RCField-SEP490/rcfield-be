@@ -41,6 +41,9 @@ export default async function globalSetup() {
   });
 
   await testDS.initialize();
+  await testDS.query(`DROP SCHEMA IF EXISTS public CASCADE`);
+  await testDS.query(`CREATE SCHEMA public`);
+  await testDS.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
   await testDS.runMigrations();
   await testDS.destroy();
 

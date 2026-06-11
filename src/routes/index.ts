@@ -20,6 +20,7 @@ import { vehicleCatalogRouter } from './vehicle-catalog.routes';
 import { adminTrackTypeRouter } from './admin-track-type.routes';
 import { vnpayRouter } from './vnpay.routes';
 import { bookingRouter } from './booking.routes';
+import { contestRouter } from './contest.routes';
 import { bookingController } from '../controllers/booking.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
@@ -116,6 +117,7 @@ router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
+router.use('/contests', contestRouter);
 router.get(
   '/provider/cafes/:cafeId/bookings',
   authenticate,

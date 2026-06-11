@@ -6,10 +6,12 @@ import {
   BookingMode,
   BookingStatus,
   CafeStatus,
+  ContestStatus,
   DiscountType,
   PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
+  VehicleSource,
   VehicleStatus,
 } from '../types';
 
@@ -328,6 +330,88 @@ export const UpdatePackageSchema = PackageBaseSchema.partial().refine(
 
 export const PackageIdParamsSchema = z.object({
   packageId: z.string().uuid(),
+});
+
+// ── contests ─────────────────────────────────────────────────────────────────
+
+const ContestVehicleRuleSchema = z
+  .object({
+    allowed_sources: z.array(z.nativeEnum(VehicleSource)).min(1).optional(),
+    requires_tech_check: z.boolean().optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  .passthrough()
+  .optional()
+  .default({});
+
+const ContestBaseSchema = z.object({
+  name: z.string().trim().min(3).max(255),
+  description: z.string().trim().max(5000).nullable().optional(),
+  track_type_id: z.string().uuid(),
+  vehicle_rule: ContestVehicleRuleSchema,
+  starts_at: z.coerce.date(),
+  ends_at: z.coerce.date(),
+  registration_opens_at: z.coerce.date(),
+  registration_closes_at: z.coerce.date(),
+  capacity: z.coerce.number().int().positive().max(10000),
+  entry_fee: z.coerce.number().nonnegative().optional().default(0),
+  banner_image_url: z.string().url().nullable().optional(),
+  config: z.record(z.any()).optional().default({}),
+  participating_cafe_ids: z.array(z.string().uuid()).min(1),
+});
+
+function validContestTimeRange(value: {
+  starts_at?: Date;
+  ends_at?: Date;
+  registration_opens_at?: Date;
+  registration_closes_at?: Date;
+}) {
+  if (value.starts_at && value.ends_at && value.ends_at <= value.starts_at) return false;
+  if (
+    value.registration_opens_at &&
+    value.registration_closes_at &&
+    value.registration_closes_at <= value.registration_opens_at
+  ) {
+    return false;
+  }
+  if (
+    value.starts_at &&
+    value.registration_closes_at &&
+    value.registration_closes_at > value.starts_at
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export const CreateContestSchema = ContestBaseSchema.refine(validContestTimeRange, {
+  message: 'Thời gian contest hoặc thời gian đăng ký không hợp lệ',
+});
+
+export const UpdateContestSchema = ContestBaseSchema.partial()
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
+  .refine(validContestTimeRange, {
+    message: 'Thời gian contest hoặc thời gian đăng ký không hợp lệ',
+  });
+
+export const ContestIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const ContestListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  status: z.nativeEnum(ContestStatus).optional(),
+  upcoming: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+  notify_within_hours: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(24 * 30)
+    .optional(),
 });
 
 export const CafeImageCreateSchema = z.object({
