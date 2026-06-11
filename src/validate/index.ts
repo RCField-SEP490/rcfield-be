@@ -8,6 +8,7 @@ import {
   CafeStatus,
   ContestStatus,
   ContestResultType,
+  ContestRewardType,
   ContestRoundType,
   DiscountType,
   PackageBillingPeriod,
@@ -526,6 +527,26 @@ export const ContestResultIdParamsSchema = z.object({
 
 export const VerifyContestResultSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
+});
+
+export const PublishContestLeaderboardSchema = z.object({
+  contest_class_id: z.string().uuid().nullable().optional(),
+  scope: z.string().trim().min(1).max(50).optional().default('OVERALL'),
+});
+
+export const CreateContestRewardSchema = z.object({
+  contest_class_id: z.string().uuid().nullable().optional(),
+  title: z.string().trim().min(2).max(255),
+  description: z.string().trim().max(2000).nullable().optional(),
+  reward_type: z.nativeEnum(ContestRewardType),
+  position: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().int().positive().optional().default(1),
+  is_published: z.boolean().optional().default(true),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+export const IssueContestRewardsSchema = z.object({
+  contest_class_id: z.string().uuid().nullable().optional(),
 });
 
 export const CafeImageCreateSchema = z.object({

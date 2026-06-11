@@ -27,6 +27,7 @@ import {
   contestResultRouter,
   contestRoundRouter,
 } from './contest-competition.routes';
+import { contestLeaderboardController } from '../controllers/contest-leaderboard.controller';
 import { bookingController } from '../controllers/booking.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
@@ -128,6 +129,12 @@ router.use('/contest-registrations', contestRegistrationRouter);
 router.use('/contest-rounds', contestRoundRouter);
 router.use('/contest-heats', contestHeatRouter);
 router.use('/contest-results', contestResultRouter);
+router.get(
+  '/me/contest-reward-claims',
+  authenticate,
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  contestLeaderboardController.myRewardClaims,
+);
 router.get(
   '/provider/cafes/:cafeId/bookings',
   authenticate,

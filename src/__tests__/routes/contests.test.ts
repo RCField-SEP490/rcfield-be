@@ -77,7 +77,51 @@ async function setupOperationalContest() {
     .send({ cafe_id: cafe.id });
   expect(checkIn.status).toBe(200);
 
-  return { provider, cafe, contest: openRes.body.data, registration: checkIn.body.data };
+  return { provider, cafe, customer, contest: openRes.body.data, registration: checkIn.body.data };
+}
+
+async function createCompetitionResult(verified: boolean) {
+  const { provider, customer, contest, registration } = await setupOperationalContest();
+  const contestClass = await request(app)
+    .post(`/api/v1/contests/${contest.id}/classes`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({ code: 'LB', name: 'Leaderboard Class' });
+  expect(contestClass.status).toBe(201);
+  const round = await request(app)
+    .post(`/api/v1/contests/${contest.id}/rounds`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({
+      contest_class_id: contestClass.body.data.id,
+      round_type: 'QUALIFYING',
+      round_no: 1,
+    });
+  expect(round.status).toBe(201);
+  const heat = await request(app)
+    .post(`/api/v1/contest-rounds/${round.body.data.id}/heats`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({ heat_no: 1 });
+  expect(heat.status).toBe(201);
+  const entry = await request(app)
+    .post(`/api/v1/contest-heats/${heat.body.data.id}/entries`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({ registration_id: registration.id, contest_class_id: contestClass.body.data.id });
+  expect(entry.status).toBe(201);
+  const submit = await request(app)
+    .post(`/api/v1/contest-heats/${heat.body.data.id}/results`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({
+      result_type: 'TIME_ATTACK',
+      results: [{ heat_entry_id: entry.body.data.id, best_lap_ms: 17000 }],
+    });
+  expect(submit.status).toBe(201);
+  if (verified) {
+    const verify = await request(app)
+      .post(`/api/v1/contest-results/${submit.body.data[0].id}/verify`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+    expect(verify.status).toBe(200);
+  }
+  return { provider, customer, contest, result: submit.body.data[0] };
 }
 
 function contestBody(cafeIds: string[], overrides: Record<string, unknown> = {}) {
@@ -578,5 +622,69 @@ describe('Contest competition core routes', () => {
 
     expect(editVerified.status).toBe(409);
     expect(editVerified.body.code).toBe('CONTEST_RESULT_ALREADY_VERIFIED');
+  });
+});
+
+describe('Contest leaderboard and rewards routes', () => {
+  it('leaderboard không bao gồm result chưa verify', async () => {
+    const { contest } = await createCompetitionResult(false);
+
+    const res = await request(app).get(`/api/v1/contests/${contest.id}/leaderboard`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.standings).toHaveLength(0);
+  });
+
+  it('publish snapshot và get public leaderboard từ verified result', async () => {
+    const { provider, contest } = await createCompetitionResult(true);
+
+    const publish = await request(app)
+      .post(`/api/v1/contests/${contest.id}/leaderboard/publish`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+    expect(publish.status).toBe(201);
+    expect(publish.body.data.standings).toHaveLength(1);
+
+    const leaderboard = await request(app).get(`/api/v1/contests/${contest.id}/leaderboard`);
+    expect(leaderboard.status).toBe(200);
+    expect(leaderboard.body.data.standings[0].rank).toBe(1);
+  });
+
+  it('tạo reward, issue claim và chặn issue trùng', async () => {
+    const { provider, customer, contest } = await createCompetitionResult(true);
+
+    const reward = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rewards`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        title: 'Champion Trophy',
+        reward_type: 'TROPHY',
+        position: 1,
+      });
+    expect(reward.status).toBe(201);
+
+    const rewards = await request(app).get(`/api/v1/contests/${contest.id}/rewards`);
+    expect(rewards.status).toBe(200);
+    expect(rewards.body.data).toHaveLength(1);
+
+    const issue = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rewards/issue`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+    expect(issue.status).toBe(201);
+    expect(issue.body.data).toHaveLength(1);
+
+    const duplicate = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rewards/issue`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.code).toBe('CONTEST_REWARD_ALREADY_ISSUED');
+
+    const myClaims = await request(app)
+      .get('/api/v1/me/contest-reward-claims')
+      .set('Authorization', `Bearer ${generateToken(customer)}`);
+    expect(myClaims.status).toBe(200);
+    expect(myClaims.body.data).toHaveLength(1);
   });
 });

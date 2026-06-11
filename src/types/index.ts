@@ -137,6 +137,20 @@ export enum ContestResultStatus {
   VERIFIED = 'VERIFIED',
 }
 
+export enum ContestRewardType {
+  TROPHY = 'TROPHY',
+  VOUCHER = 'VOUCHER',
+  MERCHANDISE = 'MERCHANDISE',
+  POINTS = 'POINTS',
+  OTHER = 'OTHER',
+}
+
+export enum ContestRewardClaimStatus {
+  ISSUED = 'ISSUED',
+  CLAIMED = 'CLAIMED',
+  VOID = 'VOID',
+}
+
 // ── Payment ───────────────────────────────────────────────────────────────────
 
 export enum PaymentComponentType {

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { contestController } from '../controllers/contest.controller';
 import { contestRegistrationController } from '../controllers/contest-registration.controller';
 import { contestCompetitionController } from '../controllers/contest-competition.controller';
+import { contestLeaderboardController } from '../controllers/contest-leaderboard.controller';
 import {
   authenticate,
   authorize,
@@ -32,6 +33,33 @@ contestRouter.get(
   authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestRegistrationController.listByContest,
+);
+contestRouter.get(
+  '/:id/leaderboard',
+  optionalAuthenticate,
+  contestLeaderboardController.getLeaderboard,
+);
+contestRouter.post(
+  '/:id/leaderboard/publish',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestLeaderboardController.publishLeaderboard,
+);
+contestRouter.post(
+  '/:id/rewards',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestLeaderboardController.createReward,
+);
+contestRouter.get('/:id/rewards', optionalAuthenticate, contestLeaderboardController.listRewards);
+contestRouter.post(
+  '/:id/rewards/issue',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestLeaderboardController.issueRewards,
 );
 contestRouter.post(
   '/:id/classes',
