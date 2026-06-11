@@ -78,6 +78,27 @@ export const TransferStaffSchema = z.object({
 
 // ── ai-chat ───────────────────────────────────────────────────────────────────
 
+export const CreateShiftPositionSchema = z.object({
+  name: z.string().trim().min(2, 'Ten vi tri toi thieu 2 ky tu').max(120),
+});
+
+export const WeekShiftQuerySchema = z.object({
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'start_date phai co dinh dang YYYY-MM-DD'),
+});
+
+export const AssignShiftSchema = z.object({
+  position_id: z.string().uuid('position_id phai la UUID hop le'),
+  staff_id: z.string().uuid('staff_id phai la UUID hop le'),
+  shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
+});
+
+export const UpdateShiftTimeSchema = z.object({
+  shift_id: z.string().uuid('shift_id phai la UUID hop le'),
+  shift_label: z.string().trim().min(1).max(120),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/, 'start_time phai co dinh dang HH:mm'),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/, 'end_time phai co dinh dang HH:mm'),
+});
+
 export const ForgotPasswordSchema = z.object({
   email: z.string().email('Email không hợp lệ').max(255),
 });
