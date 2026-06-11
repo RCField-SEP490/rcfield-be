@@ -7,6 +7,8 @@ import {
   BookingStatus,
   CafeStatus,
   ContestStatus,
+  ContestResultType,
+  ContestRoundType,
   DiscountType,
   PackageBillingPeriod,
   PromotionScheduleMode,
@@ -440,6 +442,90 @@ export const CheckInContestRegistrationSchema = z.object({
 
 export const CancelContestRegistrationSchema = z.object({
   reason: z.string().trim().max(500).optional(),
+});
+
+export const CreateContestClassSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(2)
+    .max(50)
+    .regex(/^[A-Z0-9_]+$/i)
+    .transform((value) => value.toUpperCase()),
+  name: z.string().trim().min(2).max(255),
+  track_type_id: z.string().uuid().nullable().optional(),
+  rules: z.record(z.any()).optional().default({}),
+  capacity: z.coerce.number().int().positive().nullable().optional(),
+  display_order: z.coerce.number().int().min(0).optional().default(0),
+  is_active: z.boolean().optional().default(true),
+});
+
+export const CreateContestRoundSchema = z.object({
+  contest_class_id: z.string().uuid(),
+  round_type: z.nativeEnum(ContestRoundType),
+  round_no: z.coerce.number().int().positive(),
+  name: z.string().trim().max(255).nullable().optional(),
+  scheduled_at: z.coerce.date().nullable().optional(),
+  rules: z.record(z.any()).optional().default({}),
+});
+
+export const ContestRoundIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const CreateContestHeatSchema = z.object({
+  heat_no: z.coerce.number().int().positive(),
+  scheduled_at: z.coerce.date().nullable().optional(),
+  config: z.record(z.any()).optional().default({}),
+});
+
+export const ContestHeatIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const AddContestHeatEntrySchema = z.object({
+  registration_id: z.string().uuid(),
+  contest_class_id: z.string().uuid().nullable().optional(),
+  grid_position: z.coerce.number().int().positive().nullable().optional(),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+const ContestResultItemSchema = z.object({
+  heat_entry_id: z.string().uuid(),
+  best_lap_ms: z.coerce.number().int().positive().nullable().optional(),
+  total_time_ms: z.coerce.number().int().positive().nullable().optional(),
+  finish_position: z.coerce.number().int().positive().nullable().optional(),
+  laps_completed: z.coerce.number().int().min(0).nullable().optional(),
+  penalty_ms: z.coerce.number().int().min(0).optional().default(0),
+  dnf: z.boolean().optional().default(false),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+export const SubmitContestHeatResultsSchema = z
+  .object({
+    result_type: z.nativeEnum(ContestResultType),
+    results: z.array(ContestResultItemSchema).min(1),
+  })
+  .refine(
+    (value) =>
+      value.result_type !== ContestResultType.TIME_ATTACK ||
+      value.results.every((result) => Boolean(result.best_lap_ms)),
+    'TIME_ATTACK cần best_lap_ms cho từng entry',
+  )
+  .refine(
+    (value) =>
+      value.result_type !== ContestResultType.RACE_FINAL ||
+      value.results.every((result) => Boolean(result.finish_position)),
+    'RACE_FINAL cần finish_position cho từng entry',
+  );
+
+export const ContestResultIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const VerifyContestResultSchema = z.object({
+  notes: z.string().trim().max(1000).optional(),
 });
 
 export const CafeImageCreateSchema = z.object({

@@ -4,6 +4,7 @@ import { AppDataSource } from '../../config/database';
 import {
   CafeStatus,
   ContestRegistrationStatus,
+  ContestResultStatus,
   ContestStatus,
   ProviderStatus,
   SubscriptionStatus,
@@ -51,6 +52,33 @@ beforeAll(async () => {
   );
   driftId = trackType.id;
 });
+
+async function setupOperationalContest() {
+  const provider = await createTestUser({ role: UserRole.PROVIDER });
+  await activateProvider(provider.id);
+  const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.ACTIVE });
+  const createRes = await request(app)
+    .post('/api/v1/contests')
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send(contestBody([cafe.id]));
+  expect(createRes.status).toBe(201);
+  const openRes = await request(app)
+    .post(`/api/v1/contests/${createRes.body.data.id}/open`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`);
+  expect(openRes.status).toBe(200);
+
+  const customer = await createTestUser({ role: UserRole.CUSTOMER });
+  const registration = await registerContest(openRes.body.data.id, customer);
+  expect(registration.status).toBe(201);
+
+  const checkIn = await request(app)
+    .post(`/api/v1/contest-registrations/${registration.body.data.id}/check-in`)
+    .set('Authorization', `Bearer ${generateToken(provider)}`)
+    .send({ cafe_id: cafe.id });
+  expect(checkIn.status).toBe(200);
+
+  return { provider, cafe, contest: openRes.body.data, registration: checkIn.body.data };
+}
 
 function contestBody(cafeIds: string[], overrides: Record<string, unknown> = {}) {
   const now = Date.now();
@@ -382,5 +410,173 @@ describe('Contest registration and check-in routes', () => {
       [registration.body.data.id],
     );
     expect(rows[0].status).toBe(ContestRegistrationStatus.CANCELLED);
+  });
+});
+
+describe('Contest competition core routes', () => {
+  it('tạo class, round, heat và add checked-in heat entry', async () => {
+    const { provider, contest, registration } = await setupOperationalContest();
+
+    const contestClass = await request(app)
+      .post(`/api/v1/contests/${contest.id}/classes`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ code: 'RENTAL_SPEC', name: 'Rental Spec' });
+    expect(contestClass.status).toBe(201);
+
+    const round = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rounds`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        contest_class_id: contestClass.body.data.id,
+        round_type: 'QUALIFYING',
+        round_no: 1,
+      });
+    expect(round.status).toBe(201);
+
+    const heat = await request(app)
+      .post(`/api/v1/contest-rounds/${round.body.data.id}/heats`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ heat_no: 1 });
+    expect(heat.status).toBe(201);
+
+    const entry = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/entries`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        registration_id: registration.id,
+        contest_class_id: contestClass.body.data.id,
+        grid_position: 1,
+      });
+    expect(entry.status).toBe(201);
+    expect(entry.body.data.registrationId).toBe(registration.id);
+  });
+
+  it('submit TIME_ATTACK và RACE_FINAL result hợp lệ', async () => {
+    const { provider, contest, registration } = await setupOperationalContest();
+    const contestClass = await request(app)
+      .post(`/api/v1/contests/${contest.id}/classes`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ code: 'OPEN', name: 'Open Class' });
+    const round = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rounds`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        contest_class_id: contestClass.body.data.id,
+        round_type: 'QUALIFYING',
+        round_no: 1,
+      });
+    const heat = await request(app)
+      .post(`/api/v1/contest-rounds/${round.body.data.id}/heats`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ heat_no: 1 });
+    const entry = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/entries`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ registration_id: registration.id });
+
+    const timeAttack = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/results`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        result_type: 'TIME_ATTACK',
+        results: [{ heat_entry_id: entry.body.data.id, best_lap_ms: 18234 }],
+      });
+    expect(timeAttack.status).toBe(201);
+    expect(timeAttack.body.data[0].resultType).toBe('TIME_ATTACK');
+
+    const raceFinal = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/results`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        result_type: 'RACE_FINAL',
+        results: [{ heat_entry_id: entry.body.data.id, finish_position: 1, total_time_ms: 120000 }],
+      });
+    expect(raceFinal.status).toBe(201);
+    expect(raceFinal.body.data[0].resultType).toBe('RACE_FINAL');
+  });
+
+  it('invalid result fields fail', async () => {
+    const { provider, contest, registration } = await setupOperationalContest();
+    const contestClass = await request(app)
+      .post(`/api/v1/contests/${contest.id}/classes`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ code: 'BEGINNER', name: 'Beginner' });
+    const round = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rounds`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        contest_class_id: contestClass.body.data.id,
+        round_type: 'QUALIFYING',
+        round_no: 1,
+      });
+    const heat = await request(app)
+      .post(`/api/v1/contest-rounds/${round.body.data.id}/heats`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ heat_no: 1 });
+    const entry = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/entries`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ registration_id: registration.id });
+
+    const invalid = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/results`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        result_type: 'TIME_ATTACK',
+        results: [{ heat_entry_id: entry.body.data.id, finish_position: 1 }],
+      });
+
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('verify result và chặn sửa result đã verify', async () => {
+    const { provider, contest, registration } = await setupOperationalContest();
+    const contestClass = await request(app)
+      .post(`/api/v1/contests/${contest.id}/classes`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ code: 'FINAL', name: 'Final Class' });
+    const round = await request(app)
+      .post(`/api/v1/contests/${contest.id}/rounds`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        contest_class_id: contestClass.body.data.id,
+        round_type: 'FINAL',
+        round_no: 1,
+      });
+    const heat = await request(app)
+      .post(`/api/v1/contest-rounds/${round.body.data.id}/heats`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ heat_no: 1 });
+    const entry = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/entries`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ registration_id: registration.id });
+    const submit = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/results`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        result_type: 'TIME_ATTACK',
+        results: [{ heat_entry_id: entry.body.data.id, best_lap_ms: 19000 }],
+      });
+    expect(submit.status).toBe(201);
+
+    const verify = await request(app)
+      .post(`/api/v1/contest-results/${submit.body.data[0].id}/verify`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+    expect(verify.status).toBe(200);
+    expect(verify.body.data.status).toBe(ContestResultStatus.VERIFIED);
+
+    const editVerified = await request(app)
+      .post(`/api/v1/contest-heats/${heat.body.data.id}/results`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        result_type: 'TIME_ATTACK',
+        results: [{ heat_entry_id: entry.body.data.id, best_lap_ms: 18000 }],
+      });
+
+    expect(editVerified.status).toBe(409);
+    expect(editVerified.body.code).toBe('CONTEST_RESULT_ALREADY_VERIFIED');
   });
 });

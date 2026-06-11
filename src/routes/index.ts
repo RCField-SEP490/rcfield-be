@@ -22,6 +22,11 @@ import { vnpayRouter } from './vnpay.routes';
 import { bookingRouter } from './booking.routes';
 import { contestRouter } from './contest.routes';
 import { contestRegistrationRouter } from './contest-registration.routes';
+import {
+  contestHeatRouter,
+  contestResultRouter,
+  contestRoundRouter,
+} from './contest-competition.routes';
 import { bookingController } from '../controllers/booking.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
@@ -120,6 +125,9 @@ router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
 router.use('/contests', contestRouter);
 router.use('/contest-registrations', contestRegistrationRouter);
+router.use('/contest-rounds', contestRoundRouter);
+router.use('/contest-heats', contestHeatRouter);
+router.use('/contest-results', contestResultRouter);
 router.get(
   '/provider/cafes/:cafeId/bookings',
   authenticate,

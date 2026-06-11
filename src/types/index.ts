@@ -114,6 +114,29 @@ export enum ContestCafeRole {
   PARTICIPATING = 'PARTICIPATING',
 }
 
+export enum ContestRoundType {
+  PRACTICE = 'PRACTICE',
+  QUALIFYING = 'QUALIFYING',
+  FINAL = 'FINAL',
+}
+
+export enum ContestHeatStatus {
+  SCHEDULED = 'SCHEDULED',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestResultType {
+  TIME_ATTACK = 'TIME_ATTACK',
+  RACE_FINAL = 'RACE_FINAL',
+}
+
+export enum ContestResultStatus {
+  SUBMITTED = 'SUBMITTED',
+  VERIFIED = 'VERIFIED',
+}
+
 // ── Payment ───────────────────────────────────────────────────────────────────
 
 export enum PaymentComponentType {
