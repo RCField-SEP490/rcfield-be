@@ -8,14 +8,17 @@ import {
 } from 'typeorm';
 
 @Entity('staff_shifts')
-@Index(['providerId', 'shiftDate'])
-@Index(['providerId', 'positionId', 'shiftDate', 'staffId'], { unique: true })
+@Index(['providerId', 'cafeId', 'shiftDate'])
+@Index(['providerId', 'cafeId', 'positionId', 'shiftDate', 'staffId'])
 export class StaffShift {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column({ name: 'provider_id', type: 'uuid' })
   providerId: string;
+
+  @Column({ name: 'cafe_id', type: 'uuid' })
+  cafeId: string;
 
   @Column({ name: 'position_id', type: 'uuid' })
   positionId: string;

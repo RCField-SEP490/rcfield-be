@@ -19,6 +19,36 @@ providerSubscriptionRouter.post(
   requireActiveProvider,
   shiftController.createPosition,
 );
+providerSubscriptionRouter.patch(
+  '/positions/:positionId',
+  requireActiveProvider,
+  shiftController.updatePosition,
+);
+providerSubscriptionRouter.delete(
+  '/positions/:positionId',
+  requireActiveProvider,
+  shiftController.deletePosition,
+);
+providerSubscriptionRouter.get(
+  '/shift-time-presets',
+  requireActiveProvider,
+  shiftController.listShiftTimePresets,
+);
+providerSubscriptionRouter.post(
+  '/shift-time-presets',
+  requireActiveProvider,
+  shiftController.createShiftTimePreset,
+);
+providerSubscriptionRouter.patch(
+  '/shift-time-presets/:presetId',
+  requireActiveProvider,
+  shiftController.updateShiftTimePreset,
+);
+providerSubscriptionRouter.delete(
+  '/shift-time-presets/:presetId',
+  requireActiveProvider,
+  shiftController.deleteShiftTimePreset,
+);
 providerSubscriptionRouter.get('/shifts/week', requireActiveProvider, shiftController.getWeek);
 providerSubscriptionRouter.post(
   '/shifts/assign',
@@ -29,6 +59,23 @@ providerSubscriptionRouter.put(
   '/shifts/update-time',
   requireActiveProvider,
   shiftController.updateShiftTime,
+);
+providerSubscriptionRouter.put('/shifts/move', requireActiveProvider, shiftController.moveShift);
+providerSubscriptionRouter.post('/shifts/clone', requireActiveProvider, shiftController.cloneShift);
+providerSubscriptionRouter.post(
+  '/shifts/bulk-clone',
+  requireActiveProvider,
+  shiftController.bulkCloneShifts,
+);
+providerSubscriptionRouter.delete(
+  '/shifts/bulk',
+  requireActiveProvider,
+  shiftController.bulkDeleteShifts,
+);
+providerSubscriptionRouter.delete(
+  '/shifts/clear-employee-week',
+  requireActiveProvider,
+  shiftController.clearEmployeeWeek,
 );
 providerSubscriptionRouter.patch(
   '/staff/:staffId/deactivate',
