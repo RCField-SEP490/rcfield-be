@@ -20,6 +20,7 @@ import {
 import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
 import { emailService } from './email.service';
+import { activateCustomerPackage, deductSlots } from './customer-package.service';
 
 // ── Snapshot types (Constitution Principle I: prices from snapshot, never live) ─
 
@@ -36,6 +37,12 @@ export interface RefundSnapshot {
 export interface BookingSnapshot extends RefundSnapshot {
   platform_fee_pct: number;
   captured_at: string;
+  package_used?: {
+    customer_package_id: string;
+    package_id: string;
+    package_name: string;
+    slots_used: number;
+  };
 }
 
 export interface RefundBreakdown {
@@ -105,12 +112,15 @@ export function calculateRefundAmounts(
 // ── createCheckoutUrl ─────────────────────────────────────────────────────────
 
 export interface CheckoutResult {
-  payment_url: string;
+  payment_url: string | null;
   txn_ref: string;
   total_amount: number;
+  confirmed?: boolean;
+  slots_used?: number;
+  slots_remaining_after?: number;
 }
 
-/** Freezes prices into snapshot, returns VNPay redirect URL */
+/** Freezes prices into snapshot, returns VNPay redirect URL. If total=0, confirms inline. */
 export async function createCheckoutUrl(
   bookingId: string,
   ipAddr: string,
@@ -152,7 +162,11 @@ export async function createCheckoutUrl(
 
   const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
-  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount);
+  const rawSlotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount);
+
+  // If package was applied, slot fee is 0 (createBooking already validated ownership)
+  const packageUsed = (booking.snapshot as unknown as BookingSnapshot | null)?.package_used;
+  const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
 
   const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
 
@@ -167,9 +181,73 @@ export async function createCheckoutUrl(
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
+    ...(packageUsed ? { package_used: packageUsed } : {}),
   };
 
   await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
+
+  // Zero-total bypass: skip VNPay, confirm inline (D3 from research.md)
+  if (totalCharged === 0 && booking.customerPackageId) {
+    const txnRef = `pkg_${bookingId.replace(/-/g, '').substring(0, 28)}`;
+    const txRepo = AppDataSource.getRepository(PaymentTransaction);
+    const existingTx = await txRepo.findOne({ where: { txnRef } });
+    if (!existingTx) {
+      await txRepo.save(
+        txRepo.create({
+          bookingId,
+          customerPackageId: null,
+          type: PaymentTransactionType.PAYMENT,
+          gateway: 'DIRECT',
+          txnRef,
+          amount: 0,
+          status: PaymentTransactionStatus.SUCCESS,
+          rawRequest: { zeroTotal: true, packageApplied: booking.customerPackageId },
+        }),
+      );
+    }
+
+    await transition(bookingId, 'PAYMENT_CONFIRMED');
+    await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+    let slotsRemainingAfter = 0;
+    if (snapshot.package_used) {
+      const qr = AppDataSource.createQueryRunner();
+      await qr.connect();
+      await qr.startTransaction();
+      try {
+        await deductSlots(
+          snapshot.package_used.customer_package_id,
+          snapshot.package_used.slots_used,
+          qr,
+        );
+        await qr.commitTransaction();
+        const { CustomerPackage } = await import('../models/customer-package.entity');
+        const cp = await AppDataSource.getRepository(CustomerPackage).findOne({
+          where: { id: snapshot.package_used.customer_package_id },
+        });
+        slotsRemainingAfter = cp?.slotsRemaining ?? 0;
+      } catch (err) {
+        await qr.rollbackTransaction();
+        logger.error(
+          'PaymentService',
+          `deductSlots failed (zero-total) bookingId=${bookingId}`,
+          err,
+        );
+      } finally {
+        await qr.release();
+      }
+    }
+
+    logger.info('PaymentService', `zero-total confirmed bookingId=${bookingId}`);
+    return {
+      payment_url: null,
+      txn_ref: txnRef,
+      total_amount: 0,
+      confirmed: true,
+      slots_used: snapshot.package_used?.slots_used,
+      slots_remaining_after: slotsRemainingAfter,
+    };
+  }
 
   // txnRef = bookingId without dashes, max 32 chars
   const txnRef = bookingId.replace(/-/g, '').substring(0, 32);
@@ -193,6 +271,7 @@ export async function createCheckoutUrl(
   if (!existingTx) {
     const tx = txRepo.create({
       bookingId,
+      customerPackageId: null,
       type: PaymentTransactionType.PAYMENT,
       gateway: 'VNPAY',
       txnRef,
@@ -312,20 +391,59 @@ export async function processConfirmation(
     rawResponse: vnpParams as object,
   });
 
+  // Branch: package purchase activation vs booking confirmation (D2 from research.md)
+  if (tx.customerPackageId != null) {
+    await activateCustomerPackage(tx.customerPackageId);
+    logger.info(
+      'PaymentService',
+      `package activated customerPackageId=${tx.customerPackageId} txnRef=${result.txnRef}`,
+    );
+    return { rspCode: '00', message: 'Confirm Success' };
+  }
+
+  if (!tx.bookingId) {
+    logger.error(
+      'PaymentService',
+      `tx has no bookingId or customerPackageId txnRef=${result.txnRef}`,
+    );
+    return { rspCode: '01', message: 'Order source unknown' };
+  }
+
+  const confirmedBookingId = tx.bookingId;
+
   // Transition booking to CONFIRMED
-  const booking = await transition(tx.bookingId, 'PAYMENT_CONFIRMED');
+  const booking = await transition(confirmedBookingId, 'PAYMENT_CONFIRMED');
 
   // Create payment components
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
-  const bookingVehicles = await bvRepo.find({ where: { bookingId: tx.bookingId } });
+  const bookingVehicles = await bvRepo.find({ where: { bookingId: confirmedBookingId } });
   const snapshot = booking.snapshot as unknown as BookingSnapshot | null;
 
   if (snapshot) {
     await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+    // Deduct slots if package was used (D4 from research.md)
+    if (snapshot.package_used) {
+      const qr = AppDataSource.createQueryRunner();
+      await qr.connect();
+      await qr.startTransaction();
+      try {
+        await deductSlots(
+          snapshot.package_used.customer_package_id,
+          snapshot.package_used.slots_used,
+          qr,
+        );
+        await qr.commitTransaction();
+      } catch (err) {
+        await qr.rollbackTransaction();
+        logger.error('PaymentService', `deductSlots failed bookingId=${confirmedBookingId}`, err);
+      } finally {
+        await qr.release();
+      }
+    }
   }
 
   // Fire-and-forget: emails must not block or fail the IPN response
-  const confirmedBookingId = tx.bookingId;
   Promise.all([
     emailService.sendBookingConfirmation(confirmedBookingId),
     emailService.sendBookingInvoice(confirmedBookingId),
@@ -356,16 +474,51 @@ export async function processMockConfirmation(
     rawResponse: { mock: true, txnRef },
   });
 
-  const booking = await transition(tx.bookingId, 'PAYMENT_CONFIRMED');
+  // Branch: package purchase activation vs booking confirmation
+  if (tx.customerPackageId != null) {
+    await activateCustomerPackage(tx.customerPackageId);
+    logger.info(
+      'PaymentService',
+      `mock package activated customerPackageId=${tx.customerPackageId}`,
+    );
+    return { rspCode: '00', message: 'Mock Confirm Success' };
+  }
+
+  if (!tx.bookingId) {
+    return { rspCode: '01', message: 'Order source unknown' };
+  }
+
+  const mockBookingId = tx.bookingId;
+
+  const booking = await transition(mockBookingId, 'PAYMENT_CONFIRMED');
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
-  const bookingVehicles = await bvRepo.find({ where: { bookingId: tx.bookingId } });
+  const bookingVehicles = await bvRepo.find({ where: { bookingId: mockBookingId } });
   const snapshot = booking.snapshot as unknown as BookingSnapshot | null;
 
   if (snapshot) {
     await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+    // Deduct slots if package was used
+    if (snapshot.package_used) {
+      const qr = AppDataSource.createQueryRunner();
+      await qr.connect();
+      await qr.startTransaction();
+      try {
+        await deductSlots(
+          snapshot.package_used.customer_package_id,
+          snapshot.package_used.slots_used,
+          qr,
+        );
+        await qr.commitTransaction();
+      } catch (err) {
+        await qr.rollbackTransaction();
+        logger.error('PaymentService', `deductSlots failed (mock) bookingId=${mockBookingId}`, err);
+      } finally {
+        await qr.release();
+      }
+    }
   }
 
-  const mockBookingId = tx.bookingId;
   Promise.all([
     emailService.sendBookingConfirmation(mockBookingId),
     emailService.sendBookingInvoice(mockBookingId),
@@ -373,7 +526,7 @@ export async function processMockConfirmation(
     logger.error('PaymentService', 'post-payment email failed (mock)', err);
   });
 
-  logger.info('PaymentService', `mock confirmed bookingId=${tx.bookingId} txnRef=${txnRef}`);
+  logger.info('PaymentService', `mock confirmed bookingId=${mockBookingId} txnRef=${txnRef}`);
   return { rspCode: '00', message: 'Mock Confirm Success' };
 }
 

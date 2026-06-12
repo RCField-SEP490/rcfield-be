@@ -19,11 +19,14 @@ import {
   BookingParticipantType,
   BookingSource,
   BookingStatus,
+  CustomerPackageStatus,
   FnbOrderStatus,
   FnbOrderType,
   UserRole,
   VehicleStatus,
 } from '../types';
+import { CustomerPackage } from '../models/customer-package.entity';
+import { refundSlots } from './customer-package.service';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
@@ -176,6 +179,7 @@ export interface CreateBookingBody {
   promotion_code?: string;
   track_type_id?: string;
   track_config_id?: string;
+  customer_package_id?: string;
 }
 
 export interface BookingBreakdown {
@@ -269,8 +273,52 @@ export async function createBooking(
     );
   }
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
+  const slotsNeeded = Math.ceil(slotMinutes / cafe.slotDurationMinutes);
   const playerCount = 1 + (body.participants?.length ?? 0); // booker + companions
-  const slotFee = Number(cafe.slotFeeRate) * slotCount * playerCount;
+
+  // Validate customer package if provided (T021)
+  let customerPackage: CustomerPackage | null = null;
+  if (body.customer_package_id) {
+    const cpRepo = AppDataSource.getRepository(CustomerPackage);
+    customerPackage = await cpRepo.findOne({ where: { id: body.customer_package_id } });
+    if (!customerPackage) {
+      throw new AppError('Package not found', 404, 'CUSTOMER_PACKAGE_NOT_FOUND');
+    }
+    if (customerPackage.customerId !== customerId) {
+      throw new AppError('Package not owned by this customer', 403, 'CUSTOMER_PACKAGE_NOT_FOUND');
+    }
+    if (customerPackage.cafeId !== body.cafe_id) {
+      throw new AppError('Package is for a different cafe', 400, 'PACKAGE_CAFE_MISMATCH');
+    }
+    if (customerPackage.status !== CustomerPackageStatus.ACTIVE) {
+      throw new AppError('Package is not active', 400, 'PACKAGE_EXPIRED');
+    }
+    if (customerPackage.expiresAt < new Date()) {
+      throw new AppError('Package has expired', 400, 'PACKAGE_EXPIRED');
+    }
+    if (customerPackage.slotsRemaining < slotsNeeded) {
+      throw new AppError('Package has insufficient slots', 400, 'PACKAGE_INSUFFICIENT_SLOTS');
+    }
+    // Load Package template to check applicable_play_modes
+    const { Package: PackageEntity } = await import('../models/package.entity');
+    const pkg = await AppDataSource.getRepository(PackageEntity).findOne({
+      where: { id: customerPackage.packageId },
+    });
+    if (
+      pkg &&
+      pkg.applicablePlayModes.length > 0 &&
+      !pkg.applicablePlayModes.includes(body.play_mode)
+    ) {
+      throw new AppError(
+        'Package does not apply to this play mode',
+        400,
+        'PACKAGE_PLAY_MODE_MISMATCH',
+      );
+    }
+  }
+
+  const rawSlotFee = Number(cafe.slotFeeRate) * slotCount * playerCount;
+  const slotFee = customerPackage ? 0 : rawSlotFee;
 
   let rentalFeeTotal = 0;
   let depositTotal = 0;
@@ -434,7 +482,7 @@ export async function createBooking(
         throw new AppError('Cafe has no track types configured', 400, 'NO_TRACK_TYPE');
       }
 
-      const snapshot = resolvedTrackConfig
+      const snapshot: Record<string, unknown> = resolvedTrackConfig
         ? {
             track_config_id: resolvedTrackConfig.id,
             track_type_id: resolvedTrackConfig.trackTypeId,
@@ -442,7 +490,17 @@ export async function createBooking(
             track_type_name: resolvedTrackType?.name ?? null,
             byoc_capacity_at_booking: resolvedTrackConfig.byocCapacity,
           }
-        : null;
+        : {};
+
+      // Write package_used into snapshot before saving (Constitution Principle I)
+      if (customerPackage) {
+        snapshot.package_used = {
+          customer_package_id: customerPackage.id,
+          package_id: customerPackage.packageId,
+          package_name: customerPackage.packageNameSnapshot,
+          slots_used: slotsNeeded,
+        };
+      }
 
       const newBooking = em.create(Booking, {
         customerId,
@@ -456,7 +514,8 @@ export async function createBooking(
         slotEnd,
         paymentExpiresAt,
         discountAmount: 0,
-        snapshot,
+        customerPackageId: customerPackage?.id ?? null,
+        snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
       });
       await em.save(newBooking);
 
@@ -600,6 +659,33 @@ export async function cancelBooking(
   }
 
   logger.info('BookingService', `cancelled bookingId=${bookingId} by ${role}`);
+
+  // Slot refund: only if package was used AND cancellation is before slot_start (D5 from research.md)
+  const snapshotData = booking.snapshot as {
+    package_used?: { customer_package_id: string; slots_used: number };
+  } | null;
+  if (snapshotData?.package_used && booking.slotStart > new Date()) {
+    const qr = AppDataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await refundSlots(
+        snapshotData.package_used.customer_package_id,
+        snapshotData.package_used.slots_used,
+        qr,
+      );
+      await qr.commitTransaction();
+      logger.info(
+        'BookingService',
+        `slot refund applied bookingId=${bookingId} slots=${snapshotData.package_used.slots_used}`,
+      );
+    } catch (err) {
+      await qr.rollbackTransaction();
+      logger.error('BookingService', `slot refund failed bookingId=${bookingId}`, err);
+    } finally {
+      await qr.release();
+    }
+  }
 
   // Return placeholder — PaymentService.processRefund handles actual amount
   return { refund_amount: 0 };

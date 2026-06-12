@@ -6,6 +6,7 @@ import {
   BookingMode,
   BookingStatus,
   CafeStatus,
+  CustomerPackageStatus,
   DiscountType,
   PackageBillingPeriod,
   PromotionScheduleMode,
@@ -789,6 +790,7 @@ export const CreateBookingSchema = z.object({
   participants: z.array(ParticipantSchema).min(0).default([]),
   fnb_items: z.array(FnbItemSchema).default([]),
   promotion_code: z.string().max(50).optional(),
+  customer_package_id: z.string().uuid().optional(),
 });
 
 export const CancelBookingSchema = z.object({
@@ -814,4 +816,13 @@ export const CheckAvailabilitySchema = z.object({
   play_mode: z.nativeEnum(BookingMode),
   track_type_id: z.string().uuid().optional(),
   track_config_id: z.string().uuid().optional(),
+});
+
+// ── customer_packages ─────────────────────────────────────────────────────────
+
+export const PurchasePackageSchema = z.object({});
+
+export const ListMyPackagesQuerySchema = z.object({
+  status: z.nativeEnum(CustomerPackageStatus).optional(),
+  cafe_id: z.string().uuid().optional(),
 });

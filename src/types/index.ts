@@ -95,6 +95,14 @@ export enum PaymentComponentType {
   EXTENSION_FEE = 'EXTENSION_FEE',
   DAMAGE_CHARGE = 'DAMAGE_CHARGE',
   FB_PREORDER = 'FNB_PREORDER',
+  PACKAGE_PURCHASE = 'PACKAGE_PURCHASE',
+}
+
+export enum CustomerPackageStatus {
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  ACTIVE = 'ACTIVE',
+  EXHAUSTED = 'EXHAUSTED',
+  EXPIRED = 'EXPIRED',
 }
 
 export enum PaymentComponentStatus {

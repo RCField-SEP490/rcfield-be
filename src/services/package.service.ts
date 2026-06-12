@@ -77,6 +77,41 @@ async function getOwnedPackageOrThrow(
   return item;
 }
 
+export interface PublicPackageResponse {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  slot_count: number;
+  price: number;
+  valid_days: number;
+  billing_period: PackageBillingPeriod;
+  benefits: string[];
+  applicable_play_modes: string[];
+  is_popular: boolean;
+}
+
+/** Public listing — no auth required. Returns only ACTIVE packages, no cost_price. */
+export async function getPublicPackages(cafeId: string): Promise<PublicPackageResponse[]> {
+  const items = await AppDataSource.getRepository(Package).find({
+    where: { cafeId, status: PackageStatus.ACTIVE, deletedAt: IsNull() },
+    order: { createdAt: 'ASC' },
+  });
+  return items.map((item) => ({
+    id: item.id,
+    code: item.code,
+    name: item.name,
+    description: item.description,
+    slot_count: item.slotCount,
+    price: Number(item.price),
+    valid_days: item.validDays,
+    billing_period: item.billingPeriod ?? validDaysToBillingPeriod(item.validDays),
+    benefits: item.benefits ?? [],
+    applicable_play_modes: item.applicablePlayModes ?? [],
+    is_popular: item.isPopular,
+  }));
+}
+
 export async function listPackages(cafeId: string, viewer: Viewer): Promise<PackageResponse[]> {
   await getManagedCafeOrThrow(cafeId, viewer);
   const items = await AppDataSource.getRepository(Package).find({
