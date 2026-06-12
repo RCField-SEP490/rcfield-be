@@ -64,6 +64,9 @@ export class Booking {
   @Column({ name: 'discount_amount', type: 'numeric', precision: 15, scale: 2, default: 0 })
   discountAmount: number;
 
+  @Column({ name: 'customer_package_id', type: 'uuid', nullable: true })
+  customerPackageId: string | null;
+
   @Column({ name: 'cancellation_reason', type: 'text', nullable: true })
   cancellationReason: string | null;
 

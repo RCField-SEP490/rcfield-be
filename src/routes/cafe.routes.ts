@@ -14,6 +14,7 @@ import { menuController } from '../controllers/menu.controller';
 import { menuRouter } from './menu.routes';
 import { promotionController } from '../controllers/promotion.controller';
 import { packageController } from '../controllers/package.controller';
+import { customerPackageController } from '../controllers/customer-package.controller';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -54,6 +55,9 @@ cafeRouter.delete(
   authorize(UserRole.PROVIDER, UserRole.ADMIN),
   promotionController.remove,
 );
+// Public package listing — no auth required
+cafeRouter.get('/:cafeId/packages/public', customerPackageController.listPublicPackages);
+
 cafeRouter.get(
   '/:cafeId/packages',
   authenticate,

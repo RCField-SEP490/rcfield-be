@@ -10,12 +10,16 @@ import { PaymentTransactionStatus, PaymentTransactionType } from '../types';
 
 @Entity('payment_transactions')
 @Index(['bookingId'])
+@Index('IDX_payment_transactions_customer_package_id', ['customerPackageId'])
 export class PaymentTransaction {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'booking_id', type: 'uuid' })
-  bookingId: string;
+  @Column({ name: 'booking_id', type: 'uuid', nullable: true })
+  bookingId: string | null;
+
+  @Column({ name: 'customer_package_id', type: 'uuid', nullable: true })
+  customerPackageId: string | null;
 
   @Column({ name: 'type', type: 'varchar', length: 20 })
   type: PaymentTransactionType;
