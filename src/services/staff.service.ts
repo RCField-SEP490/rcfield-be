@@ -49,6 +49,10 @@ export interface TodayBookingItem {
   status: string;
   mode: string;
   vehicleName: string | null;
+  trackTypeName: string | null;
+  participantCount: number;
+  vehicleCount: number;
+  fnbPreorderAmount: number;
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -426,23 +430,41 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
       status: string;
       mode: string;
       vehicle_name: string | null;
+      track_type_name: string | null;
+      participant_count: string;
+      vehicle_count: string;
+      fnb_preorder_amount: string;
     }[]
   >(
     `SELECT
        b.id,
-       u.full_name  AS customer_name,
-       u.phone      AS customer_phone,
+       u.full_name   AS customer_name,
+       u.phone       AS customer_phone,
        b.slot_start,
        b.slot_end,
        b.status,
-       b.mode,
-       v.name       AS vehicle_name
+       b.play_mode   AS mode,
+       tt.name       AS track_type_name,
+       (SELECT COUNT(*) FROM booking_participants bp WHERE bp.booking_id = b.id)::int AS participant_count,
+       (SELECT COUNT(*) FROM booking_vehicles   bv WHERE bv.booking_id = b.id)::int   AS vehicle_count,
+       COALESCE(
+         (SELECT fo.total_amount FROM fnb_orders fo WHERE fo.booking_id = b.id LIMIT 1),
+         0
+       ) AS fnb_preorder_amount,
+       (
+         SELECT vc.name
+         FROM booking_vehicles bv2
+         JOIN vehicles v2  ON v2.id  = bv2.vehicle_id
+         JOIN vehicle_catalogs vc ON vc.id = v2.catalog_id
+         WHERE bv2.booking_id = b.id
+         LIMIT 1
+       ) AS vehicle_name
      FROM bookings b
-     JOIN users u ON u.id = b.customer_id
-     LEFT JOIN vehicles v ON v.id = b.vehicle_id
+     JOIN users u       ON u.id  = b.customer_id
+     LEFT JOIN track_types tt ON tt.id = b.track_type_id
      WHERE b.cafe_id = $1
        AND b.slot_start::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
-       AND b.status IN ('CONFIRMED', 'ACTIVE', 'EXTENDING', 'CHECKING_OUT')
+       AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'COMPLETED', 'CANCELLED')
      ORDER BY b.slot_start ASC`,
     [cafeId],
   );
@@ -456,7 +478,124 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
     status: row.status,
     mode: row.mode,
     vehicleName: row.vehicle_name,
+    trackTypeName: row.track_type_name ?? null,
+    participantCount: Number(row.participant_count),
+    vehicleCount: Number(row.vehicle_count),
+    fnbPreorderAmount: Number(row.fnb_preorder_amount),
   }));
+}
+
+export interface FnbOrderItemDetail {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  notes: string | null;
+}
+
+export interface TodayFnbOrderItem {
+  id: string;
+  bookingId: string;
+  status: string;
+  totalAmount: number;
+  createdAt: string;
+  slotStart: string;
+  customerName: string;
+  items: FnbOrderItemDetail[];
+}
+
+export async function getTodayFnbOrders(cafeId: string): Promise<TodayFnbOrderItem[]> {
+  const rows = await AppDataSource.query<
+    {
+      id: string;
+      booking_id: string;
+      status: string;
+      total_amount: string;
+      created_at: Date;
+      slot_start: Date;
+      customer_name: string;
+      items: FnbOrderItemDetail[] | null;
+    }[]
+  >(
+    `SELECT
+       fo.id,
+       fo.booking_id,
+       fo.status,
+       fo.total_amount,
+       fo.created_at,
+       b.slot_start,
+       u.full_name  AS customer_name,
+       json_agg(
+         json_build_object(
+           'name',      mi.name,
+           'quantity',  foi.quantity,
+           'unitPrice', foi.unit_price,
+           'subtotal',  foi.subtotal,
+           'notes',     foi.notes
+         ) ORDER BY foi.created_at
+       ) FILTER (WHERE foi.id IS NOT NULL) AS items
+     FROM fnb_orders fo
+     JOIN bookings b ON b.id = fo.booking_id
+     JOIN users u    ON u.id = b.customer_id
+     LEFT JOIN fnb_order_items foi ON foi.order_id = fo.id
+     LEFT JOIN menu_items mi       ON mi.id = foi.menu_item_id
+     WHERE b.cafe_id = $1
+       AND b.slot_start::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+       AND fo.type = 'PRE_ORDER'
+       AND fo.status != 'CANCELLED'
+     GROUP BY fo.id, b.slot_start, u.full_name
+     ORDER BY b.slot_start ASC`,
+    [cafeId],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    bookingId: row.booking_id,
+    status: row.status,
+    totalAmount: Number(row.total_amount),
+    createdAt: row.created_at.toISOString(),
+    slotStart: row.slot_start.toISOString(),
+    customerName: row.customer_name,
+    items: row.items ?? [],
+  }));
+}
+
+export async function updateFnbOrderStatus(
+  orderId: string,
+  cafeId: string,
+  newStatus: string,
+): Promise<void> {
+  const [order] = await AppDataSource.query<{ id: string; status: string }[]>(
+    `SELECT fo.id, fo.status
+     FROM fnb_orders fo
+     JOIN bookings b ON b.id = fo.booking_id
+     WHERE fo.id = $1 AND b.cafe_id = $2`,
+    [orderId, cafeId],
+  );
+
+  if (!order) {
+    throw new AppError('Đơn F&B không tồn tại', 404, 'FNB_ORDER_NOT_FOUND');
+  }
+
+  const allowed: Record<string, string[]> = {
+    PENDING: ['CONFIRMED', 'CANCELLED'],
+    CONFIRMED: ['DELIVERED'],
+  };
+
+  if (!allowed[order.status]?.includes(newStatus)) {
+    throw new AppError(
+      `Không thể chuyển trạng thái từ ${order.status} sang ${newStatus}`,
+      409,
+      'FNB_ORDER_INVALID_TRANSITION',
+    );
+  }
+
+  await AppDataSource.query(`UPDATE fnb_orders SET status = $1 WHERE id = $2`, [
+    newStatus,
+    orderId,
+  ]);
+
+  logger.info('Staff', 'fnb order status updated', { orderId, cafeId, newStatus });
 }
 
 export async function transferStaff(

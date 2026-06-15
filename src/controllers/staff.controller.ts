@@ -1,6 +1,6 @@
 import type { Response, NextFunction } from 'express';
 import { logger } from '../config/logger';
-import { CreateStaffSchema, TransferStaffSchema } from '../validate';
+import { CreateStaffSchema, TransferStaffSchema, UpdateFnbOrderStatusSchema } from '../validate';
 import { AppError, AuthRequest } from '../types';
 import * as staffService from '../services/staff.service';
 
@@ -104,6 +104,38 @@ export const staffController = {
         throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
       const data = await staffService.getTodayBookings(req.user.cafeId);
       res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/fnb-orders  [auth]
+  async getFnbOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const data = await staffService.getTodayFnbOrders(req.user.cafeId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/staff/fnb-orders/:orderId  [auth]
+  async updateFnbOrder(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const { status } = UpdateFnbOrderStatusSchema.parse(req.body);
+      await staffService.updateFnbOrderStatus(req.params.orderId, req.user.cafeId, status);
+      logger.info('Staff', 'fnb order updated via API', {
+        orderId: req.params.orderId,
+        cafeId: req.user.cafeId,
+        status,
+      });
+      res.json({ success: true });
     } catch (err) {
       next(err);
     }

@@ -8,6 +8,7 @@ import {
   CafeStatus,
   CustomerPackageStatus,
   DiscountType,
+  FnbOrderStatus,
   PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
@@ -830,4 +831,10 @@ export const PurchasePackageSchema = z.object({});
 export const ListMyPackagesQuerySchema = z.object({
   status: z.nativeEnum(CustomerPackageStatus).optional(),
   cafe_id: z.string().uuid().optional(),
+});
+
+// ── staff fnb ─────────────────────────────────────────────────────────────────
+
+export const UpdateFnbOrderStatusSchema = z.object({
+  status: z.nativeEnum(FnbOrderStatus),
 });
