@@ -318,7 +318,10 @@ export async function createBooking(
   }
 
   const rawSlotFee = Number(cafe.slotFeeRate) * slotCount * playerCount;
-  const slotFee = customerPackage ? 0 : rawSlotFee;
+  // Package covers only the booker's slot fee (1 person). Companions still pay.
+  const slotFee = customerPackage
+    ? Number(cafe.slotFeeRate) * slotCount * Math.max(0, playerCount - 1)
+    : rawSlotFee;
 
   let rentalFeeTotal = 0;
   let depositTotal = 0;

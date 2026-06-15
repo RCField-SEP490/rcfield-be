@@ -48,6 +48,21 @@ export async function purchasePackage(
   }
 
   const cpRepo = AppDataSource.getRepository(CustomerPackage);
+
+  const existing = await cpRepo.findOne({
+    where: [
+      { customerId: viewer.userId, packageId, status: CustomerPackageStatus.ACTIVE },
+      { customerId: viewer.userId, packageId, status: CustomerPackageStatus.PENDING_PAYMENT },
+    ],
+  });
+  if (existing) {
+    throw new AppError(
+      'Bạn đã có gói này đang hoạt động hoặc chờ thanh toán',
+      409,
+      'PACKAGE_ALREADY_OWNED',
+    );
+  }
+
   const cp = cpRepo.create({
     customerId: viewer.userId,
     packageId,
@@ -82,6 +97,12 @@ export async function purchasePackage(
   let paymentUrl: string;
 
   if (env.vnpay.mockEnabled) {
+    // Auto-confirm inline — avoids circular import with payment.service
+    await activateCustomerPackage(savedCp.id);
+    await AppDataSource.getRepository(PaymentTransaction).update(
+      { txnRef },
+      { status: PaymentTransactionStatus.SUCCESS, rawResponse: { mock: true, txnRef } },
+    );
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
     target.searchParams.set('txn_ref', txnRef);
@@ -89,7 +110,7 @@ export async function purchasePackage(
     paymentUrl = target.toString();
     logger.info(
       'CustomerPackageService',
-      `mock purchase initiated customerPackageId=${savedCp.id}`,
+      `mock purchase confirmed customerPackageId=${savedCp.id}`,
     );
   } else {
     paymentUrl = createPaymentUrl({
@@ -134,14 +155,22 @@ export async function activateCustomerPackage(
   });
   if (!pkg) throw new AppError('Package not found', 404, 'PACKAGE_NOT_FOUND');
 
+  const validDays = pkg.validDays > 0 ? pkg.validDays : 30;
+  if (pkg.validDays <= 0) {
+    logger.warn(
+      'CustomerPackageService',
+      `packageId=${pkg.id} has invalid validDays=${pkg.validDays}, falling back to 30`,
+    );
+  }
+
   cp.status = CustomerPackageStatus.ACTIVE;
-  cp.expiresAt = new Date(Date.now() + pkg.validDays * 24 * 60 * 60 * 1000);
+  cp.expiresAt = new Date(Date.now() + validDays * 24 * 60 * 60 * 1000);
 
   await repo.save(cp);
 
   logger.info(
     'CustomerPackageService',
-    `activated customerPackageId=${customerPackageId} expires=${cp.expiresAt.toISOString()}`,
+    `activated customerPackageId=${customerPackageId} validDays=${validDays} expires=${cp.expiresAt.toISOString()}`,
   );
 }
 
@@ -222,6 +251,7 @@ export interface MyPackageResponse {
   cafe_id: string;
   cafe_name: string;
   package_name: string;
+  applicable_play_modes: string[];
   slots_total: number;
   slots_remaining: number;
   expires_at: string;
@@ -236,12 +266,14 @@ export async function listMyPackages(
 ): Promise<MyPackageResponse[]> {
   let qb = AppDataSource.createQueryBuilder(CustomerPackage, 'cp')
     .innerJoin(Cafe, 'c', 'c.id = cp.cafe_id')
+    .leftJoin(Package, 'pkg', 'pkg.id = cp.package_id')
     .select([
       'cp.id AS id',
       'cp.package_id AS package_id',
       'cp.cafe_id AS cafe_id',
       'c.name AS cafe_name',
       'cp.package_name_snapshot AS package_name',
+      "COALESCE(pkg.applicable_play_modes, '{}') AS applicable_play_modes",
       'cp.slots_total AS slots_total',
       'cp.slots_remaining AS slots_remaining',
       'cp.expires_at AS expires_at',
