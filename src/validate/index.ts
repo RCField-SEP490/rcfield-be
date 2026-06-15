@@ -745,21 +745,26 @@ export const UpsertWidgetConfigSchema = z.object({
 
 // ── cafe_track_configs ────────────────────────────────────────────────────────
 
-export const CreateCafeTrackConfigSchema = z.object({
-  track_type_id: z.string().uuid(),
-  max_concurrent: z.number().int().min(1),
-  byoc_capacity: z.number().int().min(0),
-  description: z.string().max(500).optional(),
-  sort_order: z.number().int().min(0).optional().default(0),
-});
+export const CreateCafeTrackConfigSchema = z
+  .object({
+    track_type_id: z.string().uuid(),
+    max_concurrent: z.coerce.number().int().min(0),
+    byoc_capacity: z.coerce.number().int().min(0),
+    description: z.string().max(500).optional(),
+    sort_order: z.coerce.number().int().min(0).optional().default(0),
+  })
+  .refine((b) => b.max_concurrent > 0 || b.byoc_capacity > 0, {
+    message: 'Ít nhất một trong hai phải lớn hơn 0: max_concurrent hoặc byoc_capacity',
+    path: ['max_concurrent'],
+  });
 
 export const UpdateCafeTrackConfigSchema = z
   .object({
-    max_concurrent: z.number().int().min(1).optional(),
-    byoc_capacity: z.number().int().min(0).optional(),
+    max_concurrent: z.coerce.number().int().min(0).optional(),
+    byoc_capacity: z.coerce.number().int().min(0).optional(),
     description: z.string().max(500).nullable().optional(),
     images: z.array(z.string().url()).max(20).optional(),
-    sort_order: z.number().int().min(0).optional(),
+    sort_order: z.coerce.number().int().min(0).optional(),
     is_active: z.boolean().optional(),
   })
   .refine((b) => Object.keys(b).length > 0, { message: 'At least one field required' });

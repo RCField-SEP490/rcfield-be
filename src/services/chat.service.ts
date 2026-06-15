@@ -189,8 +189,21 @@ Return only a pure JSON array, no markdown, no explanation:
   return ['Hỏi thêm về dịch vụ', 'Kiểm tra lịch trống', 'Xem bảng giá'];
 }
 
+interface TrackSummary {
+  name: string;
+  description: string | null;
+  max_concurrent: number;
+  byoc_capacity: number;
+}
+
 function buildSystemPrompt(
-  cafe: { name: string; address: string | null; operating_hours: unknown },
+  cafe: {
+    name: string;
+    address: string | null;
+    operating_hours: unknown;
+    bookingUrl?: string;
+    tracks?: TrackSummary[];
+  },
   chunks: string[],
   customSystemPrompt?: string | null,
 ): string {
@@ -234,6 +247,30 @@ function buildSystemPrompt(
   parts.push(`Thông tin chi nhánh:`);
   parts.push(`- Địa chỉ: ${cafe.address ?? 'Chưa cập nhật'}`);
   parts.push(`- Giờ mở cửa: ${JSON.stringify(cafe.operating_hours ?? {})}`);
+  if (cafe.bookingUrl) {
+    parts.push(`- Link đặt lịch: ${cafe.bookingUrl}`);
+    parts.push(
+      `  → Khi đưa link cho khách, LUÔN dùng định dạng Markdown: [${cafe.name}](${cafe.bookingUrl})`,
+    );
+    parts.push(`  → KHÔNG paste URL thô, KHÔNG viết "[link]" hay placeholder.`);
+  }
+
+  if (cafe.tracks && cafe.tracks.length > 0) {
+    parts.push('');
+    parts.push(`Các loại sân tại chi nhánh:`);
+    for (const track of cafe.tracks) {
+      const modes: string[] = [];
+      if (track.max_concurrent > 0) modes.push(`thuê xe (${track.max_concurrent} chỗ)`);
+      if (track.byoc_capacity > 0) modes.push(`mang xe riêng (${track.byoc_capacity} chỗ)`);
+      parts.push(
+        `- **${track.name}**: hỗ trợ ${modes.join(', ')}.${track.description ? ` ${track.description}` : ''}`,
+      );
+    }
+    parts.push(
+      `  → Khi khách hỏi "sân nào phù hợp với mình", hãy gợi ý dựa trên mô tả các sân ở trên.`,
+    );
+  }
+
   parts.push('');
   parts.push(`Knowledge base:`);
   parts.push(chunks.length ? chunks.join('\n---\n') : '(Chưa có tài liệu knowledge base)');
@@ -280,9 +317,9 @@ export async function ragChat(
     };
   }
 
-  const [cafeRows, docRows, widgetConfig] = await Promise.all([
-    ds.query<{ name: string; address: string; operating_hours: unknown }[]>(
-      `SELECT name, address, operating_hours FROM cafes WHERE id = $1`,
+  const [cafeRows, docRows, widgetConfig, trackRows] = await Promise.all([
+    ds.query<{ name: string; address: string; operating_hours: unknown; slug: string }[]>(
+      `SELECT name, address, operating_hours, slug FROM cafes WHERE id = $1`,
       [cafeId],
     ),
     ds.query<{ title: string }[]>(
@@ -292,10 +329,24 @@ export async function ragChat(
       [cafeId],
     ),
     ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } }),
+    ds.query<
+      { name: string; description: string | null; max_concurrent: number; byoc_capacity: number }[]
+    >(
+      `SELECT tt.name, ctc.description, ctc.max_concurrent, ctc.byoc_capacity
+       FROM cafe_track_configs ctc
+       JOIN track_types tt ON tt.id = ctc.track_type_id
+       WHERE ctc.cafe_id = $1 AND ctc.is_active = true AND ctc.deleted_at IS NULL
+       ORDER BY ctc.sort_order ASC`,
+      [cafeId],
+    ),
   ]);
 
   if (!cafeRows.length) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
-  const cafe = cafeRows[0];
+  const cafe = {
+    ...cafeRows[0],
+    bookingUrl: `${env.frontendUrl}/booking/create?cafeId=${cafeId}&mode=hourly`,
+    tracks: trackRows,
+  };
   const sources = docRows.map((r) => r.title);
 
   const chunks = await kbService.retrieveChunks(ds, cafeId, queryEmbedding);
@@ -421,9 +472,9 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
     };
   }
 
-  const [cafeRows, docRows, widgetConfig] = await Promise.all([
-    ds.query<{ name: string; address: string; operating_hours: unknown }[]>(
-      `SELECT name, address, operating_hours FROM cafes WHERE id = $1`,
+  const [cafeRows, docRows, widgetConfig, trackRows] = await Promise.all([
+    ds.query<{ name: string; address: string; operating_hours: unknown; slug: string }[]>(
+      `SELECT name, address, operating_hours, slug FROM cafes WHERE id = $1`,
       [cafeId],
     ),
     ds.query<{ title: string }[]>(
@@ -433,10 +484,24 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
       [cafeId],
     ),
     ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } }),
+    ds.query<
+      { name: string; description: string | null; max_concurrent: number; byoc_capacity: number }[]
+    >(
+      `SELECT tt.name, ctc.description, ctc.max_concurrent, ctc.byoc_capacity
+       FROM cafe_track_configs ctc
+       JOIN track_types tt ON tt.id = ctc.track_type_id
+       WHERE ctc.cafe_id = $1 AND ctc.is_active = true AND ctc.deleted_at IS NULL
+       ORDER BY ctc.sort_order ASC`,
+      [cafeId],
+    ),
   ]);
 
   if (!cafeRows.length) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
-  const cafe = cafeRows[0];
+  const cafe = {
+    ...cafeRows[0],
+    bookingUrl: `${env.frontendUrl}/booking/create?cafeId=${cafeId}&mode=hourly`,
+    tracks: trackRows,
+  };
   const sources = docRows.map((r) => r.title);
 
   logger.info('RAG', `Pgvector retrieval...  ${t()}`, { cafeId });
@@ -607,6 +672,24 @@ export async function upsertWidgetConfig(
   );
 
   ragCache.clear(cafeId);
+
+  // Sync AI_CHATBOT feature flag to match widget enabled state.
+  // Uses CTE upsert because the unique index is partial (WHERE entity_id IS NOT NULL)
+  // and cannot be referenced directly in ON CONFLICT.
+  if (updates.isEnabled !== undefined) {
+    await ds.query(
+      `WITH updated AS (
+         UPDATE feature_flags
+         SET is_enabled = $1, updated_at = now()
+         WHERE feature_key = 'AI_CHATBOT' AND entity_type = 'CAFE' AND entity_id = $2
+         RETURNING id
+       )
+       INSERT INTO feature_flags (feature_key, display_name, is_enabled, entity_type, entity_id)
+       SELECT 'AI_CHATBOT', 'Chatbot hỗ trợ khách hàng (AI)', $1, 'CAFE', $2
+       WHERE NOT EXISTS (SELECT 1 FROM updated)`,
+      [updates.isEnabled, cafeId],
+    );
+  }
 
   const config = await ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } });
   return config!;
