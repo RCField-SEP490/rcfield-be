@@ -46,6 +46,7 @@ export interface TodayBookingItem {
   customerPhone: string | null;
   startTime: string;
   endTime: string;
+  createdAt: string;
   status: string;
   mode: string;
   vehicleName: string | null;
@@ -427,6 +428,7 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
       customer_phone: string | null;
       slot_start: Date;
       slot_end: Date;
+      created_at: Date;
       status: string;
       mode: string;
       vehicle_name: string | null;
@@ -442,6 +444,7 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
        u.phone       AS customer_phone,
        b.slot_start,
        b.slot_end,
+       b.created_at,
        b.status,
        b.play_mode   AS mode,
        tt.name       AS track_type_name,
@@ -465,7 +468,7 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
      WHERE b.cafe_id = $1
        AND b.slot_start::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
        AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'COMPLETED', 'CANCELLED')
-     ORDER BY b.slot_start ASC`,
+     ORDER BY b.created_at DESC`,
     [cafeId],
   );
 
@@ -475,6 +478,7 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
     customerPhone: row.customer_phone,
     startTime: row.slot_start.toISOString(),
     endTime: row.slot_end.toISOString(),
+    createdAt: row.created_at.toISOString(),
     status: row.status,
     mode: row.mode,
     vehicleName: row.vehicle_name,

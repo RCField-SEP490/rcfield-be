@@ -146,7 +146,13 @@ export async function transition(bookingId: string, event: string): Promise<Book
       });
       await releaseByocSlot(booking.cafeId, booking.slotStart, participantCount || 1);
     }
+    await cancelPendingFnbOrders(bookingId);
     logger.info('BookingService', `transition → CANCELLED bookingId=${bookingId}`);
+  }
+
+  if (newStatus === BookingStatus.NO_SHOW) {
+    await cancelPendingFnbOrders(bookingId);
+    logger.info('BookingService', `transition → NO_SHOW bookingId=${bookingId}`);
   }
 
   booking.status = newStatus;
@@ -661,6 +667,7 @@ export async function cancelBooking(
     await releaseByocSlot(booking.cafeId, booking.slotStart, participantCount || 1);
   }
 
+  await cancelPendingFnbOrders(bookingId);
   logger.info('BookingService', `cancelled bookingId=${bookingId} by ${role}`);
 
   // Slot refund: only if package was used AND cancellation is before slot_start (D5 from research.md)
@@ -737,4 +744,14 @@ export async function listCafeBookings(
 
   const [raw, total] = await Promise.all([qb.getRawMany(), qb.getCount()]);
   return { data: raw, total, page: query.page, limit: query.limit };
+}
+
+async function cancelPendingFnbOrders(bookingId: string): Promise<void> {
+  await AppDataSource.query(
+    `UPDATE fnb_orders
+     SET status = 'CANCELLED'
+     WHERE booking_id = $1
+       AND status IN ('PENDING', 'CONFIRMED')`,
+    [bookingId],
+  );
 }
