@@ -4,6 +4,7 @@ import { AppError, FnbOrderType } from '../types';
 import { AppDataSource } from '../config/database';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { generateInvoicePdf } from './invoice-pdf.service';
+import type { InvoiceParticipant } from './invoice-pdf.service';
 import type { BookingSnapshot } from './payment.service';
 
 type SendPasswordResetCodeInput = {
@@ -193,6 +194,33 @@ class EmailService {
 
     const shortRef = bookingId.substring(0, 8).toUpperCase();
 
+    // Lấy danh sách người chơi: ưu tiên user có tài khoản, fallback sang guest
+    type ParticipantRow = {
+      participant_type: string;
+      is_primary_responsible: boolean;
+      guest_name: string | null;
+      guest_phone: string | null;
+      user_full_name: string | null;
+      user_phone: string | null;
+    };
+
+    const participantRows = (await ds.query(
+      `SELECT bp.participant_type, bp.is_primary_responsible,
+              bp.guest_name, bp.guest_phone,
+              u.full_name AS user_full_name, u.phone AS user_phone
+         FROM booking_participants bp
+         LEFT JOIN users u ON u.id = bp.user_id
+        WHERE bp.booking_id = $1
+        ORDER BY bp.is_primary_responsible DESC, bp.created_at ASC`,
+      [bookingId],
+    )) as ParticipantRow[];
+
+    const participants: InvoiceParticipant[] = participantRows.map((p) => ({
+      name: p.user_full_name ?? p.guest_name ?? 'Khách',
+      phone: p.user_phone ?? p.guest_phone ?? null,
+      isPrimary: p.is_primary_responsible,
+    }));
+
     // Build line items from snapshot
     const lineItems: Array<{ description: string; qty: number; unitPrice: number; total: number }> =
       [];
@@ -265,6 +293,7 @@ class EmailService {
       cafePhone: r.cafe_phone,
       customerName: r.customer_name,
       customerEmail: r.customer_email,
+      participants,
       slotStart: new Date(r.slot_start),
       slotEnd: new Date(r.slot_end),
       playMode: r.play_mode,

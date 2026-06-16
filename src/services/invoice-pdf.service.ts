@@ -59,6 +59,12 @@ function formatDateTime(d: Date): string {
   });
 }
 
+export interface InvoiceParticipant {
+  name: string;
+  phone: string | null;
+  isPrimary: boolean; // true = người đặt chính (bên mua)
+}
+
 export interface InvoiceData {
   invoiceNumber: string; // short booking ref
   issuedAt: Date;
@@ -70,6 +76,8 @@ export interface InvoiceData {
   // Buyer
   customerName: string;
   customerEmail: string;
+  // Danh sách người chơi (bao gồm người đặt chính + guest)
+  participants: InvoiceParticipant[];
   // Booking info
   slotStart: Date;
   slotEnd: Date;
@@ -227,6 +235,49 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
         },
         margin: [0, 0, 0, 12],
       },
+
+      // ── Participants list ────────────────────────────────────────────────────
+      ...(data.participants.length > 0
+        ? [
+            { text: 'DANH SÁCH NGƯỜI CHƠI', style: 'label', margin: [0, 0, 0, 4] } as Content,
+            {
+              table: {
+                headerRows: 1,
+                widths: [25, '*', 120],
+                body: [
+                  [
+                    { text: 'STT', style: 'tableHeader', alignment: 'center' } as TableCell,
+                    { text: 'Họ tên', style: 'tableHeader' } as TableCell,
+                    { text: 'Số điện thoại', style: 'tableHeader' } as TableCell,
+                  ],
+                  ...data.participants.map((p, i): TableCell[] => [
+                    { text: String(i + 1), alignment: 'center', fontSize: 9 } as TableCell,
+                    {
+                      stack: [
+                        { text: p.name, fontSize: 9 },
+                        ...(p.isPrimary
+                          ? [{ text: ' (Người đặt)', fontSize: 7, color: '#059669', italics: true }]
+                          : []),
+                      ],
+                    } as TableCell,
+                    { text: p.phone ?? '—', fontSize: 9 } as TableCell,
+                  ]),
+                ],
+              },
+              layout: {
+                hLineColor: () => '#e5e7eb',
+                vLineColor: () => '#e5e7eb',
+                hLineWidth: (i: number) => (i === 0 || i === 1 ? 1 : 0.5),
+                vLineWidth: () => 0.5,
+                paddingLeft: () => 6,
+                paddingRight: () => 6,
+                paddingTop: () => 5,
+                paddingBottom: () => 5,
+              },
+              margin: [0, 0, 0, 12],
+            } as Content,
+          ]
+        : []),
 
       // ── Booking info ────────────────────────────────────────────────────────
       { text: 'THÔNG TIN ĐẶT SÂN', style: 'label', margin: [0, 0, 0, 4] },
