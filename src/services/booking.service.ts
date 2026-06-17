@@ -27,6 +27,7 @@ import {
 } from '../types';
 import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
+import { getEffectiveMultiplier } from './pricing.service';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
@@ -190,6 +191,9 @@ export interface CreateBookingBody {
 
 export interface BookingBreakdown {
   slot_fee: number;
+  slot_fee_base: number;
+  slot_fee_multiplier: number;
+  pricing_rule_label: string | null;
   rental_fee: number;
   security_deposit: number;
   fnb_total: number;
@@ -241,6 +245,9 @@ export async function createBooking(
         ),
         breakdown: {
           slot_fee: 0,
+          slot_fee_base: 0,
+          slot_fee_multiplier: 1,
+          pricing_rule_label: null,
           rental_fee: 0,
           security_deposit: 0,
           fnb_total: 0,
@@ -323,10 +330,17 @@ export async function createBooking(
     }
   }
 
-  const rawSlotFee = Number(cafe.slotFeeRate) * slotCount * playerCount;
+  // Dynamic pricing lookup — multiplier frozen at booking creation time (snapshot-first)
+  const { multiplier: slotMultiplier, label: pricingLabel } = await getEffectiveMultiplier(
+    body.cafe_id,
+    slotStart,
+  );
+
+  const baseSlotFeeRate = Number(cafe.slotFeeRate) * slotMultiplier;
+  const rawSlotFee = baseSlotFeeRate * slotCount * playerCount;
   // Package covers only the booker's slot fee (1 person). Companions still pay.
   const slotFee = customerPackage
-    ? Number(cafe.slotFeeRate) * slotCount * Math.max(0, playerCount - 1)
+    ? baseSlotFeeRate * slotCount * Math.max(0, playerCount - 1)
     : rawSlotFee;
 
   let rentalFeeTotal = 0;
@@ -511,6 +525,10 @@ export async function createBooking(
         };
       }
 
+      // Freeze dynamic pricing at booking creation time (snapshot-first, immutable)
+      snapshot.slot_fee_multiplier = slotMultiplier;
+      snapshot.pricing_rule_label = pricingLabel;
+
       const newBooking = em.create(Booking, {
         customerId,
         cafeId: body.cafe_id,
@@ -610,6 +628,9 @@ export async function createBooking(
       total_amount: totalAmount,
       breakdown: {
         slot_fee: slotFee,
+        slot_fee_base: Number(cafe.slotFeeRate) * slotCount * playerCount,
+        slot_fee_multiplier: slotMultiplier,
+        pricing_rule_label: pricingLabel,
         rental_fee: rentalFeeTotal,
         security_deposit: depositTotal,
         fnb_total: fnbTotal,

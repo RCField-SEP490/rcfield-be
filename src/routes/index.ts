@@ -22,6 +22,7 @@ import { vnpayRouter } from './vnpay.routes';
 import { bookingRouter } from './booking.routes';
 import { bookingController } from '../controllers/booking.controller';
 import { customerPackageRouter } from './customer-package.routes';
+import { pricingRouter } from './pricing.routes';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -118,6 +119,7 @@ router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
 router.use('/', customerPackageRouter);
+router.use('/', pricingRouter);
 router.get(
   '/provider/cafes/:cafeId/bookings',
   authenticate,

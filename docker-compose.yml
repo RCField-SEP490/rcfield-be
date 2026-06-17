@@ -1,3 +1,5 @@
+version: '3.8' # Thêm version nếu file cũ chưa có, hoặc giữ nguyên dòng đầu của bạn
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -42,7 +44,6 @@ services:
       INTENTS_FILE: /app/intents/rcfield.json
     volumes:
       - ./nlu-service/intents:/app/intents:ro
-    # Internal network only — not exposed on host ports
     expose:
       - "8000"
     healthcheck:
@@ -51,6 +52,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # === THÊM SCHEMASPY VÀO ĐÂY ===
+  schemaspy:
+    image: schemaspy/schemaspy:latest
+    container_name: rcfeild_schemaspy
+    depends_on:
+      postgres:
+        condition: service_healthy # Chỉ chạy khi Postgres đã qua vòng healthcheck thành công
+    command: >
+      -t pgsql
+      -host postgres
+      -port 5432
+      -db rcfeild_db
+      -u postgres
+      -p postgres
+    volumes:
+      # Kết quả xuất ra thư mục schemaspy_output nằm ngay cạnh file docker-compose này
+      - ./schemaspy_output:/output
 
 volumes:
   postgres_data:

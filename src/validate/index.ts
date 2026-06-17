@@ -838,3 +838,51 @@ export const ListMyPackagesQuerySchema = z.object({
 export const UpdateFnbOrderStatusSchema = z.object({
   status: z.nativeEnum(FnbOrderStatus),
 });
+
+// ── pricing ───────────────────────────────────────────────────────────────────
+
+const PeakHourInputSchema = z
+  .object({
+    start: z.string().regex(/^\d{2}:\d{2}$/),
+    end: z.string().regex(/^\d{2}:\d{2}$/),
+    multiplier: z.number().min(1.0).max(10.0),
+  })
+  .refine((d) => d.start < d.end, { message: 'start must be before end' });
+
+export const UpdatePricingRulesSchema = z
+  .object({
+    weekend_multiplier: z.number().min(1.0).max(10.0).nullable(),
+    peak_hours: z.array(PeakHourInputSchema).max(5),
+  })
+  .refine(
+    (d) => {
+      const windows = d.peak_hours;
+      for (let i = 0; i < windows.length; i++) {
+        for (let j = i + 1; j < windows.length; j++) {
+          if (windows[i].start < windows[j].end && windows[j].start < windows[i].end) return false;
+        }
+      }
+      return true;
+    },
+    { message: 'Peak hour windows must not overlap' },
+  );
+
+export const PricingPreviewQuerySchema = z.object({
+  slot_start: z.string().datetime({ offset: true }),
+  slot_end: z.string().datetime({ offset: true }),
+});
+
+export const CreateHolidaySchema = z.object({
+  date: z.string().date(),
+  name: z.string().min(1).max(255),
+  multiplier: z.number().min(1.0).max(10.0),
+});
+
+export const UpdateHolidaySchema = z.object({
+  name: z.string().min(1).max(255).optional(),
+  multiplier: z.number().min(1.0).max(10.0),
+});
+
+export const ListHolidaysQuerySchema = z.object({
+  year: z.coerce.number().int().min(2024).max(2099).optional(),
+});

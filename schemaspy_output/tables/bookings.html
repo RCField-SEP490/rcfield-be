@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>bookings - rcfeild_db.public</title>
+        <!-- Tell the browser to be responsive to screen width -->
+        <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
+        <link rel="icon" type="image/png" sizes="16x16" href="../favicon.png">
+        <!-- Bootstrap 3.3.5 -->
+        <link rel="stylesheet" href="../bower/admin-lte/bootstrap/css/bootstrap.min.css">
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="../bower/font-awesome/css/font-awesome.min.css">
+        <!-- Ionicons -->
+        <link rel="stylesheet" href="../bower/ionicons/css/ionicons.min.css">
+        <!-- DataTables -->
+        <link rel="stylesheet" href="../bower/datatables.net-bs/css/dataTables.bootstrap.min.css">
+        <link rel="stylesheet" href="../bower/datatables.net-buttons-bs/css/buttons.bootstrap.min.css">
+        <!-- Code Mirror -->
+        <link rel="stylesheet" href="../bower/codemirror/codemirror.css">
+        <!-- Fonts -->
+        <link href='../fonts/indieflower/indie-flower.css' rel='stylesheet' type='text/css'>
+        <link href='../fonts/source-sans-pro/source-sans-pro.css' rel='stylesheet' type='text/css'>
+
+        <!-- Theme style -->
+        <link rel="stylesheet" href="../bower/admin-lte/dist/css/AdminLTE.min.css">
+        <!-- Salvattore -->
+        <link rel="stylesheet" href="../bower/salvattore/salvattore.css">
+        <!-- AdminLTE Skins. Choose a skin from the css/skins
+           folder instead of downloading all of them to reduce the load. -->
+        <link rel="stylesheet" href="../bower/admin-lte/dist/css/skins/_all-skins.min.css">
+        <!-- SchemaSpy -->
+        <link rel="stylesheet" href="../schemaSpy.css">
+
+        <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+        <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+        <!--[if lt IE 9]>
+        <script src="../bower/html5shiv/html5shiv.min.js"></script>
+        <script src="../bower/respond/respond.min.js"></script>
+        <![endif]-->
+    </head>
+    <!-- ADD THE CLASS layout-top-nav TO REMOVE THE SIDEBAR. -->
+    <body class="hold-transition skin-blue layout-top-nav">
+        <div class="wrapper">
+            <header class="main-header">
+                <nav class="navbar navbar-static-top">
+                    <div class="container">
+                        <div class="navbar-header">
+                            <a href="../index.html" class="navbar-brand"><b>rcfeild_db</b></a><span class="navbar-brand" style="padding-left: 0">.public</span>
+                            <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar-collapse"><i class="fa fa-bars"></i></button>
+                        </div>
+
+                        <!-- Collect the nav links, forms, and other content for toggling -->
+                        <div class="collapse navbar-collapse pull-left" id="navbar-collapse">
+                            <ul class="nav navbar-nav">
+                                <li><a href="../index.html">Tables <span class="sr-only">(current)</span></a></li>
+                                <li><a href="../columns.html" title="All of the columns in the schema">Columns</a></li>
+                                <li><a href="../constraints.html" title="Useful for diagnosing error messages that just give constraint name or number">Constraints</a></li>
+                                <li><a href="../relationships.html" title="Diagram of table relationships">Relationships</a></li>
+                                <li><a href="../orphans.html" title="View of tables with neither parents nor children">Orphan&nbsp;Tables</a></li>
+                                <li><a href="../anomalies.html" title="Things that might not be quite right">Anomalies</a></li>
+                                <li><a href="../routines.html" title="Procedures and functions">Routines</a></li>
+                            </ul>
+                        </div>
+                        <!-- /.navbar-collapse -->
+                        <!-- Navbar Right Menu -->
+                    </div>
+                    <!-- /.container-fluid -->
+                </nav>
+            </header>
+            <!-- Main content -->
+            <!-- Full Width Column -->
+            <div class="content-wrapper">
+                <!-- Content Header (Page header) -->
+                <section class="content-header">
+                    <h1>bookings</h1><p><span id="recordNumber">1</span> rows</p><br />
+                </section>
+                <!-- Main content -->
+                <section class="content">
+                    <div class="box box-primary">
+                        <div class="box-header with-border">
+                            <span class="glyphicon glyphicon-list-alt" aria-hidden="true"></span>
+                            <h3 id="Columns" class="box-title">Columns</h3>
+                            <div class="box-tools pull-right">
+                                <button type="button" class="btn btn-box-tool" data-widget="collapse"><i class="fa fa-minus"></i></button>
+                                <button type="button" class="btn btn-box-tool" data-widget="remove"><i class="fa fa-times"></i></button>
+                            </div>
+                        </div>
+                        <div class="box-body">
+                            <table
+                                    id="standard_table"
+                                    class="table table-bordered table-striped dataTable"
+                                    role="grid"
+                                    data-paging="true"
+                                    data-page-length="10"
+                                    data-length-change="false">
+                                <thead align='left'>
+                                <tr>
+                                    <th>Column</th>
+                                    <th>Type</th>
+                                    <th>Size</th>
+                                    <th title='Are nulls allowed?'>Nulls</th>
+                                    <th title='Is column automatically updated?'>Auto</th>
+                                    <th title='Default value'>Default</th>
+                                    <th title='Columns in tables that reference this column'>Children</th>
+                                    <th title='Columns in tables that are referenced by this column'>Parents</th>
+                                    <th title='Comments' class="toggle"><span>Comments</span></th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <tr>
+                                    <td class='primaryKey' title='Primary Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="id">id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>gen_random_uuid()</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="booking_participants.booking_id references bookings.id via booking_participants_booking_id_fkey"><a href='booking_participants.html'>booking_participants</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">booking_participants_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="booking_vehicles.booking_id references bookings.id via booking_vehicles_booking_id_fkey"><a href='booking_vehicles.html'>booking_vehicles</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">booking_vehicles_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="disputes.booking_id references bookings.id via disputes_booking_id_fkey"><a href='disputes.html'>disputes</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">disputes_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="fnb_orders.booking_id references bookings.id via fnb_orders_booking_id_fkey"><a href='fnb_orders.html'>fnb_orders</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">fnb_orders_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="notification_logs.booking_id references bookings.id via notification_logs_booking_id_fkey"><a href='notification_logs.html'>notification_logs</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">notification_logs_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="package_usages.booking_id references bookings.id via package_usages_booking_id_fkey"><a href='package_usages.html'>package_usages</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">package_usages_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="payment_components.booking_id references bookings.id via payment_components_booking_id_fkey"><a href='payment_components.html'>payment_components</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">payment_components_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="payment_transactions.booking_id references bookings.id via payment_transactions_booking_id_fkey"><a href='payment_transactions.html'>payment_transactions</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">payment_transactions_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="promotion_usages.booking_id references bookings.id via promotion_usages_booking_id_fkey"><a href='promotion_usages.html'>promotion_usages</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">promotion_usages_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="reviews.booking_id references bookings.id via reviews_booking_id_fkey"><a href='reviews.html'>reviews</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">reviews_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="sessions.booking_id references bookings.id via sessions_booking_id_fkey"><a href='sessions.html'>sessions</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">sessions_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="trust_score_logs.booking_id references bookings.id via trust_score_logs_booking_id_fkey"><a href='trust_score_logs.html'>trust_score_logs</a><span class='relatedKey'>.booking_id</span></td>
+                                                <td class="constraint detail">trust_score_logs_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="customer_id">customer_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.customer_id references users.id via bookings_customer_id_fkey"><a href='users.html'>users</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">bookings_customer_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="cafe_id">cafe_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.cafe_id references cafes.id via bookings_cafe_id_fkey"><a href='cafes.html'>cafes</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">bookings_cafe_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="booking_mode">booking_mode</span></td>
+                                    <td>booking_mode_enum</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;SINGLE&#39;::booking_mode_enum</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="source">source</span></td>
+                                    <td>booking_source_enum</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;APP&#39;::booking_source_enum</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="status">status</span></td>
+                                    <td>booking_status_enum</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;PENDING&#39;::booking_status_enum</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="slot_start">slot_start</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="slot_end">slot_end</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="slot_count">slot_count</span></td>
+                                    <td>int4</td>
+                                    <td>10</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>1</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="payment_expires_at">payment_expires_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="snapshot">snapshot</span></td>
+                                    <td>jsonb</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="promotion_id">promotion_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.promotion_id references promotions.id via bookings_promotion_id_fkey"><a href='promotions.html'>promotions</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">bookings_promotion_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="discount_amount">discount_amount</span></td>
+                                    <td>numeric</td>
+                                    <td>15,2</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="notes">notes</span></td>
+                                    <td>text</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="cancelled_by">cancelled_by</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.cancelled_by references users.id via bookings_cancelled_by_fkey"><a href='users.html'>users</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">bookings_cancelled_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="cancelled_at">cancelled_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="cancellation_reason">cancellation_reason</span></td>
+                                    <td>text</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="created_at">created_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>now()</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="updated_at">updated_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>now()</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="play_mode">play_mode</span></td>
+                                    <td>play_mode_enum</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;RENTAL&#39;::play_mode_enum</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="subscription_id">subscription_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.subscription_id references subscriptions.id via fk_bookings_subscription_id"><a href='subscriptions.html'>subscriptions</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">fk_bookings_subscription_id</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="track_type_id">track_type_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="deleted_at">deleted_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="track_config_id">track_config_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.track_config_id references cafe_track_configs.id via bookings_track_config_id_fkey"><a href='cafe_track_configs.html'>cafe_track_configs</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">bookings_track_config_id_fkey</td>
+                                                <td class="constraint detail"><span title='Null on delete:&#10;Foreign key to parent set to NULL when parent deleted'>N</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="customer_package_id">customer_package_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="bookings.customer_package_id references customer_packages.id via bookings_customer_package_id_fkey"><a href='customer_packages.html'>customer_packages</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">bookings_customer_package_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="box box-primary">
+                        <div class="box-header with-border">
+                            <i class="fa fa-sitemap"></i>
+                            <h3 id="Indexes" class="box-title">Indexes</h3>
+                            <div class="box-tools pull-right">
+                                <button type="button" class="btn btn-box-tool" data-widget="collapse"><i class="fa fa-minus"></i></button>
+                                <button type="button" class="btn btn-box-tool" data-widget="remove"><i class="fa fa-times"></i></button>
+                            </div>
+                        </div>
+                        <div class="box-body">
+                            <table
+                                    id="indexes_table"
+                                    class="table table-bordered table-striped dataTable"
+                                    role="grid"
+                                    data-paging="true"
+                                    data-page-length="10"
+                                    data-length-change="false">
+                                <thead>
+                                <tr>
+                                    <th>Constraint Name</th>
+                                    <th>Type</th>
+                                    <th>Sort</th>
+                                    <th>Column(s)</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <tr>
+                                    <td class='primaryKey' title='Primary Key'><i class='icon ion-key iconkey'></i> bookings_pkey</td>
+                                    <td>Primary key</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>id</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_cafe_id</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>cafe_id</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_cafe_slot</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
+                                    <td>cafe_id + track_type_id + slot_start + slot_end</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>IDX_bookings_cafe_status_slot_start</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
+                                    <td>cafe_id + status + slot_start</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_customer_id</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>customer_id</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>IDX_bookings_customer_package_id</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>customer_package_id</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_payment_expires</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>payment_expires_at</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_slot_start</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>slot_start</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_status</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>status</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>IDX_bookings_status_expires</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
+                                    <td>status + payment_expires_at</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_track_config</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>track_config_id</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_bookings_track_type</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
+                                    <td>cafe_id + track_type_id</td>
+                                </tr>
+                                </tbody>
+                            </table>
+                        </div><!-- /.box-body -->
+                    </div>
+                    <div class="box box-primary">
+                        <div class="box-header with-border">
+                            <i class="fa fa-code-fork"></i>
+                            <h3 id="Relationships" class="box-title">Relationships</h3>
+                            <div class="box-tools pull-right">
+                                <button type="button" class="btn btn-box-tool" data-widget="collapse"><i class="fa fa-minus"></i></button>
+                                <button type="button" class="btn btn-box-tool" data-widget="remove"><i class="fa fa-times"></i></button>
+                            </div>
+                        </div>
+                        <div class="box-body">
+                            <div class="nav-tabs-custom"><!-- Tabs within a box -->
+                                <h5>Close relationships within degrees of separation</h5>
+                                <ul class="nav nav-tabs pull-left ui-sortable-handle">
+                                    <li class="active"><a href="#oneDegreeImg-chart" data-toggle="tab" aria-expanded="true">One</a></li>
+                                    <li class=""><a href="#twodegreesDegreeImg-chart" data-toggle="tab" aria-expanded="true">Two degrees</a></li>
+                                </ul>
+                                <div class="tab-content no-padding">
+                                    <div class="chart tab-pane active" id="oneDegreeImg-chart" style="position: relative; overflow-x:auto;">
+                                        <map id="oneDegreeRelationshipsDiagram" name="oneDegreeRelationshipsDiagram">
+<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1533,423,1821,599">
+<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="955,537,1489,1340">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,927,203,1132">
+<area shape="rect" id="node5" href="cafes.html" target="_top" title="cafes" alt="" coords="247,897,576,1249">
+<area shape="rect" id="node6" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="620,1133,911,1397">
+<area shape="rect" id="node7" href="promotions.html" target="_top" title="promotions" alt="" coords="633,1415,898,1649">
+<area shape="rect" id="node8" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="658,645,873,851">
+<area shape="rect" id="node9" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="634,868,897,1044">
+<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="1865,327,2195,532">
+<area shape="rect" id="node10" href="disputes.html" target="_top" title="disputes" alt="" coords="1571,99,1783,333">
+<area shape="rect" id="node11" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="1936,5,2124,240">
+<area shape="rect" id="node12" href="sessions.html" target="_top" title="sessions" alt="" coords="1554,989,1801,1253">
+<area shape="rect" id="node13" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="1907,679,2153,884">
+<area shape="rect" id="node14" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1549,652,1806,828">
+<area shape="rect" id="node15" href="payment_components.html" target="_top" title="payment_components" alt="" coords="1881,1183,2179,1447">
+<area shape="rect" id="node16" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="1880,901,2180,1165">
+<area shape="rect" id="node17" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1546,1588,1809,1793">
+<area shape="rect" id="node18" href="reviews.html" target="_top" title="reviews" alt="" coords="1594,1271,1761,1535">
+<area shape="rect" id="node19" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="1909,1609,2151,1844">
+</map>
+                                        <a name='diagram'><img id="oneDegreeImg" src="../diagrams/tables/bookings.1degree.png" usemap="#oneDegreeRelationshipsDiagram" class="diagram" border="0" align="left"></a>
+                                    </div>
+                                    <div class="chart tab-pane " id="twodegreesDegreeImg-chart" style="position: relative; overflow-x:auto;">
+                                        <map id="twoDegreesRelationshipsDiagram" name="twoDegreesRelationshipsDiagram">
+<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1823,550,2111,638">
+<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="1244,1411,1779,2214">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1940,141,2028">
+<area shape="rect" id="node6" href="cafes.html" target="_top" title="cafes" alt="" coords="265,1344,417,1432">
+<area shape="rect" id="node7" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="909,1663,1185,1751">
+<area shape="rect" id="node8" href="promotions.html" target="_top" title="promotions" alt="" coords="950,2126,1145,2214">
+<area shape="rect" id="node9" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="588,1804,803,1892">
+<area shape="rect" id="node10" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="916,1984,1179,2072">
+<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="2198,700,2449,788">
+<area shape="rect" id="node5" href="vehicles.html" target="_top" title="vehicles" alt="" coords="966,848,1129,936">
+<area shape="rect" id="node55" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="573,884,817,972">
+<area shape="rect" id="node22" href="packages.html" target="_top" title="packages" alt="" coords="607,1663,783,1751">
+<area shape="rect" id="node17" href="track_types.html" target="_top" title="track_types" alt="" coords="597,1982,793,2070">
+<area shape="rect" id="node11" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="551,532,840,620">
+<area shape="rect" id="node12" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="588,638,803,726">
+<area shape="rect" id="node13" href="cafe_holiday_overrides.html" target="_top" title="cafe_holiday_overrides" alt="" coords="895,1182,1200,1270">
+<area shape="rect" id="node14" href="holiday_dates.html" target="_top" title="holiday_dates" alt="" coords="587,1308,804,1396">
+<area shape="rect" id="node15" href="cafe_images.html" target="_top" title="cafe_images" alt="" coords="593,1203,797,1291">
+<area shape="rect" id="node16" href="cafe_pricing_rules.html" target="_top" title="cafe_pricing_rules" alt="" coords="566,1450,825,1538">
+<area shape="rect" id="node18" href="cafe_widget_configs.html" target="_top" title="cafe_widget_configs" alt="" coords="555,1062,835,1150">
+<area shape="rect" id="node19" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1365,372,1657,460">
+<area shape="rect" id="node20" href="contests.html" target="_top" title="contests" alt="" coords="612,339,779,427">
+<area shape="rect" id="node21" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="916,231,1179,319">
+<area shape="rect" id="node23" href="disputes.html" target="_top" title="disputes" alt="" coords="1883,143,2050,231">
+<area shape="rect" id="node24" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="2182,10,2465,98">
+<area shape="rect" id="node25" href="sessions.html" target="_top" title="sessions" alt="" coords="1883,991,2050,1079">
+<area shape="rect" id="node26" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="235,1743,447,1831">
+<area shape="rect" id="node27" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="2538,1440,2778,1528">
+<area shape="rect" id="node28" href="menu_items.html" target="_top" title="menu_items" alt="" coords="1411,1167,1612,1255">
+<area shape="rect" id="node29" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="2229,1768,2417,1856">
+<area shape="rect" id="node30" href="incidents.html" target="_top" title="incidents" alt="" coords="2237,115,2410,203">
+<area shape="rect" id="node31" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="3063,2702,3324,2790">
+<area shape="rect" id="node32" href="inspections.html" target="_top" title="inspections" alt="" coords="2824,2111,3019,2199">
+<area shape="rect" id="node33" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2536,635,2780,723">
+<area shape="rect" id="node48" href="session_participants.html" target="_top" title="session_participants" alt="" coords="2182,572,2465,660">
+<area shape="rect" id="node34" href="kb_chunks.html" target="_top" title="kb_chunks" alt="" coords="955,743,1140,831">
+<area shape="rect" id="node35" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="583,743,807,831">
+<area shape="rect" id="node36" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="2201,1451,2446,1539">
+<area shape="rect" id="node37" href="notifications.html" target="_top" title="notifications" alt="" coords="237,2064,444,2152">
+<area shape="rect" id="node38" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1838,1522,2095,1698">
+<area shape="rect" id="node39" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="185,2170,496,2258">
+<area shape="rect" id="node40" href="payment_components.html" target="_top" title="payment_components" alt="" coords="2175,1663,2472,1751">
+<area shape="rect" id="node41" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="209,2311,473,2399">
+<area shape="rect" id="node42" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="2173,1240,2473,1328">
+<area shape="rect" id="node43" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1835,2162,2098,2250">
+<area shape="rect" id="node44" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="216,2468,465,2556">
+<area shape="rect" id="node45" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="187,2574,494,2662">
+<area shape="rect" id="node46" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="226,2679,455,2767">
+<area shape="rect" id="node47" href="reviews.html" target="_top" title="reviews" alt="" coords="1887,1308,2046,1396">
+<area shape="rect" id="node49" href="shift_positions.html" target="_top" title="shift_positions" alt="" coords="228,2836,453,2924">
+<area shape="rect" id="node50" href="shift_time_presets.html" target="_top" title="shift_time_presets" alt="" coords="209,2978,472,3066">
+<area shape="rect" id="node51" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="540,2387,851,2475">
+<area shape="rect" id="node52" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="207,3135,475,3223">
+<area shape="rect" id="node53" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="599,2755,791,2843">
+<area shape="rect" id="node54" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="2203,2559,2444,2647">
+<area shape="rect" id="node56" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="2155,848,2492,936">
+</map>
+                                        <a name='diagram'><img id="twodegreesDegreeImg" src="../diagrams/tables/bookings.2degrees.png" usemap="#twoDegreesRelationshipsDiagram" class="diagram" border="0" align="left"></a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div><!-- /.box-body -->
+                    </div>
+                </section>
+                <script>
+                    var config = {
+                        pagination: true
+                    }
+                </script>
+            </div>
+            <!-- /.content-wrapper -->
+            <footer class="main-footer">
+                <div>
+                    <div class="pull-right hidden-xs">
+                        <a href="https://github.com/schemaspy/schemaspy" title="GitHub for SchemaSpy"><i class="fa fa-github-square fa-2x"></i></a>
+                        <a href="http://stackoverflow.com/questions/tagged/schemaspy" title="StackOverflow for SchemaSpy"><i class="fa fa-stack-overflow fa-2x"></i></a>
+                    </div>
+                    <strong>Generated by <a href="http://schemaspy.org/" class="logo-text"><i class="fa fa-database"></i> SchemaSpy 7.0.2</a></strong>
+                </div>
+                <!-- /.container -->
+            </footer>
+        </div>
+        <!-- ./wrapper -->
+
+        <!-- jQuery 2.2.3 -->
+        <script src="../bower/admin-lte/plugins/jQuery/jquery-2.2.3.min.js"></script>
+        <script src="../bower/admin-lte/plugins/jQueryUI/jquery-ui.min.js"></script>
+        <!-- Bootstrap 3.3.5 -->
+        <script src="../bower/admin-lte/bootstrap/js/bootstrap.min.js"></script>
+        <!-- DataTables -->
+        <script src="../bower/datatables.net/jquery.dataTables.min.js"></script>
+        <script src="../bower/datatables.net-bs/js/dataTables.bootstrap.min.js"></script>
+        <script src="../bower/datatables.net-buttons/dataTables.buttons.min.js"></script>
+        <script src="../bower/datatables.net-buttons-bs/js/buttons.bootstrap.min.js"></script>
+        <script src="../bower/datatables.net-buttons/buttons.html5.min.js"></script>
+        <script src="../bower/datatables.net-buttons/buttons.print.min.js"></script>
+        <script src="../bower/datatables.net-buttons/buttons.colVis.min.js"></script>
+        <!-- SheetJS -->
+        <script src="../bower/js-xlsx/xlsx.full.min.js"></script>
+        <!-- pdfmake -->
+        <script src="../bower/pdfmake/pdfmake.min.js"></script>
+        <script src="../bower/pdfmake/vfs_fonts.js"></script>
+        <!-- SlimScroll -->
+        <script src="../bower/admin-lte/plugins/slimScroll/jquery.slimscroll.min.js"></script>
+        <!-- FastClick -->
+        <script src="../bower/admin-lte/plugins/fastclick/fastclick.js"></script>
+        <!-- Salvattore -->
+        <script src="../bower/salvattore/salvattore.min.js"></script>
+        <!-- AnchorJS -->
+        <script src="../bower/anchor-js/anchor.min.js"></script>
+        <!-- CodeMirror -->
+        <script src="../bower/codemirror/codemirror.js"></script>
+        <script src="../bower/codemirror/sql.js"></script>
+        <!-- AdminLTE App -->
+        <script src="../bower/admin-lte/dist/js/app.min.js"></script>
+        <script src="table.js"></script>
+        <script src="../schemaSpy.js"></script>
+    </body>
+</html>

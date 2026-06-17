@@ -231,6 +231,18 @@ export enum NotificationType {
   PAYMENT_REQUEST_REJECTED = 'PAYMENT_REQUEST_REJECTED',
 }
 
+// ── Pricing ───────────────────────────────────────────────────────────────────
+
+export enum PricingRuleType {
+  WEEKEND = 'WEEKEND',
+  PEAK_HOURS = 'PEAK_HOURS',
+}
+
+export enum HolidayType {
+  SYSTEM = 'SYSTEM',
+  CUSTOM = 'CUSTOM',
+}
+
 // ── Express extensions ────────────────────────────────────────────────────────
 
 import { Request } from 'express';

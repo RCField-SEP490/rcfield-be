@@ -1,0 +1,1897 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<database name="rcfeild_db" schema="public" type="PostgreSQL - 16.11 (Debian 16.11-1.pgdg12+1)">
+   <sequences>
+      <sequence increment="1" name="migrations_id_seq" startValue="1"/>
+   </sequences>
+   <tables>
+      <table name="amenity_catalog" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="title" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="icon" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="4" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="amenity_catalog_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+      </table>
+      <table name="booking_participants" numRows="3" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="assigned_to_participant_id" foreignKey="booking_vehicles_assigned_to_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_vehicles"/>
+            <child column="booking_participant_id" foreignKey="session_participants_booking_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_participants"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="booking_participants_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="user_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="booking_participants_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="participant_type" nullable="false" remarks="" size="2147483647" type="participant_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="display_name" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="phone" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="6" name="is_primary_responsible" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="guest_name" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="guest_phone" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="booking_participants_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_booking_participants_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+      </table>
+      <table name="booking_vehicles" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="booking_vehicle_id" foreignKey="session_vehicles_booking_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="booking_vehicles_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="vehicle_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="booking_vehicles_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="assigned_to_participant_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="booking_vehicles_assigned_to_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_participants"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="hourly_rate_snapshot" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="security_deposit_snapshot" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="6" name="damage_multiplier_snapshot" nullable="false" remarks="" size="4" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="8" name="rental_fee_snapshot" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="booking_vehicles_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_booking_vehicles_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_booking_vehicles_unique" unique="true">
+            <column ascending="true" name="booking_id"/>
+            <column ascending="true" name="vehicle_id"/>
+         </index>
+         <index name="IDX_booking_vehicles_vehicle_booking_id" unique="false">
+            <column ascending="true" name="vehicle_id"/>
+            <column ascending="true" name="booking_id"/>
+         </index>
+      </table>
+      <table name="bookings" numRows="1" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="booking_id" foreignKey="booking_participants_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="booking_participants"/>
+            <child column="booking_id" foreignKey="booking_vehicles_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="booking_vehicles"/>
+            <child column="booking_id" foreignKey="disputes_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="disputes"/>
+            <child column="booking_id" foreignKey="fnb_orders_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
+            <child column="booking_id" foreignKey="notification_logs_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="notification_logs"/>
+            <child column="booking_id" foreignKey="package_usages_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="package_usages"/>
+            <child column="booking_id" foreignKey="payment_components_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_components"/>
+            <child column="booking_id" foreignKey="payment_transactions_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_transactions"/>
+            <child column="booking_id" foreignKey="promotion_usages_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotion_usages"/>
+            <child column="booking_id" foreignKey="reviews_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="reviews"/>
+            <child column="booking_id" foreignKey="sessions_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+            <child column="booking_id" foreignKey="trust_score_logs_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="customer_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="bookings_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="bookings_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'SINGLE'::booking_mode_enum" digits="0" id="3" name="booking_mode" nullable="false" remarks="" size="2147483647" type="booking_mode_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'APP'::booking_source_enum" digits="0" id="4" name="source" nullable="false" remarks="" size="2147483647" type="booking_source_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::booking_status_enum" digits="0" id="5" name="status" nullable="false" remarks="" size="2147483647" type="booking_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="slot_start" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="slot_end" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="1" digits="0" id="8" name="slot_count" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="payment_expires_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="snapshot" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="promotion_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="bookings_promotion_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="12" name="discount_amount" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="14" name="cancelled_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="bookings_cancelled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="15" name="cancelled_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="16" name="cancellation_reason" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="17" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="18" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'RENTAL'::play_mode_enum" digits="0" id="19" name="play_mode" nullable="false" remarks="" size="2147483647" type="play_mode_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="20" name="subscription_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_bookings_subscription_id" implied="false" onDeleteCascade="false" schema="public" table="subscriptions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="21" name="track_type_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="22" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="23" name="track_config_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="bookings_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_track_configs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="24" name="customer_package_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="bookings_customer_package_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="bookings_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_bookings_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_bookings_cafe_slot" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="track_type_id"/>
+            <column ascending="true" name="slot_start"/>
+            <column ascending="true" name="slot_end"/>
+         </index>
+         <index name="IDX_bookings_cafe_status_slot_start" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="status"/>
+            <column ascending="true" name="slot_start"/>
+         </index>
+         <index name="idx_bookings_customer_id" unique="false">
+            <column ascending="true" name="customer_id"/>
+         </index>
+         <index name="IDX_bookings_customer_package_id" unique="false">
+            <column ascending="true" name="customer_package_id"/>
+         </index>
+         <index name="idx_bookings_payment_expires" unique="false">
+            <column ascending="true" name="payment_expires_at"/>
+         </index>
+         <index name="idx_bookings_slot_start" unique="false">
+            <column ascending="true" name="slot_start"/>
+         </index>
+         <index name="idx_bookings_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="IDX_bookings_status_expires" unique="false">
+            <column ascending="true" name="status"/>
+            <column ascending="true" name="payment_expires_at"/>
+         </index>
+         <index name="idx_bookings_track_config" unique="false">
+            <column ascending="true" name="track_config_id"/>
+         </index>
+         <index name="idx_bookings_track_type" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="track_type_id"/>
+         </index>
+      </table>
+      <table name="cafe_announcements" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_announcements_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="title" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="content" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="starts_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="ends_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="7" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_announcements_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafe_announcements_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_cafe_announcements_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="is_active"/>
+            <column ascending="false" name="starts_at"/>
+         </index>
+      </table>
+      <table name="cafe_channels" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="channel_type" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'CONNECTED'::character varying" digits="0" id="3" name="status" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="page_id" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="page_name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="encrypted_page_token" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="connected_at" nullable="false" remarks="" size="29" type="timestamp" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="29" type="timestamp" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="29" type="timestamp" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="29" type="timestamp" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafe_channels_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_cafe_channels_page_id" unique="false">
+            <column ascending="true" name="page_id"/>
+         </index>
+         <index name="uq_cafe_channels_cafe_type" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="channel_type"/>
+         </index>
+      </table>
+      <table name="cafe_closures" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_closures_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="closed_date" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="reason" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_closures_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafe_closures_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_cafe_closures_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_cafe_closures_date" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="closed_date"/>
+         </index>
+      </table>
+      <table name="cafe_holiday_overrides" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_cafe_holiday_overrides_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="holiday_date_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_cafe_holiday_overrides_holiday" implied="false" onDeleteCascade="false" schema="public" table="holiday_dates"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="multiplier" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="pk_cafe_holiday_overrides" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_cafe_holiday_overrides_cafe" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="uq_cafe_holiday_overrides" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="holiday_date_id"/>
+         </index>
+         <checkConstraint constraint="((multiplier &gt;= 1.0))" name="cafe_holiday_overrides_multiplier_check"/>
+      </table>
+      <table name="cafe_images" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_images_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="url" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="3" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="public_id" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafe_images_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_cafe_images_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="cafe_pricing_rules" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_cafe_pricing_rules_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="rule_type" nullable="false" remarks="" size="2147483647" type="pricing_rule_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="multiplier" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="4" name="peak_start_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="peak_end_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="6" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="pk_cafe_pricing_rules" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_cafe_pricing_rules_cafe" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="rule_type"/>
+            <column ascending="true" name="is_active"/>
+         </index>
+         <index name="IDX_cafe_pricing_rules_cafe_deleted" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="deleted_at"/>
+         </index>
+         <index name="IDX_cafe_pricing_rules_weekend_unique" unique="true">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <checkConstraint constraint="((multiplier &gt;= 1.0))" name="cafe_pricing_rules_multiplier_check"/>
+      </table>
+      <table name="cafe_track_configs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="track_config_id" foreignKey="bookings_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_track_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="track_type_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_track_configs_track_type_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="track_types"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="byoc_capacity" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="4" name="images" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="6" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="7" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="10" digits="0" id="11" name="max_concurrent" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafe_track_configs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_cafe_track_configs_cafe" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_cafe_track_configs_unique_active" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="track_type_id"/>
+         </index>
+         <checkConstraint constraint="(((max_concurrent &gt; 0) OR (byoc_capacity &gt; 0)))" name="track_has_at_least_one_mode"/>
+      </table>
+      <table name="cafe_widget_configs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafe_widget_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'#1a73e8'::character varying" digits="0" id="2" name="primary_color" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'BOTTOM_RIGHT'::widget_position_enum" digits="0" id="3" name="position" nullable="false" remarks="" size="2147483647" type="widget_position_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="avatar_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'Xin chào! Tôi có thể giúp gì cho bạn?'::text" digits="0" id="5" name="welcome_message" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'[]'::jsonb" digits="0" id="6" name="quick_replies" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="greeting_message" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="8" name="is_enabled" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="system_prompt" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="12" name="full_page_enabled" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafe_widget_configs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="cafe_widget_configs_cafe_id_key" unique="true">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_cafe_widget_configs_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="cafes" numRows="4" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="cafe_id" foreignKey="bookings_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="cafe_id" foreignKey="cafe_announcements_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_announcements"/>
+            <child column="cafe_id" foreignKey="cafe_closures_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_closures"/>
+            <child column="cafe_id" foreignKey="fk_cafe_holiday_overrides_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafe_holiday_overrides"/>
+            <child column="cafe_id" foreignKey="cafe_images_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafe_images"/>
+            <child column="cafe_id" foreignKey="fk_cafe_pricing_rules_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafe_pricing_rules"/>
+            <child column="cafe_id" foreignKey="cafe_track_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafe_track_configs"/>
+            <child column="cafe_id" foreignKey="cafe_widget_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafe_widget_configs"/>
+            <child column="cafe_id" foreignKey="contests_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+            <child column="cafe_id" foreignKey="fk_customer_packages_cafe" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
+            <child column="cafe_id" foreignKey="fk_holiday_dates_cafe" implied="false" onDeleteCascade="false" schema="public" table="holiday_dates"/>
+            <child column="cafe_id" foreignKey="kb_chunks_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="kb_chunks"/>
+            <child column="cafe_id" foreignKey="kb_documents_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="kb_documents"/>
+            <child column="cafe_id" foreignKey="menu_items_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="menu_items"/>
+            <child column="cafe_id" foreignKey="packages_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="packages"/>
+            <child column="cafe_id" foreignKey="promotions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotions"/>
+            <child column="cafe_id" foreignKey="reviews_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="reviews"/>
+            <child column="cafe_id" foreignKey="sessions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+            <child column="cafe_id" foreignKey="staff_cafe_assignments_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_cafe_assignments"/>
+            <child column="cafe_id" foreignKey="fk_staff_shifts_cafe" implied="false" onDeleteCascade="true" schema="public" table="staff_shifts"/>
+            <child column="cafe_id" foreignKey="subscriptions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="subscriptions"/>
+            <child column="cafe_id" foreignKey="vehicle_catalogs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicle_catalogs"/>
+            <child column="cafe_id" foreignKey="vehicles_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="cafes_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="slug" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="phone" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::cafe_status_enum" digits="0" id="6" name="status" nullable="false" remarks="" size="2147483647" type="cafe_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="cover_image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="address" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="district" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="city" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="7" id="11" name="latitude" nullable="true" remarks="" size="10" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="7" id="12" name="longitude" nullable="true" remarks="" size="10" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="13" name="operating_hours" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="60" digits="0" id="14" name="slot_duration_minutes" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="15" name="slot_fee_rate" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="10" digits="0" id="16" name="max_concurrent_bookings" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="60" digits="0" id="17" name="min_booking_notice_minutes" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="5" digits="0" id="18" name="byoc_capacity" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="19" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="20" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="21" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'{}'::uuid[]" digits="0" id="22" name="amenity_ids" nullable="false" remarks="" size="2147483647" type="_uuid" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="23" name="rules" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="'{}'::uuid[]" digits="0" id="24" name="track_types" nullable="false" remarks="" size="2147483647" type="_uuid" typeCode="2003"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="cafes_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_cafes_city_district" unique="false">
+            <column ascending="true" name="city"/>
+            <column ascending="true" name="district"/>
+         </index>
+         <index name="idx_cafes_deleted_at" unique="false">
+            <column ascending="true" name="deleted_at"/>
+         </index>
+         <index name="idx_cafes_location" unique="false">
+            <column ascending="true" name="latitude"/>
+            <column ascending="true" name="longitude"/>
+         </index>
+         <index name="idx_cafes_not_deleted" unique="false">
+            <column ascending="true" name="provider_id"/>
+         </index>
+         <index name="idx_cafes_provider_id" unique="false">
+            <column ascending="true" name="provider_id"/>
+         </index>
+         <index name="idx_cafes_slug" unique="true">
+            <column ascending="true" name="slug"/>
+         </index>
+         <index name="idx_cafes_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="contest_registrations" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="vehicle_source" nullable="false" remarks="" size="2147483647" type="vehicle_source_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="customer_vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_customer_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'PENDING'::contest_registration_status_enum" digits="0" id="6" name="status" nullable="false" remarks="" size="2147483647" type="contest_registration_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_registrations_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_registrations_contest_id" unique="false">
+            <column ascending="true" name="contest_id"/>
+         </index>
+         <index name="idx_contest_registrations_unique" unique="true">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="contests" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_id" foreignKey="contest_registrations_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contests_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="track_type" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="vehicle_rule" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="starts_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="ends_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="capacity" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="9" name="entry_fee" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="'DRAFT'::contest_status_enum" digits="0" id="10" name="status" nullable="false" remarks="" size="2147483647" type="contest_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contests_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="12" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="13" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contests_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contests_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_contests_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="customer_packages" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="customer_package_id" foreignKey="bookings_customer_package_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="customer_package_id" foreignKey="payment_transactions_customer_package_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_transactions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="customer_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_customer_packages_customer" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="package_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_customer_packages_package" implied="false" onDeleteCascade="false" schema="public" table="packages"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_customer_packages_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="slots_total" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="slots_remaining" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="expires_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'PENDING_PAYMENT'::character varying" digits="0" id="7" name="status" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="8" name="purchased_price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="package_name_snapshot" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="pk_customer_packages" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_customer_packages_cafe_id_status" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="IDX_customer_packages_customer_id" unique="false">
+            <column ascending="true" name="customer_id"/>
+         </index>
+         <index name="IDX_customer_packages_status_expires_at" unique="false">
+            <column ascending="true" name="status"/>
+            <column ascending="true" name="expires_at"/>
+         </index>
+         <checkConstraint constraint="((slots_remaining &gt;= 0))" name="customer_packages_slots_remaining_check"/>
+      </table>
+      <table name="customer_vehicles" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="customer_vehicle_id" foreignKey="contest_registrations_customer_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="customer_vehicle_id" foreignKey="session_vehicles_customer_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="customer_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="customer_vehicles_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="brand" nullable="true" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="model" nullable="true" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="serial_number" nullable="true" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="customer_vehicles_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_customer_vehicles_customer_id" unique="false">
+            <column ascending="true" name="customer_id"/>
+         </index>
+      </table>
+      <table name="disputes" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="disputes_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="opened_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="disputes_opened_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="reason" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="4" name="evidence_photos" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="'OPEN'::dispute_status_enum" digits="0" id="5" name="status" nullable="false" remarks="" size="2147483647" type="dispute_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="resolution" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="resolution_favor" nullable="true" remarks="" size="2147483647" type="dispute_favor_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="resolved_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="disputes_resolved_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="resolved_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="disputes_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="disputes_booking_id_key" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_disputes_booking_id" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_disputes_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="extension_proposals" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="proposed_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="extension_proposals_proposed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="duration_minutes" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="fee_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::extension_proposal_status_enum" digits="0" id="4" name="status" nullable="false" remarks="" size="2147483647" type="extension_proposal_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="responded_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="extension_proposals_responded_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="responded_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="session_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="extension_proposals_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="extension_proposals_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_extension_proposals_session_id" unique="false">
+            <column ascending="true" name="session_id"/>
+         </index>
+      </table>
+      <table name="feature_flags" numRows="10" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="feature_key" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="display_name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="4" name="is_enabled" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="5" name="is_trial" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="trial_ends_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="enabled_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="feature_flags_enabled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="enabled_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'GLOBAL'::character varying" digits="0" id="12" name="entity_type" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="entity_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="14" name="config" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="feature_flags_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_feature_flags_enabled" unique="false">
+            <column ascending="true" name="is_enabled"/>
+         </index>
+         <index name="idx_feature_flags_entity" unique="false">
+            <column ascending="true" name="entity_type"/>
+            <column ascending="true" name="entity_id"/>
+         </index>
+         <index name="idx_feature_flags_global_key" unique="true">
+            <column ascending="true" name="feature_key"/>
+         </index>
+         <index name="idx_feature_flags_key_entity" unique="true">
+            <column ascending="true" name="feature_key"/>
+            <column ascending="true" name="entity_id"/>
+         </index>
+      </table>
+      <table name="fnb_order_items" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="order_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fnb_order_items_order_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="menu_item_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fnb_order_items_menu_item_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="menu_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="quantity" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="unit_price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="item_name_snapshot" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="fnb_order_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="8" name="subtotal" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="fnb_order_items_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_fnb_order_items_fnb_order_id" unique="false">
+            <column ascending="true" name="fnb_order_id"/>
+         </index>
+         <index name="idx_fnb_order_items_order_id" unique="false">
+            <column ascending="true" name="order_id"/>
+         </index>
+         <checkConstraint constraint="((quantity &gt; 0))" name="fnb_order_items_quantity_check"/>
+      </table>
+      <table name="fnb_orders" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="order_id" foreignKey="fnb_order_items_order_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_order_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fnb_orders_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="2147483647" type="fnb_order_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::fnb_order_status_enum" digits="0" id="3" name="status" nullable="false" remarks="" size="2147483647" type="fnb_order_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="4" name="total_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="created_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fnb_orders_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="confirmed_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fnb_orders_confirmed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="confirmed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fnb_orders_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="order_type" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="fnb_orders_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_fnb_orders_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_fnb_orders_preorder" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_fnb_orders_session_id" unique="false">
+            <column ascending="true" name="session_id"/>
+         </index>
+      </table>
+      <table name="holiday_dates" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="holiday_date_id" foreignKey="fk_cafe_holiday_overrides_holiday" implied="false" onDeleteCascade="false" schema="public" table="cafe_holiday_overrides"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_holiday_dates_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="holiday_date" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="multiplier" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="holiday_type" nullable="false" remarks="" size="2147483647" type="holiday_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="pk_holiday_dates" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_holiday_dates_cafe_date" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="holiday_date"/>
+         </index>
+         <index name="IDX_holiday_dates_custom_unique" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="holiday_date"/>
+         </index>
+         <index name="IDX_holiday_dates_system" unique="false">
+            <column ascending="true" name="holiday_type"/>
+            <column ascending="true" name="holiday_date"/>
+         </index>
+         <checkConstraint constraint="((multiplier &gt;= 1.0))" name="holiday_dates_multiplier_check"/>
+      </table>
+      <table name="incidents" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="session_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="incidents_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="reported_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="incidents_reported_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="type" nullable="false" remarks="" size="2147483647" type="incident_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'RECORDED'::incident_status_enum" digits="0" id="4" name="status" nullable="false" remarks="" size="2147483647" type="incident_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="occurred_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="description" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="7" name="estimated_amount" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="'UNKNOWN'::responsible_party_enum" digits="0" id="8" name="responsible_party" nullable="false" remarks="" size="2147483647" type="responsible_party_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="9" name="final_amount" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="resolution_note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="resolved_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="incidents_resolved_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="12" name="resolved_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="13" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="14" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="incidents_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_incidents_session_id" unique="false">
+            <column ascending="true" name="session_id"/>
+         </index>
+         <index name="idx_incidents_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="inspection_checklists" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="inspection_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="inspection_checklists_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspections"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="item_key" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="item_label" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="status" nullable="false" remarks="" size="2147483647" type="inspection_item_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="inspection_checklists_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_inspection_checklists_inspection_id" unique="false">
+            <column ascending="true" name="inspection_id"/>
+         </index>
+      </table>
+      <table name="inspection_photos" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="inspection_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="inspection_photos_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspections"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="angle" nullable="false" remarks="" size="2147483647" type="photo_angle_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="url" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="uploaded_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="inspection_photos_uploaded_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="metadata" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="inspection_photos_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_inspection_photos_inspection_id" unique="false">
+            <column ascending="true" name="inspection_id"/>
+         </index>
+      </table>
+      <table name="inspections" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="inspection_id" foreignKey="inspection_checklists_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspection_checklists"/>
+            <child column="inspection_id" foreignKey="inspection_photos_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspection_photos"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="session_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="inspections_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="session_vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="inspections_session_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="type" nullable="false" remarks="" size="2147483647" type="inspection_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="subject_type" nullable="false" remarks="" size="2147483647" type="inspection_subject_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="performed_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="inspections_performed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="6" name="pre_existing_flag" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="7" name="damage_noted" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="damage_description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="9" name="damage_cost_estimate" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="ai_analysis_json" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="11" name="customer_confirmed" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="12" name="customer_confirmed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="13" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="14" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="inspections_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_inspections_session_id" unique="false">
+            <column ascending="true" name="session_id"/>
+         </index>
+      </table>
+      <table name="kb_chunks" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="kb_chunks_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="document_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="kb_chunks_document_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="kb_documents"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="chunk_text" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="chunk_index" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="embedding" nullable="true" remarks="" size="2147483647" type="vector" typeCode="1111"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="kb_chunks_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_kb_chunks_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_kb_chunks_document_id" unique="false">
+            <column ascending="true" name="document_id"/>
+         </index>
+      </table>
+      <table name="kb_documents" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="document_id" foreignKey="kb_chunks_document_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="kb_chunks"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="kb_documents_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="title" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="original_filename" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'CUSTOM'::kb_content_type_enum" digits="0" id="4" name="content_type" nullable="false" remarks="" size="2147483647" type="kb_content_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="raw_content" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::kb_document_status_enum" digits="0" id="6" name="status" nullable="false" remarks="" size="2147483647" type="kb_document_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="kb_documents_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="kb_documents_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_kb_documents_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_kb_documents_status" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="menu_items" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="menu_item_id" foreignKey="fnb_order_items_menu_item_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_order_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="menu_items_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="category" nullable="true" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="7" name="is_available" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="menu_items_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_menu_items_available" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="is_available"/>
+         </index>
+         <index name="idx_menu_items_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="migrations" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="true" defaultValue="nextval('migrations_id_seq'::regclass)" digits="0" id="0" name="id" nullable="false" remarks="" size="10" type="serial" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="timestamp" nullable="false" remarks="" size="19" type="int8" typeCode="-5"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="2147483647" type="varchar" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="PK_8c82d7f526340ab734260ea46be" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+      </table>
+      <table name="notification_logs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="notification_logs_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="booking_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="notification_logs_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="type" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="channel" nullable="false" remarks="" size="2147483647" type="notification_channel_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="title" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="body" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::notification_status_enum" digits="0" id="7" name="status" nullable="false" remarks="" size="2147483647" type="notification_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="error" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="sent_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="notification_logs_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="notification_logs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_notification_logs_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_notification_logs_user_id" unique="false">
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="notifications" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="notifications_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="2147483647" type="notification_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="title" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="message" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="read_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="notifications_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_notifications_user_read_at" unique="false">
+            <column ascending="true" name="user_id"/>
+            <column ascending="true" name="read_at"/>
+         </index>
+      </table>
+      <table name="package_usages" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="customer_package_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="package_usages_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="1" digits="0" id="3" name="used_slots" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="package_usages_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_package_usages_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_package_usages_customer_package_id" unique="false">
+            <column ascending="true" name="customer_package_id"/>
+         </index>
+      </table>
+      <table name="packages" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="package_id" foreignKey="fk_customer_packages_package" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="packages_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="slot_count" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="valid_days" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="7" name="applicable_play_modes" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="'ACTIVE'::package_status_enum" digits="0" id="8" name="status" nullable="false" remarks="" size="2147483647" type="package_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="11" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="code" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'MONTH'::package_billing_period_enum" digits="0" id="13" name="billing_period" nullable="false" remarks="" size="2147483647" type="package_billing_period_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="14" name="benefits" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="15" name="is_popular" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="packages_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_packages_cafe_code_active" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="code"/>
+         </index>
+         <index name="idx_packages_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="password_reset_tokens" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="password_reset_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="token" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="3" name="expires_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="4" name="used_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="password_reset_tokens_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="password_reset_tokens_token_key" unique="true">
+            <column ascending="true" name="token"/>
+         </index>
+      </table>
+      <table name="payment_components" numRows="2" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_components_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="2147483647" type="payment_component_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::payment_component_status_enum" digits="0" id="4" name="status" nullable="false" remarks="" size="2147483647" type="payment_component_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="disbursed_to" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_components_disbursed_to_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="disbursed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="refunded_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="8" name="refunded_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_components_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="booking_vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="payment_components_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_payment_components_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="IDX_payment_components_booking_id_type" unique="false">
+            <column ascending="true" name="booking_id"/>
+            <column ascending="true" name="type"/>
+         </index>
+         <index name="idx_payment_components_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="payment_requests" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_requests_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="plan_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_requests_plan_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="subscription_plans"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'PENDING'::payment_request_status_enum" digits="0" id="3" name="status" nullable="false" remarks="" size="2147483647" type="payment_request_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="transfer_reference" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="transfer_date" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="6" name="transfer_amount" nullable="false" remarks="" size="12" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="admin_notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="reviewed_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_requests_reviewed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="reviewed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="12" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="payment_requests_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+      </table>
+      <table name="payment_transactions" numRows="18" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_transactions_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="gateway" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="gateway_transaction_id" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="type" nullable="false" remarks="" size="2147483647" type="payment_transaction_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="status" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="raw_request" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="raw_response" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_transactions_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="txn_ref" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="12" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="customer_package_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_transactions_customer_package_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="payment_transactions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_payment_transactions_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="IDX_payment_transactions_customer_package_id" unique="false">
+            <column ascending="true" name="customer_package_id"/>
+         </index>
+         <index name="idx_payment_transactions_gateway_txn" unique="false">
+            <column ascending="true" name="gateway_transaction_id"/>
+         </index>
+         <index name="UQ_payment_transactions_txn_ref" unique="true">
+            <column ascending="true" name="txn_ref"/>
+         </index>
+         <checkConstraint constraint="(((((booking_id IS NOT NULL))::integer + ((customer_package_id IS NOT NULL))::integer) = 1))" name="chk_payment_tx_source"/>
+      </table>
+      <table name="promotion_usages" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="promotion_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="promotion_usages_promotion_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="promotion_usages_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="promotion_usages_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="discount_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="promotion_usages_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_promotion_usages_booking" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_promotion_usages_promotion_id" unique="false">
+            <column ascending="true" name="promotion_id"/>
+         </index>
+         <index name="idx_promotion_usages_user_id" unique="false">
+            <column ascending="true" name="user_id"/>
+         </index>
+         <index name="promotion_usages_booking_id_key" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+      </table>
+      <table name="promotions" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="promotion_id" foreignKey="bookings_promotion_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="promotion_id" foreignKey="promotion_usages_promotion_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotion_usages"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="discount_type" nullable="false" remarks="" size="2147483647" type="discount_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="discount_value" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="max_discount_amount" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="6" name="min_order_amount" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="max_uses" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="1" digits="0" id="8" name="max_uses_per_user" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="9" name="uses_count" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="'ALL'::promo_applicable_to_enum" digits="0" id="10" name="applicable_to" nullable="false" remarks="" size="2147483647" type="promo_applicable_to_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="cafe_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="promotions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="12" name="starts_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="13" name="expires_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="14" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="15" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="promotions_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="16" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="17" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'ONCE'::promotion_schedule_mode_enum" digits="0" id="18" name="schedule_mode" nullable="false" remarks="" size="2147483647" type="promotion_schedule_mode_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="19" name="schedule_start_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="20" name="schedule_end_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="21" name="schedule_weekdays" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="promotions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_promotions_cafe_code" unique="true">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="code"/>
+         </index>
+         <index name="idx_promotions_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_promotions_expires_at" unique="false">
+            <column ascending="true" name="expires_at"/>
+         </index>
+      </table>
+      <table name="provider_profiles" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="provider_profiles_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="business_name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="business_description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::provider_status_enum" digits="0" id="4" name="registration_status" nullable="false" remarks="" size="2147483647" type="provider_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="rejection_reason" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="suspended_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="suspended_reason" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="provider_profiles_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="provider_profiles_user_id_key" unique="true">
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="provider_subscriptions" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="provider_subscriptions_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="plan_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="provider_subscriptions_plan_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="subscription_plans"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="status" nullable="false" remarks="" size="2147483647" type="provider_subscription_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="4" name="started_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="expires_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="grace_ends_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="7" name="ai_messages_used" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="ai_quota_reset_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="11" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="provider_subscriptions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_provider_subscriptions_expires_status" unique="false">
+            <column ascending="true" name="expires_at"/>
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="idx_provider_subscriptions_provider_status" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="refresh_tokens" numRows="101" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="refresh_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="token" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="3" name="expires_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="refresh_tokens_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_refresh_tokens_token" unique="true">
+            <column ascending="true" name="token"/>
+         </index>
+         <index name="idx_refresh_tokens_user_id" unique="false">
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="reviews" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="reviews_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="reviews_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="customer_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="reviews_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="rating" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="comment" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="6" name="is_visible" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="reviews_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_reviews_booking_id" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_reviews_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="is_visible"/>
+            <column ascending="false" name="created_at"/>
+         </index>
+         <index name="reviews_booking_id_key" unique="true">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <checkConstraint constraint="(((rating &gt;= 1) AND (rating &lt;= 5)))" name="reviews_rating_check"/>
+      </table>
+      <table name="session_participants" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="assigned_to_participant_id" foreignKey="session_vehicles_assigned_to_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="session_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_participants_session_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="booking_participant_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_participants_booking_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_participants"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="user_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_participants_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="display_name" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="phone" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="role" nullable="false" remarks="" size="2147483647" type="participant_role_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="7" name="is_primary_responsible" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="checked_in_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="session_participants_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_session_participants_session_id" unique="false">
+            <column ascending="true" name="session_id"/>
+         </index>
+      </table>
+      <table name="session_vehicles" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="session_vehicle_id" foreignKey="inspections_session_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="inspections"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="session_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_vehicles_session_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="booking_vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_vehicles_booking_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="vehicle_source" nullable="false" remarks="" size="2147483647" type="vehicle_source_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_vehicles_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="customer_vehicle_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_vehicles_customer_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="assigned_to_participant_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="session_vehicles_assigned_to_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_participants"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'ASSIGNED'::session_vehicle_status_enum" digits="0" id="7" name="status" nullable="false" remarks="" size="2147483647" type="session_vehicle_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="started_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="returned_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="12" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="session_vehicles_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_session_vehicles_session_id" unique="false">
+            <column ascending="true" name="session_id"/>
+         </index>
+      </table>
+      <table name="sessions" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="session_id" foreignKey="extension_proposals_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="extension_proposals"/>
+            <child column="session_id" foreignKey="fnb_orders_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
+            <child column="session_id" foreignKey="incidents_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="incidents"/>
+            <child column="session_id" foreignKey="inspections_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="inspections"/>
+            <child column="session_id" foreignKey="notification_logs_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="notification_logs"/>
+            <child column="session_id" foreignKey="payment_components_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_components"/>
+            <child column="session_id" foreignKey="payment_transactions_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_transactions"/>
+            <child column="session_id" foreignKey="session_participants_session_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="session_participants"/>
+            <child column="session_id" foreignKey="session_vehicles_session_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="session_vehicles"/>
+            <child column="session_id" foreignKey="trust_score_logs_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
+            <child column="related_session_id" foreignKey="vehicle_maintenance_logs_related_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicle_maintenance_logs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="sessions_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="sessions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'CHECKED_IN'::session_status_enum" digits="0" id="3" name="status" nullable="false" remarks="" size="2147483647" type="session_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="checked_in_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="sessions_checked_in_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="checked_out_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="sessions_checked_out_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="actual_start_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="actual_end_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="planned_end_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="9" name="actual_total_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="12" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="sessions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_sessions_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_sessions_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_sessions_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="shift_positions" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="position_id" foreignKey="staff_shifts_position_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_shifts"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="shift_positions_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="120" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="3" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="shift_positions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_shift_positions_provider_name_active" unique="true">
+            <column ascending="true" name="provider_id"/>
+         </index>
+      </table>
+      <table name="shift_time_presets" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_shift_time_presets_provider" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="label" nullable="false" remarks="" size="120" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="3" name="start_time" nullable="false" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="4" name="end_time" nullable="false" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="5" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="shift_time_presets_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_shift_time_presets_provider_label_active" unique="true">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="label"/>
+         </index>
+         <index name="idx_shift_time_presets_provider_sort" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="sort_order"/>
+         </index>
+      </table>
+      <table name="staff_cafe_assignments" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="staff_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_cafe_assignments_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_cafe_assignments_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="3" name="assigned_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="assigned_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_cafe_assignments_assigned_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="staff_cafe_assignments_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_staff_cafe_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_staff_cafe_staff_id" unique="true">
+            <column ascending="true" name="staff_id"/>
+         </index>
+         <index name="staff_cafe_assignments_staff_id_key" unique="true">
+            <column ascending="true" name="staff_id"/>
+         </index>
+      </table>
+      <table name="staff_invite_tokens" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_invite_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="token" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="3" name="expires_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="4" name="used_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="staff_invite_tokens_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_staff_invite_tokens_user_id" unique="false">
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="staff_shifts" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_shifts_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="position_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_shifts_position_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="shift_positions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="staff_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="staff_shifts_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="shift_date" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="shift_label" nullable="true" remarks="" size="120" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="start_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="end_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_staff_shifts_cafe" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="staff_shifts_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_staff_shifts_cell_staff" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="position_id"/>
+            <column ascending="true" name="shift_date"/>
+            <column ascending="true" name="staff_id"/>
+         </index>
+         <index name="idx_staff_shifts_provider_cafe_week" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="shift_date"/>
+         </index>
+      </table>
+      <table name="subscription_plans" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="plan_id" foreignKey="payment_requests_plan_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_requests"/>
+            <child column="plan_id" foreignKey="provider_subscriptions_plan_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="provider_subscriptions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="name" nullable="false" remarks="" size="2147483647" type="plan_name_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="branch_limit" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="ai_quota_per_month" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="channel_limit" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="price_per_month" nullable="false" remarks="" size="12" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="6" name="is_trial" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="subscription_plans_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="subscription_plans_name_key" unique="true">
+            <column ascending="true" name="name"/>
+         </index>
+      </table>
+      <table name="subscriptions" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="subscription_id" foreignKey="fk_bookings_subscription_id" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="subscriptions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="customer_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="subscriptions_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="play_mode" nullable="false" remarks="" size="2147483647" type="play_mode_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="track_type" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="frequency_rule" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="1" digits="0" id="6" name="slot_count" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="starts_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="ends_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'ACTIVE'::subscription_status_enum" digits="0" id="9" name="status" nullable="false" remarks="" size="2147483647" type="subscription_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="subscriptions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_subscriptions_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_subscriptions_customer_id" unique="false">
+            <column ascending="true" name="customer_id"/>
+         </index>
+         <index name="idx_subscriptions_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="track_types" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="track_type_id" foreignKey="cafe_track_configs_track_type_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_track_configs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="4" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="5" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="track_types_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="track_types_code_key" unique="true">
+            <column ascending="true" name="code"/>
+         </index>
+      </table>
+      <table name="trust_score_logs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="trust_score_logs_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="booking_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="trust_score_logs_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="delta" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="score_before" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="score_after" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="reason" nullable="false" remarks="" size="2147483647" type="trust_score_reason_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="created_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="trust_score_logs_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="trust_score_logs_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="trust_score_logs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_trust_score_logs_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_trust_score_logs_user_id" unique="false">
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="users" numRows="5" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="user_id" foreignKey="booking_participants_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_participants"/>
+            <child column="cancelled_by" foreignKey="bookings_cancelled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="customer_id" foreignKey="bookings_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="created_by" foreignKey="cafe_announcements_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_announcements"/>
+            <child column="created_by" foreignKey="cafe_closures_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_closures"/>
+            <child column="provider_id" foreignKey="cafes_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+            <child column="user_id" foreignKey="contest_registrations_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="created_by" foreignKey="contests_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+            <child column="customer_id" foreignKey="fk_customer_packages_customer" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
+            <child column="customer_id" foreignKey="customer_vehicles_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_vehicles"/>
+            <child column="opened_by" foreignKey="disputes_opened_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="disputes"/>
+            <child column="resolved_by" foreignKey="disputes_resolved_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="disputes"/>
+            <child column="proposed_by" foreignKey="extension_proposals_proposed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="extension_proposals"/>
+            <child column="responded_by" foreignKey="extension_proposals_responded_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="extension_proposals"/>
+            <child column="enabled_by" foreignKey="feature_flags_enabled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="feature_flags"/>
+            <child column="confirmed_by" foreignKey="fnb_orders_confirmed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
+            <child column="created_by" foreignKey="fnb_orders_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
+            <child column="reported_by" foreignKey="incidents_reported_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="incidents"/>
+            <child column="resolved_by" foreignKey="incidents_resolved_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="incidents"/>
+            <child column="uploaded_by" foreignKey="inspection_photos_uploaded_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="inspection_photos"/>
+            <child column="performed_by" foreignKey="inspections_performed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="inspections"/>
+            <child column="created_by" foreignKey="kb_documents_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="kb_documents"/>
+            <child column="user_id" foreignKey="notification_logs_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="notification_logs"/>
+            <child column="user_id" foreignKey="notifications_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="notifications"/>
+            <child column="user_id" foreignKey="password_reset_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="password_reset_tokens"/>
+            <child column="disbursed_to" foreignKey="payment_components_disbursed_to_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_components"/>
+            <child column="provider_id" foreignKey="payment_requests_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="payment_requests"/>
+            <child column="reviewed_by" foreignKey="payment_requests_reviewed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_requests"/>
+            <child column="user_id" foreignKey="promotion_usages_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotion_usages"/>
+            <child column="created_by" foreignKey="promotions_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotions"/>
+            <child column="user_id" foreignKey="provider_profiles_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="provider_profiles"/>
+            <child column="provider_id" foreignKey="provider_subscriptions_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="provider_subscriptions"/>
+            <child column="user_id" foreignKey="refresh_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="refresh_tokens"/>
+            <child column="customer_id" foreignKey="reviews_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="reviews"/>
+            <child column="user_id" foreignKey="session_participants_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_participants"/>
+            <child column="checked_in_by" foreignKey="sessions_checked_in_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+            <child column="checked_out_by" foreignKey="sessions_checked_out_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+            <child column="provider_id" foreignKey="shift_positions_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="shift_positions"/>
+            <child column="provider_id" foreignKey="fk_shift_time_presets_provider" implied="false" onDeleteCascade="true" schema="public" table="shift_time_presets"/>
+            <child column="assigned_by" foreignKey="staff_cafe_assignments_assigned_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_cafe_assignments"/>
+            <child column="staff_id" foreignKey="staff_cafe_assignments_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_cafe_assignments"/>
+            <child column="user_id" foreignKey="staff_invite_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="staff_invite_tokens"/>
+            <child column="provider_id" foreignKey="staff_shifts_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_shifts"/>
+            <child column="staff_id" foreignKey="staff_shifts_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_shifts"/>
+            <child column="customer_id" foreignKey="subscriptions_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="subscriptions"/>
+            <child column="created_by" foreignKey="trust_score_logs_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
+            <child column="user_id" foreignKey="trust_score_logs_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
+            <child column="performed_by" foreignKey="vehicle_maintenance_logs_performed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicle_maintenance_logs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="email" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="phone" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="full_name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="password_hash" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'LOCAL'::auth_provider_enum" digits="0" id="5" name="auth_provider" nullable="false" remarks="" size="2147483647" type="auth_provider_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="role" nullable="false" remarks="" size="2147483647" type="user_role_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="100.00" digits="2" id="7" name="trust_score" nullable="false" remarks="" size="5" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="8" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="11" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="google_id" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="avatar_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="users_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_users_email" unique="true">
+            <column ascending="true" name="email"/>
+         </index>
+         <index name="idx_users_google_id" unique="true">
+            <column ascending="true" name="google_id"/>
+         </index>
+         <index name="idx_users_role" unique="false">
+            <column ascending="true" name="role"/>
+         </index>
+      </table>
+      <table name="vehicle_catalog_images" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="catalog_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicle_images_catalog_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicle_catalogs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="url" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="3" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="vehicle_images_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_vehicle_images_vehicle_id" unique="false">
+            <column ascending="true" name="catalog_id"/>
+         </index>
+      </table>
+      <table name="vehicle_catalogs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="catalog_id" foreignKey="vehicle_images_catalog_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicle_catalog_images"/>
+            <child column="catalog_id" foreignKey="vehicles_catalog_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicle_catalogs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="tier" nullable="false" remarks="" size="2147483647" type="vehicle_tier_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="hourly_rate" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="6" name="security_deposit" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="1.00" digits="2" id="7" name="damage_multiplier" nullable="false" remarks="" size="4" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="cover_image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="11" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'{}'::uuid[]" digits="0" id="12" name="compatible_track_types" nullable="false" remarks="" size="2147483647" type="_uuid" typeCode="2003"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="vehicle_catalogs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_vehicle_catalogs_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="vehicle_maintenance_logs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="vehicle_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicle_maintenance_logs_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicles"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="2147483647" type="maintenance_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="cost" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="performed_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicle_maintenance_logs_performed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="performed_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="next_scheduled_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="related_session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicle_maintenance_logs_related_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="vehicle_maintenance_logs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_vehicle_maintenance_performed_at" unique="false">
+            <column ascending="true" name="vehicle_id"/>
+            <column ascending="false" name="performed_at"/>
+         </index>
+         <index name="idx_vehicle_maintenance_vehicle_id" unique="false">
+            <column ascending="true" name="vehicle_id"/>
+         </index>
+      </table>
+      <table name="vehicles" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="vehicle_id" foreignKey="booking_vehicles_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_vehicles"/>
+            <child column="vehicle_id" foreignKey="contest_registrations_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="vehicle_id" foreignKey="session_vehicles_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_vehicles"/>
+            <child column="vehicle_id" foreignKey="vehicle_maintenance_logs_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicle_maintenance_logs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicles_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'AVAILABLE'::vehicle_status_enum" digits="0" id="2" name="status" nullable="false" remarks="" size="2147483647" type="vehicle_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="3" name="last_maintenance_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="catalog_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="vehicles_catalog_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicle_catalogs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="identifier" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="color" nullable="true" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="distinctive_image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="metadata" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="vehicles_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_vehicles_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_vehicles_status" unique="false">
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+   </tables>
+</database>
