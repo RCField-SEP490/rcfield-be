@@ -21,6 +21,24 @@ import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { activateCustomerPackage, deductSlots } from './customer-package.service';
+import { wsService } from './websocket.service';
+
+async function pushBookingNew(booking: Booking): Promise<void> {
+  try {
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId', 'name'],
+    });
+    if (!cafe) return;
+    wsService.pushToUser(cafe.providerId, 'booking.new', {
+      bookingId: booking.id,
+      cafeName: cafe.name,
+      slotStart: booking.slotStart,
+    });
+  } catch (err) {
+    logger.error('PaymentService', 'pushBookingNew failed', err);
+  }
+}
 
 // ── Snapshot types (Constitution Principle I: prices from snapshot, never live) ─
 
@@ -443,10 +461,11 @@ export async function processConfirmation(
     }
   }
 
-  // Fire-and-forget: emails must not block or fail the IPN response
+  // Fire-and-forget: must not block or fail the IPN response
   Promise.all([
     emailService.sendBookingConfirmation(confirmedBookingId),
     emailService.sendBookingInvoice(confirmedBookingId),
+    pushBookingNew(booking),
   ]).catch((err) => {
     logger.error('PaymentService', 'post-payment email failed', err);
   });
@@ -522,6 +541,7 @@ export async function processMockConfirmation(
   Promise.all([
     emailService.sendBookingConfirmation(mockBookingId),
     emailService.sendBookingInvoice(mockBookingId),
+    pushBookingNew(booking),
   ]).catch((err) => {
     logger.error('PaymentService', 'post-payment email failed (mock)', err);
   });
