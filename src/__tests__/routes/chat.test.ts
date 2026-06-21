@@ -31,6 +31,16 @@ jest.mock('@google/genai', () => {
       },
     })),
     __mockGenerateContent: generateContent,
+    Type: {
+      TYPE_UNSPECIFIED: 'TYPE_UNSPECIFIED',
+      STRING: 'STRING',
+      NUMBER: 'NUMBER',
+      INTEGER: 'INTEGER',
+      BOOLEAN: 'BOOLEAN',
+      ARRAY: 'ARRAY',
+      OBJECT: 'OBJECT',
+      NULL: 'NULL',
+    },
   };
 });
 
