@@ -1,16 +1,16 @@
-﻿import { Between, In } from 'typeorm';
+import { Between, In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { AppError, UserRole } from '../types';
 import { ShiftPosition } from '../models/shift-position.entity';
 import { StaffShift } from '../models/staff-shift.entity';
 import { ShiftTimePreset } from '../models/shift-time-preset.entity';
 
-const DEFAULT_POSITIONS = ['Lá»… tÃ¢n', 'GiÃ¡m sÃ¡t', 'Ká»¹ thuáº­t'];
+const DEFAULT_POSITIONS = ['Lễ tân', 'Giám sát', 'Kỹ thuật'];
 const DEFAULT_SHIFT_TIME_PRESETS = [
-  { label: 'SÃ¡ng (08-14)', startTime: '08:00', endTime: '14:00' },
-  { label: 'Chiá»u (14-20)', startTime: '14:00', endTime: '20:00' },
-  { label: 'Tá»‘i (18-24)', startTime: '18:00', endTime: '23:59' },
-  { label: 'Cáº£ ngÃ y (09-18)', startTime: '09:00', endTime: '18:00' },
+  { label: 'Sáng (08-14)', startTime: '08:00', endTime: '14:00' },
+  { label: 'Chiều (14-20)', startTime: '14:00', endTime: '20:00' },
+  { label: 'Tối (18-24)', startTime: '18:00', endTime: '23:59' },
+  { label: 'Cả ngày (09-18)', startTime: '09:00', endTime: '18:00' },
 ];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,7 +51,7 @@ function toIsoDate(date: Date): string {
 function parseIsoDate(value: string): Date {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime())) {
-    throw new AppError('NgÃ y khÃ´ng há»£p lá»‡', 400, 'INVALID_DATE');
+    throw new AppError('Ngày không hợp lệ', 400, 'INVALID_DATE');
   }
   return parsed;
 }
@@ -104,7 +104,7 @@ export async function createPosition(providerId: string, name: string): Promise<
     .getOne();
 
   if (existing) {
-    throw new AppError('Vá»‹ trÃ­ Ä‘Ã£ tá»“n táº¡i', 409, 'POSITION_ALREADY_EXISTS');
+    throw new AppError('Vị trí đã tồn tại', 409, 'POSITION_ALREADY_EXISTS');
   }
 
   const position = await AppDataSource.getRepository(ShiftPosition).save(
@@ -124,7 +124,7 @@ export async function updatePosition(
   const position = await repo.findOne({ where: { id: positionId, providerId } });
 
   if (!position) {
-    throw new AppError('VÃ¡Â»â€¹ trÃƒÂ­ khÃƒÂ´ng tÃ¡Â»â€œn tÃ¡ÂºÂ¡i', 404, 'POSITION_NOT_FOUND');
+    throw new AppError('Vị trí không tồn tại', 404, 'POSITION_NOT_FOUND');
   }
 
   const existing = await repo
@@ -136,11 +136,7 @@ export async function updatePosition(
     .getOne();
 
   if (existing) {
-    throw new AppError(
-      'VÃ¡Â»â€¹ trÃƒÂ­ Ã„â€˜ÃƒÂ£ tÃ¡Â»â€œn tÃ¡ÂºÂ¡i',
-      409,
-      'POSITION_ALREADY_EXISTS',
-    );
+    throw new AppError('Vị trí đã tồn tại', 409, 'POSITION_ALREADY_EXISTS');
   }
 
   position.name = normalizedName;
@@ -155,7 +151,7 @@ export async function deletePosition(providerId: string, positionId: string): Pr
     });
 
     if (!position) {
-      throw new AppError('VÃ¡Â»â€¹ trÃƒÂ­ khÃƒÂ´ng tÃ¡Â»â€œn tÃ¡ÂºÂ¡i', 404, 'POSITION_NOT_FOUND');
+      throw new AppError('Vị trí không tồn tại', 404, 'POSITION_NOT_FOUND');
     }
 
     await manager.getRepository(StaffShift).delete({ providerId, positionId });
@@ -215,7 +211,7 @@ export async function updateShiftTimePreset(
   const preset = await repo.findOne({ where: { id: presetId, providerId } });
 
   if (!preset) {
-    throw new AppError('Ca lÃ m khÃ´ng tá»“n táº¡i', 404, 'SHIFT_TIME_PRESET_NOT_FOUND');
+    throw new AppError('Ca làm không tồn tại', 404, 'SHIFT_TIME_PRESET_NOT_FOUND');
   }
 
   await ensureUniqueShiftTimePresetLabel(providerId, normalizedLabel, presetId);
@@ -232,7 +228,7 @@ export async function deleteShiftTimePreset(providerId: string, presetId: string
   const preset = await repo.findOne({ where: { id: presetId, providerId } });
 
   if (!preset) {
-    throw new AppError('Ca lÃ m khÃ´ng tá»“n táº¡i', 404, 'SHIFT_TIME_PRESET_NOT_FOUND');
+    throw new AppError('Ca làm không tồn tại', 404, 'SHIFT_TIME_PRESET_NOT_FOUND');
   }
 
   await repo.softDelete({ id: presetId, providerId });
@@ -290,7 +286,7 @@ export async function getWeekSchedule(
         cafeId: shift.cafeId,
         positionId: shift.positionId,
         staffId: shift.staffId,
-        staffName: staff?.full_name ?? 'NhÃ¢n viÃªn',
+        staffName: staff?.full_name ?? 'Nhân viên',
         staffEmail: staff?.email ?? '',
         shiftDate: shift.shiftDate,
         shiftLabel: shift.shiftLabel,
@@ -341,7 +337,7 @@ export async function updateShiftTime(
   const repo = AppDataSource.getRepository(StaffShift);
   const shift = await repo.findOne({ where: { id: input.shift_id, providerId } });
   if (!shift) {
-    throw new AppError('Ca lÃ m viá»‡c khÃ´ng tá»“n táº¡i', 404, 'SHIFT_NOT_FOUND');
+    throw new AppError('Ca làm việc không tồn tại', 404, 'SHIFT_NOT_FOUND');
   }
 
   shift.shiftLabel = input.shift_label.trim();
@@ -457,7 +453,7 @@ async function ensureProviderPosition(providerId: string, positionId: string): P
     where: { id: positionId, providerId },
   });
   if (!position) {
-    throw new AppError('Vá»‹ trÃ­ khÃ´ng tá»“n táº¡i', 404, 'POSITION_NOT_FOUND');
+    throw new AppError('Vị trí không tồn tại', 404, 'POSITION_NOT_FOUND');
   }
 }
 
@@ -546,7 +542,7 @@ async function ensureUniqueShiftTimePresetLabel(
 
   const existing = await query.getOne();
   if (existing) {
-    throw new AppError('Ca lÃ m Ä‘Ã£ tá»“n táº¡i', 409, 'SHIFT_TIME_PRESET_ALREADY_EXISTS');
+    throw new AppError('Ca làm đã tồn tại', 409, 'SHIFT_TIME_PRESET_ALREADY_EXISTS');
   }
 }
 
