@@ -112,7 +112,7 @@ class EmailService {
             <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
           </div>
           <div style="padding:32px">
-            <h2 style="margin:0 0 8px">Đặt sân thành công! 🎉</h2>
+            <h2 style="margin:0 0 8px">Đặt sân thành công</h2>
             <p style="color:#6b7280;margin:0 0 24px">Cảm ơn bạn đã đặt sân tại <strong>${r.cafe_name}</strong>.</p>
 
             <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:20px;margin-bottom:24px">

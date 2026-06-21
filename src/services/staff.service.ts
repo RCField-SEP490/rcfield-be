@@ -661,6 +661,53 @@ async function getStaffOwnedByProvider(providerId: string, staffId: string): Pro
   return user;
 }
 
+export async function getStaffForImpersonation(
+  providerId: string,
+  staffId: string,
+): Promise<{ id: string; email: string; fullName: string; cafeName: string; cafeId: string }> {
+  const [row] = await AppDataSource.query<
+    {
+      id: string;
+      email: string;
+      full_name: string;
+      cafe_id: string;
+      cafe_name: string;
+      is_active: boolean;
+    }[]
+  >(
+    `SELECT u.id, u.email, u.full_name, c.id AS cafe_id, c.name AS cafe_name, u.is_active
+     FROM users u
+     JOIN staff_cafe_assignments a ON a.staff_id = u.id
+     JOIN cafes c ON c.id = a.cafe_id
+     WHERE u.id = $1 AND c.provider_id = $2 AND u.deleted_at IS NULL`,
+    [staffId, providerId],
+  );
+
+  if (!row) {
+    throw new AppError(
+      'Nhân viên không tồn tại hoặc không thuộc Provider này',
+      404,
+      'STAFF_NOT_FOUND',
+    );
+  }
+
+  if (!row.is_active) {
+    throw new AppError(
+      'Chỉ có thể xem phiên của nhân viên đang hoạt động',
+      400,
+      'STAFF_NOT_ACTIVE',
+    );
+  }
+
+  return {
+    id: row.id,
+    email: row.email,
+    fullName: row.full_name,
+    cafeName: row.cafe_name,
+    cafeId: row.cafe_id,
+  };
+}
+
 async function hasActiveInviteToken(staffId: string): Promise<boolean> {
   const [result] = await AppDataSource.query<{ exists: boolean }[]>(
     `SELECT EXISTS(

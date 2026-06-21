@@ -97,6 +97,11 @@ providerSubscriptionRouter.patch(
   requireActiveProvider,
   staffController.transferStaff,
 );
+providerSubscriptionRouter.post(
+  '/staff/:staffId/impersonate',
+  requireActiveProvider,
+  staffController.impersonateStaff,
+);
 
 providerSubscriptionRouter.get(
   '/subscription',

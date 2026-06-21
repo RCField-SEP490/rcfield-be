@@ -1,8 +1,10 @@
 import type { Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
 import { logger } from '../config/logger';
 import { CreateStaffSchema, TransferStaffSchema, UpdateFnbOrderStatusSchema } from '../validate';
-import { AppError, AuthRequest } from '../types';
+import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
+import { env } from '../config/env';
 
 export const staffController = {
   // POST /api/v1/provider/staff  [auth]
@@ -91,6 +93,42 @@ export const staffController = {
         newCafeId: cafe_id,
       });
       res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/provider/staff/:staffId/impersonate  [auth]
+  async impersonateStaff(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const staff = await staffService.getStaffForImpersonation(
+        req.user.userId,
+        req.params.staffId,
+      );
+      const payload: AuthPayload = {
+        userId: staff.id,
+        role: UserRole.STAFF,
+        email: staff.email,
+        cafeId: staff.cafeId,
+        impersonated_by: req.user.userId,
+      };
+      const token = jwt.sign(payload, env.jwt.secret, { expiresIn: '2h' });
+      logger.auth('provider impersonate staff', {
+        providerId: req.user.userId,
+        staffId: staff.id,
+        cafeId: staff.cafeId,
+      });
+      res.json({
+        token,
+        staff: {
+          id: staff.id,
+          email: staff.email,
+          fullName: staff.fullName,
+          cafeName: staff.cafeName,
+          cafeId: staff.cafeId,
+        },
+      });
     } catch (err) {
       next(err);
     }
