@@ -572,7 +572,7 @@ async function seedVehicles(
 ) {
   for (const v of vehicles) {
     // 1. Check if catalog exists
-    let [catalog] = await AppDataSource.query<{ id: string }[]>(
+    const [catalog] = await AppDataSource.query<{ id: string }[]>(
       `SELECT id FROM vehicle_catalogs WHERE cafe_id = $1 AND name = $2 AND deleted_at IS NULL`,
       [cafeId, v.name],
     );
