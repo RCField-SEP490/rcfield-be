@@ -13,6 +13,7 @@ import {
   mockConfirmPayment,
   processRefund,
   createPaymentComponents,
+  createCheckoutAdditionalPaymentUrl,
 } from '../services/payment.service';
 import type { BookingSnapshot } from '../services/payment.service';
 import { env } from '../config/env';
@@ -27,6 +28,7 @@ import { Cafe } from '../models/cafe.entity';
 import { User } from '../models/user.entity';
 import { MenuItem } from '../models/menu-item.entity';
 import { TrackType } from '../models/track-type.entity';
+import { Session } from '../models/session.entity';
 
 export const bookingController = {
   // POST /api/v1/bookings  [auth CUSTOMER]
@@ -67,6 +69,36 @@ export const bookingController = {
     }
   },
 
+  // POST /api/v1/bookings/:id/checkout-additional-payment  [auth CUSTOMER]
+  async createCheckoutAdditionalPayment(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const bookingId = req.params.id;
+      const forwardedFor = req.headers['x-forwarded-for'];
+      const ipAddr =
+        (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : null) ||
+        req.ip ||
+        req.socket.remoteAddress ||
+        '127.0.0.1';
+
+      const booking = await AppDataSource.getRepository(Booking).findOne({
+        where: { id: bookingId },
+      });
+      if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+      if (booking.customerId !== req.user!.userId) {
+        throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+
+      const result = await createCheckoutAdditionalPaymentUrl(bookingId, ipAddr);
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /api/v1/bookings/:id  [auth]
   async getBooking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -83,12 +115,13 @@ export const bookingController = {
       }
 
       // Load related records
-      const [rawParticipants, vehicles, components, fnbOrder, cafe] = await Promise.all([
+      const [rawParticipants, vehicles, components, fnbOrders, cafe, session] = await Promise.all([
         AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
         AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
         AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
-        AppDataSource.getRepository(FnbOrder).findOne({ where: { bookingId } }),
+        AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
         AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
+        AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
       ]);
 
       // Enrich participants: resolve name/phone for registered users
@@ -123,18 +156,42 @@ export const bookingController = {
       );
       void vehicleIds; // suppress unused warning
 
-      // Enrich FnbOrder items with menu item names
+      // Enrich FnbOrder items with menu item names across all orders
       let fnbItems: (FnbOrderItem & { itemName: string | null })[] = [];
-      if (fnbOrder) {
-        const rawItems = await AppDataSource.getRepository(FnbOrderItem).find({
-          where: { fnbOrderId: fnbOrder.id },
-        });
-        const menuItemIds = [...new Set(rawItems.map((i) => i.menuItemId))];
+      let mergedFnbOrder = null;
+
+      if (fnbOrders.length > 0) {
+        const allRawItems: FnbOrderItem[] = [];
+        for (const order of fnbOrders) {
+          const items = await AppDataSource.getRepository(FnbOrderItem).find({
+            where: { fnbOrderId: order.id },
+          });
+          allRawItems.push(...items);
+        }
+
+        const menuItemIds = [
+          ...new Set(
+            allRawItems.map((i) => i.menuItemId).filter((id): id is string => Boolean(id)),
+          ),
+        ];
         const menuItems = menuItemIds.length
           ? await AppDataSource.getRepository(MenuItem).findByIds(menuItemIds)
           : [];
         const menuMap = new Map(menuItems.map((m) => [m.id, m.name]));
-        fnbItems = rawItems.map((i) => ({ ...i, itemName: menuMap.get(i.menuItemId) ?? null }));
+
+        fnbItems = allRawItems.map((i) => ({
+          ...i,
+          itemName: i.menuItemId ? (menuMap.get(i.menuItemId) ?? null) : null,
+        }));
+
+        mergedFnbOrder = {
+          id: fnbOrders[0].id,
+          bookingId,
+          orderType: 'MERGED',
+          totalAmount: fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
+          status: 'CONFIRMED',
+          items: fnbItems,
+        };
       }
 
       // Backfill payment components if booking is confirmed but components are missing
@@ -167,9 +224,18 @@ export const bookingController = {
           participants,
           vehicles: enrichedVehicles,
           payment_components: components,
-          fnb_order: fnbOrder ? { ...fnbOrder, items: fnbItems } : null,
+          fnb_order: mergedFnbOrder,
           cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
           track_type_name: trackTypeName,
+          session: session
+            ? {
+                id: session.id,
+                status: session.status,
+                plannedEndAt: session.plannedEndAt,
+                actualStartAt: session.actualStartAt,
+                actualEndAt: session.actualEndAt,
+              }
+            : null,
         },
       });
     } catch (err) {

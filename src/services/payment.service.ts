@@ -16,12 +16,14 @@ import {
   PaymentTransactionStatus,
   PaymentTransactionType,
   UserRole,
+  NotificationType,
 } from '../types';
 import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { activateCustomerPackage, deductSlots } from './customer-package.service';
 import { wsService } from './websocket.service';
+import { createNotification } from './notification.service';
 
 async function pushBookingNew(booking: Booking): Promise<void> {
   try {
@@ -409,6 +411,67 @@ export async function processConfirmation(
     rawResponse: vnpParams as object,
   });
 
+  // Branch: checkout/counter payment (second VNPAY payment)
+  if (result.txnRef.startsWith('ctr_')) {
+    if (!tx.bookingId) {
+      logger.error(
+        'PaymentService',
+        `checkout payment transaction has no bookingId txnRef=${result.txnRef}`,
+      );
+      return { rspCode: '01', message: 'Booking ID missing' };
+    }
+    const compRepo = AppDataSource.getRepository(PaymentComponent);
+    const pendingComponents = await compRepo.find({
+      where: { bookingId: tx.bookingId, status: PaymentComponentStatus.PENDING },
+    });
+
+    await AppDataSource.transaction(async (em) => {
+      // Mark all service components as DISBURSED (paid via VNPAY)
+      for (const comp of pendingComponents) {
+        comp.status = PaymentComponentStatus.DISBURSED;
+        await em.save(comp);
+      }
+    });
+
+    // Notify staff/customer via WebSocket
+    try {
+      const bookingRepo = AppDataSource.getRepository(Booking);
+      const booking = await bookingRepo.findOne({ where: { id: tx.bookingId } });
+      if (booking) {
+        if (booking.customerId) {
+          await createNotification(
+            booking.customerId,
+            NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
+            'Thanh toán dịch vụ phát sinh thành công',
+            `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công qua VNPAY.`,
+          );
+          wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
+            bookingId: tx.bookingId,
+            totalCounterBill: tx.amount,
+            netCounterAmount: tx.amount,
+          });
+        }
+
+        // Also push notification to session staff if checkin is assigned
+        const { Session } = await import('../models/session.entity');
+        const session = await AppDataSource.getRepository(Session).findOne({
+          where: { bookingId: booking.id },
+        });
+        if (session && session.checkedInBy) {
+          wsService.pushToUser(session.checkedInBy, 'CUSTOMER_PAYMENT_CONFIRMED', {
+            bookingId: tx.bookingId,
+            totalCounterBill: tx.amount,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('PaymentService', 'Failed to notify on checkout payment confirmation', err);
+    }
+
+    logger.info('PaymentService', `checkout payment confirmed txnRef=${result.txnRef}`);
+    return { rspCode: '00', message: 'Confirm Success' };
+  }
+
   // Branch: package purchase activation vs booking confirmation (D2 from research.md)
   if (tx.customerPackageId != null) {
     await activateCustomerPackage(tx.customerPackageId);
@@ -492,6 +555,66 @@ export async function processMockConfirmation(
     status: PaymentTransactionStatus.SUCCESS,
     rawResponse: { mock: true, txnRef },
   });
+
+  // Branch: checkout/counter payment (second VNPAY payment)
+  if (txnRef.startsWith('ctr_')) {
+    if (!tx.bookingId) {
+      logger.error(
+        'PaymentService',
+        `mock checkout payment transaction has no bookingId txnRef=${txnRef}`,
+      );
+      return { rspCode: '01', message: 'Booking ID missing' };
+    }
+    const compRepo = AppDataSource.getRepository(PaymentComponent);
+    const pendingComponents = await compRepo.find({
+      where: { bookingId: tx.bookingId, status: PaymentComponentStatus.PENDING },
+    });
+
+    await AppDataSource.transaction(async (em) => {
+      // Mark all service components as DISBURSED (paid via VNPAY)
+      for (const comp of pendingComponents) {
+        comp.status = PaymentComponentStatus.DISBURSED;
+        await em.save(comp);
+      }
+    });
+
+    // Notify staff/customer via WebSocket
+    try {
+      const bookingRepo = AppDataSource.getRepository(Booking);
+      const booking = await bookingRepo.findOne({ where: { id: tx.bookingId } });
+      if (booking) {
+        if (booking.customerId) {
+          await createNotification(
+            booking.customerId,
+            NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
+            'Thanh toán dịch vụ phát sinh thành công',
+            `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công qua VNPAY.`,
+          );
+          wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
+            bookingId: tx.bookingId,
+            totalCounterBill: tx.amount,
+            netCounterAmount: tx.amount,
+          });
+        }
+
+        const { Session } = await import('../models/session.entity');
+        const session = await AppDataSource.getRepository(Session).findOne({
+          where: { bookingId: booking.id },
+        });
+        if (session && session.checkedInBy) {
+          wsService.pushToUser(session.checkedInBy, 'CUSTOMER_PAYMENT_CONFIRMED', {
+            bookingId: tx.bookingId,
+            totalCounterBill: tx.amount,
+          });
+        }
+      }
+    } catch (err) {
+      logger.error('PaymentService', 'Failed to notify on mock checkout payment confirmation', err);
+    }
+
+    logger.info('PaymentService', `mock checkout payment confirmed txnRef=${txnRef}`);
+    return { rspCode: '00', message: 'Mock Confirm Success' };
+  }
 
   // Branch: package purchase activation vs booking confirmation
   if (tx.customerPackageId != null) {
@@ -648,31 +771,47 @@ export async function processRefund(
   // Mark components as REFUNDED
   const compRepo = AppDataSource.getRepository(PaymentComponent);
   const components = await compRepo.find({ where: { bookingId } });
-  const now = new Date();
 
   await AppDataSource.transaction(async (em) => {
     for (const comp of components) {
-      const refundedAmount = getComponentRefundAmount(comp.type, refund);
+      let refundedAmount = 0;
+      const compAmount = Number(comp.amount);
+      if (comp.type === PaymentComponentType.SLOT_FEE) {
+        const ratio =
+          snapshot.slot_fee_total > 0 ? refund.slotFeeRefund / snapshot.slot_fee_total : 0;
+        refundedAmount = Math.round(compAmount * ratio);
+      } else if (comp.type === PaymentComponentType.RENTAL_FEE) {
+        const totalRentalFee = snapshot.vehicles.reduce((sum, v) => sum + v.rental_fee, 0);
+        const ratio = totalRentalFee > 0 ? refund.rentalFeeRefund / totalRentalFee : 0;
+        refundedAmount = Math.round(compAmount * ratio);
+      } else if (comp.type === PaymentComponentType.SECURITY_DEPOSIT) {
+        const totalDeposit = snapshot.vehicles.reduce((sum, v) => sum + v.security_deposit, 0);
+        const ratio = totalDeposit > 0 ? refund.depositRefund / totalDeposit : 0;
+        refundedAmount = Math.round(compAmount * ratio);
+      } else if (comp.type === PaymentComponentType.FB_PREORDER) {
+        const ratio = snapshot.fnb_total > 0 ? refund.fnbRefund / snapshot.fnb_total : 0;
+        refundedAmount = Math.round(compAmount * ratio);
+      }
+
       if (refundedAmount > 0) {
         await em.update(PaymentComponent, comp.id, {
-          status: PaymentComponentStatus.REFUNDED,
+          status: PaymentComponentStatus.PENDING_REFUND,
           refundedAmount,
-          refundedAt: now,
         });
       }
     }
 
-    // Record refund transaction
+    // Record pending manual refund transaction
     const txnRef = `${bookingId.replace(/-/g, '').substring(0, 28)}RFND`;
     const txRepo = em.getRepository(PaymentTransaction);
     await txRepo.save(
       txRepo.create({
         bookingId,
         type: PaymentTransactionType.REFUND,
-        gateway: 'VNPAY',
+        gateway: 'DIRECT',
         txnRef,
         amount: refund.totalRefund,
-        status: PaymentTransactionStatus.SUCCESS,
+        status: PaymentTransactionStatus.PENDING,
         rawRequest: { cancelledByRole, isNoShow },
       }),
     );
@@ -685,17 +824,113 @@ export async function processRefund(
   return refund;
 }
 
-function getComponentRefundAmount(type: PaymentComponentType, refund: RefundBreakdown): number {
-  switch (type) {
-    case PaymentComponentType.SLOT_FEE:
-      return refund.slotFeeRefund;
-    case PaymentComponentType.RENTAL_FEE:
-      return refund.rentalFeeRefund;
-    case PaymentComponentType.SECURITY_DEPOSIT:
-      return refund.depositRefund;
-    case PaymentComponentType.FB_PREORDER:
-      return refund.fnbRefund;
-    default:
-      return 0;
+export async function confirmRefund(bookingId: string): Promise<void> {
+  const compRepo = AppDataSource.getRepository(PaymentComponent);
+
+  const pendingComps = await compRepo.find({
+    where: { bookingId, status: PaymentComponentStatus.PENDING_REFUND },
+  });
+
+  if (pendingComps.length === 0) {
+    throw new AppError(
+      'Không có khoản hoàn tiền nào đang chờ xử lý cho đơn hàng này',
+      400,
+      'NO_PENDING_REFUND',
+    );
   }
+
+  const now = new Date();
+  await AppDataSource.transaction(async (em) => {
+    // 1. Update all PENDING_REFUND components to REFUNDED
+    for (const comp of pendingComps) {
+      comp.status = PaymentComponentStatus.REFUNDED;
+      comp.refundedAt = now;
+      await em.save(comp);
+    }
+
+    // 2. Update the PENDING REFUND transaction to SUCCESS
+    const pendingTx = await em.findOne(PaymentTransaction, {
+      where: {
+        bookingId,
+        type: PaymentTransactionType.REFUND,
+        status: PaymentTransactionStatus.PENDING,
+      },
+    });
+
+    if (pendingTx) {
+      pendingTx.status = PaymentTransactionStatus.SUCCESS;
+      pendingTx.updatedAt = now;
+      if (pendingTx.rawResponse) {
+        pendingTx.rawResponse = {
+          ...(pendingTx.rawResponse as Record<string, unknown>),
+          confirmedAt: now.toISOString(),
+          manualRefund: true,
+        };
+      } else {
+        pendingTx.rawResponse = { confirmedAt: now.toISOString(), manualRefund: true };
+      }
+      await em.save(pendingTx);
+    }
+  });
+
+  logger.info('PaymentService', `manual refund confirmed for bookingId=${bookingId}`);
+}
+
+export async function createCheckoutAdditionalPaymentUrl(
+  bookingId: string,
+  ipAddr: string,
+): Promise<{ payment_url: string | null; txn_ref: string; total_amount: number }> {
+  const bookingRepo = AppDataSource.getRepository(Booking);
+  const booking = await bookingRepo.findOne({ where: { id: bookingId } });
+  if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  const compRepo = AppDataSource.getRepository(PaymentComponent);
+  const pendingComponents = await compRepo.find({
+    where: { bookingId, status: PaymentComponentStatus.PENDING },
+  });
+
+  const totalCharged = pendingComponents.reduce((sum, c) => sum + Number(c.amount), 0);
+  if (totalCharged <= 0) {
+    throw new AppError(
+      'Không có khoản thanh toán phát sinh nào cần xử lý',
+      400,
+      'NO_PENDING_ADDITIONAL_FEES',
+    );
+  }
+
+  // Create unique txnRef starting with ctr_ to distinguish from initial payment
+  const txnRef = `ctr_${bookingId.replace(/-/g, '').substring(0, 18)}_${Date.now().toString().slice(-4)}`;
+
+  const vnpayPaymentUrl = createPaymentUrl({
+    amount: totalCharged,
+    txnRef,
+    orderInfo: `RCField checkout ${bookingId.substring(0, 8)}`,
+    ipAddr,
+    bankCode: 'VNBANK',
+  });
+
+  // Record pending transaction
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  const tx = txRepo.create({
+    bookingId,
+    customerPackageId: null,
+    type: PaymentTransactionType.PAYMENT,
+    gateway: 'VNPAY',
+    txnRef,
+    amount: totalCharged,
+    status: PaymentTransactionStatus.PENDING,
+    rawRequest: { bookingId, totalCharged, ipAddr, additionalPayment: true },
+  });
+  await txRepo.save(tx);
+
+  if (env.vnpay.mockEnabled) {
+    await processMockConfirmation(txnRef);
+    const target = new URL('/payment/result', env.frontendUrl);
+    target.searchParams.set('status', 'success');
+    target.searchParams.set('txn_ref', txnRef);
+    target.searchParams.set('mock', '1');
+    return { payment_url: target.toString(), txn_ref: txnRef, total_amount: totalCharged };
+  }
+
+  return { payment_url: vnpayPaymentUrl, txn_ref: txnRef, total_amount: totalCharged };
 }
