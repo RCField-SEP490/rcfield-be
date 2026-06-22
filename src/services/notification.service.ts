@@ -1,3 +1,4 @@
+import { IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Notification } from '../models/notification.entity';
 import { NotificationType } from '../types';
@@ -37,7 +38,7 @@ export async function listForUser(
   }
 
   const [data, total] = await qb.getManyAndCount();
-  const unreadCount = await repo.count({ where: { userId, readAt: undefined as unknown as Date } });
+  const unreadCount = await repo.count({ where: { userId, readAt: IsNull() } });
 
   return { data, total, unreadCount };
 }

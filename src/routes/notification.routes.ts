@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { authenticate, authorize } from '../middlewares/auth.middleware';
-import { UserRole } from '../types';
+import { authenticate } from '../middlewares/auth.middleware';
 import {
   getNotifications,
   markAllNotificationsRead,
@@ -9,7 +8,7 @@ import {
 
 export const notificationRouter = Router();
 
-notificationRouter.use(authenticate, authorize(UserRole.PROVIDER));
+notificationRouter.use(authenticate);
 
 notificationRouter.get('/', getNotifications);
 notificationRouter.put('/read-all', markAllNotificationsRead);
