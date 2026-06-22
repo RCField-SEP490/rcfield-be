@@ -421,6 +421,14 @@ export const ContestListQuerySchema = z.object({
     .optional(),
 });
 
+export const MyContestRegistrationsQuerySchema = z.object({
+  contest_id: z.string().uuid().optional(),
+});
+
+export const ContestRegistrationLookupQuerySchema = z.object({
+  check_in_code: z.string().uuid(),
+});
+
 export const RegisterContestSchema = z
   .object({
     vehicle_source: z.nativeEnum(VehicleSource).optional().default(VehicleSource.BYOC),

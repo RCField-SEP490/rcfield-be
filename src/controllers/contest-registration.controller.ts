@@ -5,7 +5,9 @@ import {
   CancelContestRegistrationSchema,
   CheckInContestRegistrationSchema,
   ContestIdParamsSchema,
+  ContestRegistrationLookupQuerySchema,
   ContestRegistrationIdParamsSchema,
+  MyContestRegistrationsQuerySchema,
   RegisterContestSchema,
 } from '../validate';
 
@@ -33,6 +35,36 @@ export const contestRegistrationController = {
       const { id } = ContestIdParamsSchema.parse(req.params);
       const viewer = authViewer(req);
       const data = await contestRegistrationService.listContestRegistrations(id, viewer.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/me/contest-registrations [auth]
+  async listMine(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const query = MyContestRegistrationsQuerySchema.parse(req.query);
+      const data = await contestRegistrationService.listMyContestRegistrations(
+        authViewer(req),
+        query.contest_id,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/contests/:id/registrations/lookup [auth]
+  async lookupByCode(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      const query = ContestRegistrationLookupQuerySchema.parse(req.query);
+      const data = await contestRegistrationService.lookupContestRegistrationByCode(
+        id,
+        authViewer(req),
+        query.check_in_code,
+      );
       res.json({ success: true, data });
     } catch (err) {
       next(err);

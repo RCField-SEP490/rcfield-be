@@ -16,6 +16,7 @@ import {
   ContestResultStatus,
   ContestResultType,
   ContestRoundType,
+  ContestStatus,
   UserRole,
 } from '../types';
 
@@ -91,6 +92,19 @@ function assertProviderOwner(contest: Contest, providerId: string): void {
   if (contest.providerId !== providerId) {
     throw new AppError('Bạn không có quyền thao tác contest này', 403, 'CONTEST_FORBIDDEN');
   }
+}
+
+const PUBLIC_CONTEST_STATUSES = [
+  ContestStatus.OPEN,
+  ContestStatus.CLOSED,
+  ContestStatus.RUNNING,
+  ContestStatus.COMPLETED,
+];
+
+function assertCompetitionReadable(contest: Contest, viewer?: Viewer): void {
+  if (PUBLIC_CONTEST_STATUSES.includes(contest.status)) return;
+  if (viewer?.role === UserRole.PROVIDER && contest.providerId === viewer.userId) return;
+  throw new AppError('Contest không tồn tại', 404, 'CONTEST_NOT_FOUND');
 }
 
 async function getContestOrThrow(manager: EntityManager, contestId: string): Promise<Contest> {
@@ -264,6 +278,61 @@ export async function createContestRound(
     });
     return manager.getRepository(ContestRound).save(entity);
   });
+}
+
+export async function listContestClasses(
+  contestId: string,
+  viewer?: Viewer,
+): Promise<ContestClass[]> {
+  const contest = await getContestOrThrow(AppDataSource.manager, contestId);
+  assertCompetitionReadable(contest, viewer);
+  return AppDataSource.getRepository(ContestClass).find({
+    where: { contestId },
+    order: { displayOrder: 'ASC', code: 'ASC' },
+  });
+}
+
+export async function listContestRounds(
+  contestId: string,
+  viewer?: Viewer,
+): Promise<ContestRound[]> {
+  const contest = await getContestOrThrow(AppDataSource.manager, contestId);
+  assertCompetitionReadable(contest, viewer);
+  return AppDataSource.getRepository(ContestRound).find({
+    where: { contestId },
+    order: { roundNo: 'ASC', createdAt: 'ASC' },
+  });
+}
+
+export async function listContestBracket(contestId: string, viewer?: Viewer) {
+  const contest = await getContestOrThrow(AppDataSource.manager, contestId);
+  assertCompetitionReadable(contest, viewer);
+
+  const [classes, rounds, matches, registrations] = await Promise.all([
+    AppDataSource.getRepository(ContestClass).find({
+      where: { contestId },
+      order: { displayOrder: 'ASC', code: 'ASC' },
+    }),
+    AppDataSource.getRepository(ContestRound).find({
+      where: { contestId },
+      order: { roundNo: 'ASC', createdAt: 'ASC' },
+    }),
+    AppDataSource.getRepository(ContestBracketMatch).find({
+      where: { contestId },
+      order: { matchNo: 'ASC', createdAt: 'ASC' },
+    }),
+    AppDataSource.getRepository(ContestRegistration).find({
+      where: { contestId },
+      order: { createdAt: 'ASC' },
+    }),
+  ]);
+
+  return {
+    classes,
+    rounds,
+    matches,
+    registrations,
+  };
 }
 
 export async function createContestHeat(

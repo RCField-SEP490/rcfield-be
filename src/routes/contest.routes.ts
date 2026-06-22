@@ -35,6 +35,12 @@ contestRouter.get(
   contestRegistrationController.listByContest,
 );
 contestRouter.get(
+  '/:id/registrations/lookup',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestRegistrationController.lookupByCode,
+);
+contestRouter.get(
   '/:id/leaderboard',
   optionalAuthenticate,
   contestLeaderboardController.getLeaderboard,
@@ -68,6 +74,7 @@ contestRouter.post(
   requireActiveProvider,
   contestCompetitionController.createClass,
 );
+contestRouter.get('/:id/classes', optionalAuthenticate, contestCompetitionController.listClasses);
 contestRouter.post(
   '/:id/rounds',
   authenticate,
@@ -75,6 +82,8 @@ contestRouter.post(
   requireActiveProvider,
   contestCompetitionController.createRound,
 );
+contestRouter.get('/:id/rounds', optionalAuthenticate, contestCompetitionController.listRounds);
+contestRouter.get('/:id/bracket', optionalAuthenticate, contestCompetitionController.listBracket);
 contestRouter.get('/:id', optionalAuthenticate, contestController.detail);
 contestRouter.patch(
   '/:id',

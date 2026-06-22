@@ -343,6 +343,22 @@ describe('Contest registration and check-in routes', () => {
     expect(res.body.data.status).toBe(ContestRegistrationStatus.CONFIRMED);
   });
 
+  it('customer xem được registration của chính mình theo contest', async () => {
+    const { contest } = await createProviderContest(ContestStatus.OPEN, []);
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const registration = await registerContest(contest.id, customer);
+    expect(registration.status).toBe(201);
+
+    const mine = await request(app)
+      .get(`/api/v1/me/contest-registrations?contest_id=${contest.id}`)
+      .set('Authorization', `Bearer ${generateToken(customer)}`);
+
+    expect(mine.status).toBe(200);
+    expect(mine.body.data).toHaveLength(1);
+    expect(mine.body.data[0].id).toBe(registration.body.data.id);
+    expect(mine.body.data[0].user.email).toBe(customer.email);
+  });
+
   it('duplicate registration bị chặn', async () => {
     const { contest } = await createProviderContest(ContestStatus.OPEN, []);
     const customer = await createTestUser({ role: UserRole.CUSTOMER });
@@ -437,6 +453,38 @@ describe('Contest registration and check-in routes', () => {
     expect(correct.body.data.checked_in_cafe_id).toBe(includedCafe.id);
   });
 
+  it('staff tra cứu registration bằng check-in code khi thuộc cafe tham gia contest', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id, status: CafeStatus.ACTIVE });
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    await assignStaffToCafe(staff.id, cafe.id, provider.id);
+
+    const createRes = await request(app)
+      .post('/api/v1/contests')
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send(contestBody([cafe.id]));
+    expect(createRes.status).toBe(201);
+    const openRes = await request(app)
+      .post(`/api/v1/contests/${createRes.body.data.id}/open`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`);
+    expect(openRes.status).toBe(200);
+
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const registration = await registerContest(openRes.body.data.id, customer);
+    expect(registration.status).toBe(201);
+
+    const lookup = await request(app)
+      .get(
+        `/api/v1/contests/${openRes.body.data.id}/registrations/lookup?check_in_code=${registration.body.data.check_in_code}`,
+      )
+      .set('Authorization', `Bearer ${generateToken(staff)}`);
+
+    expect(lookup.status).toBe(200);
+    expect(lookup.body.data.id).toBe(registration.body.data.id);
+    expect(lookup.body.data.user.email).toBe(customer.email);
+  });
+
   it('participant hủy registration thành công', async () => {
     const { contest } = await createProviderContest(ContestStatus.OPEN, []);
     const customer = await createTestUser({ role: UserRole.CUSTOMER });
@@ -509,6 +557,16 @@ describe('Contest competition core routes', () => {
       });
     expect(entry.status).toBe(201);
     expect(entry.body.data.registrationId).toBe(registration.id);
+
+    const classes = await request(app).get(`/api/v1/contests/${contest.id}/classes`);
+    const rounds = await request(app).get(`/api/v1/contests/${contest.id}/rounds`);
+
+    expect(classes.status).toBe(200);
+    expect(classes.body.data.map((item: { id: string }) => item.id)).toContain(
+      contestClass.body.data.id,
+    );
+    expect(rounds.status).toBe(200);
+    expect(rounds.body.data.map((item: { id: string }) => item.id)).toContain(round.body.data.id);
   });
 
   it('submit TIME_ATTACK và RACE_FINAL result hợp lệ', async () => {
@@ -714,6 +772,15 @@ describe('Contest competition core routes', () => {
       [finalMatch.body.data.id],
     );
     expect(nextMatch.competitor_b_registration_id).toBe(second.registration.id);
+
+    const bracket = await request(app).get(`/api/v1/contests/${contest.id}/bracket`);
+    expect(bracket.status).toBe(200);
+    expect(bracket.body.data.matches.map((item: { id: string }) => item.id)).toEqual(
+      expect.arrayContaining([finalMatch.body.data.id, semiMatch.body.data.id]),
+    );
+    expect(bracket.body.data.registrations.map((item: { id: string }) => item.id)).toContain(
+      second.registration.id,
+    );
   });
 });
 

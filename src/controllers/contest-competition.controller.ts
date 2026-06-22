@@ -22,12 +22,49 @@ function authViewer(req: AuthRequest) {
   return { userId: req.user.userId, role: req.user.role };
 }
 
+function optionalViewer(req: AuthRequest) {
+  return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
+}
+
 function providerId(req: AuthRequest): string {
   const viewer = authViewer(req);
   return viewer.userId;
 }
 
 export const contestCompetitionController = {
+  // GET /api/v1/contests/:id/classes
+  async listClasses(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      const data = await competitionService.listContestClasses(id, optionalViewer(req));
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/contests/:id/rounds
+  async listRounds(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      const data = await competitionService.listContestRounds(id, optionalViewer(req));
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/contests/:id/bracket
+  async listBracket(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      const data = await competitionService.listContestBracket(id, optionalViewer(req));
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // POST /api/v1/contests/:id/classes [auth]
   async createClass(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

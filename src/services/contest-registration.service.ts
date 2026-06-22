@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
-import { EntityManager } from 'typeorm';
+import { EntityManager, In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Contest } from '../models/contest.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { User } from '../models/user.entity';
 import {
   AppError,
   ContestRegistrationStatus,
@@ -49,6 +50,12 @@ interface RegistrationDto {
   cancelled_at: Date | null;
   cancellation_reason: string | null;
   metadata: Record<string, unknown>;
+  user?: {
+    id: string;
+    fullName: string;
+    email: string;
+    avatarUrl: string | null;
+  };
   created_at: Date;
   updated_at: Date;
 }
@@ -59,7 +66,10 @@ const ACTIVE_REGISTRATION_STATUSES = [
   ContestRegistrationStatus.CHECKED_IN,
 ];
 
-function toRegistrationDto(registration: ContestRegistration): RegistrationDto {
+function toRegistrationDto(
+  registration: ContestRegistration,
+  user?: Pick<User, 'id' | 'full_name' | 'email' | 'avatar_url'>,
+): RegistrationDto {
   return {
     id: registration.id,
     contest_id: registration.contestId,
@@ -77,9 +87,30 @@ function toRegistrationDto(registration: ContestRegistration): RegistrationDto {
     cancelled_at: registration.cancelledAt,
     cancellation_reason: registration.cancellationReason,
     metadata: registration.metadata,
+    user: user
+      ? {
+          id: user.id,
+          fullName: user.full_name,
+          email: user.email,
+          avatarUrl: user.avatar_url,
+        }
+      : undefined,
     created_at: registration.createdAt,
     updated_at: registration.updatedAt,
   };
+}
+
+async function getRegistrationUsers(
+  manager: EntityManager,
+  registrations: ContestRegistration[],
+): Promise<Map<string, Pick<User, 'id' | 'full_name' | 'email' | 'avatar_url'>>> {
+  const userIds = Array.from(new Set(registrations.map((registration) => registration.userId)));
+  if (userIds.length === 0) return new Map();
+  const users = await manager.getRepository(User).find({
+    where: { id: In(userIds) },
+    select: ['id', 'full_name', 'email', 'avatar_url'],
+  });
+  return new Map(users.map((user) => [user.id, user]));
 }
 
 async function getContestOrThrow(manager: EntityManager, contestId: string): Promise<Contest> {
@@ -147,6 +178,32 @@ async function assertStaffAssignedToCafe(staffId: string, cafeId: string): Promi
   );
   if (rows.length === 0) {
     throw new AppError('Staff không được phân công tại chi nhánh này', 403, 'STAFF_CAFE_FORBIDDEN');
+  }
+}
+
+async function assertStaffAssignedToAnyContestCafe(
+  manager: EntityManager,
+  staffId: string,
+  contestId: string,
+): Promise<void> {
+  const row = await manager
+    .getRepository(ContestCafe)
+    .createQueryBuilder('contestCafe')
+    .innerJoin(
+      'staff_cafe_assignments',
+      'assignment',
+      'assignment.cafe_id = contestCafe.cafeId AND assignment.staff_id = :staffId',
+      { staffId },
+    )
+    .where('contestCafe.contestId = :contestId', { contestId })
+    .getOne();
+
+  if (!row) {
+    throw new AppError(
+      'Staff không thuộc chi nhánh tham gia contest',
+      403,
+      'CONTEST_OPERATOR_FORBIDDEN',
+    );
   }
 }
 
@@ -226,7 +283,65 @@ export async function listContestRegistrations(
     where: { contestId },
     order: { createdAt: 'ASC' },
   });
-  return registrations.map(toRegistrationDto);
+  const userMap = await getRegistrationUsers(AppDataSource.manager, registrations);
+  return registrations.map((registration) =>
+    toRegistrationDto(registration, userMap.get(registration.userId)),
+  );
+}
+
+export async function listMyContestRegistrations(
+  viewer: Viewer,
+  contestId?: string,
+): Promise<RegistrationDto[]> {
+  if (![UserRole.CUSTOMER, UserRole.PROVIDER].includes(viewer.role)) {
+    throw new AppError(
+      'Role hiện tại không có registration contest',
+      403,
+      'CONTEST_REGISTRATION_FORBIDDEN',
+    );
+  }
+
+  const registrations = await AppDataSource.getRepository(ContestRegistration).find({
+    where: {
+      userId: viewer.userId,
+      ...(contestId ? { contestId } : {}),
+    },
+    order: { createdAt: 'DESC' },
+  });
+  const userMap = await getRegistrationUsers(AppDataSource.manager, registrations);
+  return registrations.map((registration) =>
+    toRegistrationDto(registration, userMap.get(registration.userId)),
+  );
+}
+
+export async function lookupContestRegistrationByCode(
+  contestId: string,
+  viewer: Viewer,
+  checkInCode: string,
+): Promise<RegistrationDto> {
+  if (![UserRole.PROVIDER, UserRole.STAFF].includes(viewer.role)) {
+    throw new AppError(
+      'Role hiện tại không được tra cứu registration contest',
+      403,
+      'CONTEST_REGISTRATION_LOOKUP_FORBIDDEN',
+    );
+  }
+
+  const contest = await getContestOrThrow(AppDataSource.manager, contestId);
+  if (viewer.role === UserRole.PROVIDER) {
+    assertContestOwner(contest, viewer.userId);
+  } else {
+    await assertStaffAssignedToAnyContestCafe(AppDataSource.manager, viewer.userId, contestId);
+  }
+
+  const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+    where: { contestId, checkInCode },
+  });
+  if (!registration) {
+    throw new AppError('Registration không tồn tại', 404, 'CONTEST_REGISTRATION_NOT_FOUND');
+  }
+  const userMap = await getRegistrationUsers(AppDataSource.manager, [registration]);
+  return toRegistrationDto(registration, userMap.get(registration.userId));
 }
 
 export async function checkInRegistration(
