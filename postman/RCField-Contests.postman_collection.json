@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "RCField Contests",
-    "description": "End-to-end contest flow for provider-owned multi-branch contests. Run after migrations and seed data. Credentials: provider@gmail.com, staff@gmail.com, customer@gmail.com, provider_other@gmail.com; password 123456.",
+    "description": "End-to-end contest flow for provider-owned multi-branch contests. Run after migrations and seed data. Smoke credentials: admin@gmail.com, provider@gmail.com, staff@gmail.com, customer@gmail.com; password 123456. Demo bracket may also use contest_player01@gmail.com through contest_player08@gmail.com.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -12,6 +12,22 @@
     {
       "key": "password",
       "value": "123456"
+    },
+    {
+      "key": "admin_email",
+      "value": "admin@gmail.com"
+    },
+    {
+      "key": "provider_email",
+      "value": "provider@gmail.com"
+    },
+    {
+      "key": "customer_email",
+      "value": "customer@gmail.com"
+    },
+    {
+      "key": "staff_email",
+      "value": "staff@gmail.com"
     },
     {
       "key": "demo_provider_token",
@@ -179,7 +195,7 @@
             "url": "{{baseUrl}}/auth/login",
             "body": {
               "mode": "raw",
-              "raw": "{\"email\":\"provider@gmail.com\",\"password\":\"{{password}}\"}"
+              "raw": "{\"email\":\"{{provider_email}}\",\"password\":\"{{password}}\"}"
             }
           },
           "event": [
@@ -208,7 +224,7 @@
             "url": "{{baseUrl}}/auth/login",
             "body": {
               "mode": "raw",
-              "raw": "{\"email\":\"staff@gmail.com\",\"password\":\"{{password}}\"}"
+              "raw": "{\"email\":\"{{staff_email}}\",\"password\":\"{{password}}\"}"
             }
           },
           "event": [
@@ -236,7 +252,7 @@
             "url": "{{baseUrl}}/auth/login",
             "body": {
               "mode": "raw",
-              "raw": "{\"email\":\"customer@gmail.com\",\"password\":\"{{password}}\"}"
+              "raw": "{\"email\":\"{{customer_email}}\",\"password\":\"{{password}}\"}"
             }
           },
           "event": [
