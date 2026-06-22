@@ -327,12 +327,16 @@ export async function createPaymentComponents(
   snapshot: BookingSnapshot,
   bookingVehicles: BookingVehicle[],
 ): Promise<void> {
+  const slotFeeTotal = Number(
+    snapshot.slot_fee_total ?? (snapshot as unknown as Record<string, unknown>).slot_fee ?? 0,
+  );
+
   const components: Partial<PaymentComponent>[] = [
     {
       bookingId: booking.id,
       bookingVehicleId: null,
       type: PaymentComponentType.SLOT_FEE,
-      amount: snapshot.slot_fee_total,
+      amount: slotFeeTotal,
       status: PaymentComponentStatus.HELD,
     },
   ];
@@ -342,24 +346,27 @@ export async function createPaymentComponents(
       bookingId: booking.id,
       bookingVehicleId: bv.id,
       type: PaymentComponentType.RENTAL_FEE,
-      amount: bv.rentalFeeSnapshot,
+      amount: Number(bv.rentalFeeSnapshot ?? 0),
       status: PaymentComponentStatus.HELD,
     });
     components.push({
       bookingId: booking.id,
       bookingVehicleId: bv.id,
       type: PaymentComponentType.SECURITY_DEPOSIT,
-      amount: bv.securityDepositSnapshot,
+      amount: Number(bv.securityDepositSnapshot ?? 0),
       status: PaymentComponentStatus.HELD,
     });
   }
 
-  if (snapshot.fnb_total > 0) {
+  const fnbTotal = Number(
+    snapshot.fnb_total ?? (snapshot as unknown as Record<string, unknown>).fnb_preorder_fee ?? 0,
+  );
+  if (fnbTotal > 0) {
     components.push({
       bookingId: booking.id,
       bookingVehicleId: null,
       type: PaymentComponentType.FB_PREORDER,
-      amount: snapshot.fnb_total,
+      amount: fnbTotal,
       status: PaymentComponentStatus.HELD,
     });
   }

@@ -47,7 +47,9 @@ describe('POST /api/v1/bookings/:id/checkout-additional-payment', () => {
     const [trackType] = await AppDataSource.query(`SELECT id FROM track_types LIMIT 1`);
     const trackTypeId = trackType?.id;
 
-    // 4. Create a completed booking in database
+    // 4. Create a completed
+    // b
+    //     in database
     const [insertedBooking] = await AppDataSource.query(
       `INSERT INTO bookings (customer_id, cafe_id, slot_start, slot_end, play_mode, status, source, payment_expires_at, track_type_id)
        VALUES ($1, $2, NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour', 'BYOC', 'COMPLETED', 'APP', NOW() + INTERVAL '15 minutes', $3)
