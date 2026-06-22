@@ -76,7 +76,7 @@ async function seed() {
   logger.info('Seed', 'Clearing existing operations seed data...');
   await AppDataSource.query(`DELETE FROM trust_score_logs WHERE note LIKE '%[SEED]%'`);
   await AppDataSource.query(
-    `DELETE FROM fnb_order_items WHERE order_id IN (SELECT id FROM fnb_orders WHERE notes LIKE '%[SEED]%')`,
+    `DELETE FROM fnb_order_items WHERE fnb_order_id IN (SELECT id FROM fnb_orders WHERE notes LIKE '%[SEED]%')`,
   );
   await AppDataSource.query(`DELETE FROM fnb_orders WHERE notes LIKE '%[SEED]%'`);
   await AppDataSource.query(`DELETE FROM disputes WHERE reason LIKE '%[SEED]%'`);
@@ -236,16 +236,16 @@ async function seed() {
 
     const [order1] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO fnb_orders (
-        booking_id, session_id, type, status, total_amount, created_by, confirmed_by, confirmed_at, notes
+        booking_id, session_id, order_type, status, total_amount, created_by, confirmed_by, confirmed_at, notes
       ) VALUES ($1, $2, 'ON_SITE', 'DELIVERED', $3, $4, $5, $6, $7) RETURNING id`,
       [b1.id, s1.id, itemTotal, customer.id, staff.id, booking1Start, 'Giao đá lạnh nhiều. [SEED]'],
     );
 
     await AppDataSource.query(
       `INSERT INTO fnb_order_items (
-        order_id, menu_item_id, quantity, unit_price, item_name_snapshot
+        fnb_order_id, menu_item_id, quantity, unit_price, subtotal
       ) VALUES ($1, $2, $3, $4, $5)`,
-      [order1.id, fnb1.id, qty, fnb1.price, fnb1.name],
+      [order1.id, fnb1.id, qty, fnb1.price, itemTotal],
     );
   }
 
@@ -350,16 +350,16 @@ async function seed() {
 
     const [order2] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO fnb_orders (
-        booking_id, session_id, type, status, total_amount, created_by, notes
+        booking_id, session_id, order_type, status, total_amount, created_by, notes
       ) VALUES ($1, $2, 'ON_SITE', 'PENDING', $3, $4, $5) RETURNING id`,
       [b2.id, s2.id, fnb2.price, customer.id, 'Ít đường sữa. [SEED]'],
     );
 
     await AppDataSource.query(
       `INSERT INTO fnb_order_items (
-        order_id, menu_item_id, quantity, unit_price, item_name_snapshot
+        fnb_order_id, menu_item_id, quantity, unit_price, subtotal
       ) VALUES ($1, $2, $3, $4, $5)`,
-      [order2.id, fnb2.id, qty, fnb2.price, fnb2.name],
+      [order2.id, fnb2.id, qty, fnb2.price, Number(fnb2.price) * qty],
     );
   }
 
