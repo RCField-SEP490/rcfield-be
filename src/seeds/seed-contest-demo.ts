@@ -196,6 +196,7 @@ async function ensureContest(
            registration_closes_at = $5,
            capacity = 8,
            entry_fee = 0,
+           banner_image_url = NULL,
            vehicle_rule = $6,
            config = $7,
            updated_at = NOW()
@@ -229,7 +230,7 @@ async function ensureContest(
         endsAt,
         now,
         registrationClosesAt,
-        'https://cdn.rcfield.vn/contests/demo-knockout.jpg',
+        null,
         JSON.stringify({ demo: true, bracket_size: 8 }),
         providerId,
       ],
