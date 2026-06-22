@@ -17,7 +17,7 @@ export class Notification {
   @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
 
-  @Column({ type: 'enum', enum: NotificationType })
+  @Column({ name: 'type', type: 'varchar', length: 255 })
   type: NotificationType;
 
   @Column({ type: 'varchar', length: 255 })
