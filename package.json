@@ -25,6 +25,8 @@
     "seed:all": "npm run seed && npm run seed:cafes && npm run seed:menu && npm run seed:operations",
     "reset:bookings": "ts-node --transpile-only src/scripts/reset-bookings.ts",
     "test:kb": "ts-node --transpile-only src/scripts/test-kb.ts",
+    "test:staff-customer-flow": "ts-node --transpile-only src/scripts/test-staff-customer-flow.ts",
+    "test:staff-flow": "npm run test:staff-customer-flow",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
