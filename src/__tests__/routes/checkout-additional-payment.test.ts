@@ -23,7 +23,16 @@ describe('POST /api/v1/bookings/:id/checkout-additional-payment', () => {
   let booking: Booking;
 
   beforeAll(() => {
-    (env.vnpay as unknown as { mockEnabled: boolean }).mockEnabled = true;
+    const mutableVnpay = env.vnpay as unknown as {
+      mockEnabled: boolean;
+      tmnCode: string;
+      hashSecret: string;
+      paymentUrl: string;
+    };
+    mutableVnpay.mockEnabled = true;
+    mutableVnpay.tmnCode = 'MOCK_TMN';
+    mutableVnpay.hashSecret = 'MOCK_SECRET';
+    mutableVnpay.paymentUrl = 'https://mock.vnpay.vn';
   });
 
   beforeEach(async () => {
