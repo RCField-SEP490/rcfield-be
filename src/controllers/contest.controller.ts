@@ -95,6 +95,16 @@ export const contestController = {
     }
   },
 
+  // POST /api/v1/contests/:id/close [auth]
+  async close(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      const data = await contestService.closeContest(id, providerId(req));
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
   // POST /api/v1/contests/:id/cancel [auth]
   async cancel(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

@@ -304,79 +304,38 @@ async function ensureRegistrations(
   return registrationIds;
 }
 
-async function ensureContestClass(contestId: string): Promise<string> {
-  const [existing] = await AppDataSource.query<IdRow[]>(
-    `SELECT id FROM contest_classes WHERE contest_id = $1 AND code = 'DEMO_KNOCKOUT'`,
-    [contestId],
-  );
-  if (existing) return existing.id;
-
-  const [created] = await AppDataSource.query<IdRow[]>(
-    `INSERT INTO contest_classes (contest_id, code, name, rules, capacity, display_order, is_active)
-     VALUES ($1, 'DEMO_KNOCKOUT', 'Demo Knockout', $2, 8, 0, TRUE)
-     RETURNING id`,
-    [contestId, JSON.stringify({ format: 'single_elimination', entrants: 8 })],
-  );
-  return created.id;
-}
-
-async function ensureRound(
+async function ensureMatch(
   contestId: string,
-  contestClassId: string,
-  roundType: 'QUALIFYING' | 'FINAL',
   roundNo: number,
-  name: string,
-): Promise<string> {
-  const [existing] = await AppDataSource.query<IdRow[]>(
-    `SELECT id FROM contest_rounds
-     WHERE contest_class_id = $1 AND round_type = $2 AND round_no = $3`,
-    [contestClassId, roundType, roundNo],
-  );
-  if (existing) return existing.id;
-
-  const [created] = await AppDataSource.query<IdRow[]>(
-    `INSERT INTO contest_rounds (contest_id, contest_class_id, round_type, round_no, name, rules)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id`,
-    [contestId, contestClassId, roundType, roundNo, name, JSON.stringify({ bracket: true })],
-  );
-  return created.id;
-}
-
-async function ensureBracketMatch(
-  contestId: string,
-  roundId: string,
   matchNo: number,
-  competitorARegistrationId: string | null,
-  competitorBRegistrationId: string | null,
+  name: string,
+  matchType: 'HEAD_TO_HEAD' | 'FINAL',
   nextMatchId: string | null,
-  nextSlot: 'A' | 'B' | null,
   metadata: Record<string, unknown>,
 ): Promise<string> {
   const [existing] = await AppDataSource.query<IdRow[]>(
-    `SELECT id FROM contest_bracket_matches WHERE contest_round_id = $1 AND match_no = $2`,
-    [roundId, matchNo],
+    `SELECT id FROM contest_matches WHERE contest_id = $1 AND round_no = $2 AND match_no = $3`,
+    [contestId, roundNo, matchNo],
   );
   if (existing) {
     await AppDataSource.query(
-      `UPDATE contest_bracket_matches
-       SET competitor_a_registration_id = $1,
-           competitor_b_registration_id = $2,
+      `UPDATE contest_matches
+       SET name = $1,
+           match_type = $2,
+           status = 'READY',
            next_match_id = $3,
-           next_slot = $4,
-           status = 'SCHEDULED',
-           winner_registration_id = NULL,
-           loser_registration_id = NULL,
+           advancement_rule = $4,
+           result_summary = '{}'::jsonb,
+           metadata = $5,
            decided_by = NULL,
            decided_at = NULL,
-           metadata = $5,
            updated_at = NOW()
        WHERE id = $6`,
       [
-        competitorARegistrationId,
-        competitorBRegistrationId,
+        name,
+        matchType,
         nextMatchId,
-        nextSlot,
+        JSON.stringify({ top_n: 1 }),
         JSON.stringify(metadata),
         existing.id,
       ],
@@ -385,118 +344,112 @@ async function ensureBracketMatch(
   }
 
   const [created] = await AppDataSource.query<IdRow[]>(
-    `INSERT INTO contest_bracket_matches (
-       contest_id, contest_round_id, match_no,
-       competitor_a_registration_id, competitor_b_registration_id,
-       next_match_id, next_slot, metadata
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `INSERT INTO contest_matches (
+       contest_id, round_no, match_no, name, match_type, status,
+       next_match_id, advancement_rule, metadata
+     ) VALUES ($1,$2,$3,$4,$5,'READY',$6,$7,$8)
      RETURNING id`,
     [
       contestId,
-      roundId,
+      roundNo,
       matchNo,
-      competitorARegistrationId,
-      competitorBRegistrationId,
+      name,
+      matchType,
       nextMatchId,
-      nextSlot,
+      JSON.stringify({ top_n: 1 }),
       JSON.stringify(metadata),
     ],
   );
   return created.id;
 }
 
-async function seedBracket(contestId: string, contestClassId: string, registrationIds: string[]) {
-  const quarterRoundId = await ensureRound(
-    contestId,
-    contestClassId,
-    'QUALIFYING',
-    1,
-    'Quarter Final',
-  );
-  const semiRoundId = await ensureRound(contestId, contestClassId, 'QUALIFYING', 2, 'Semi Final');
-  const finalRoundId = await ensureRound(contestId, contestClassId, 'FINAL', 1, 'Final');
-
-  const finalMatchId = await ensureBracketMatch(
-    contestId,
-    finalRoundId,
-    1,
-    null,
-    null,
-    null,
-    null,
-    {
-      stage: 'FINAL',
-    },
-  );
-  const semi1Id = await ensureBracketMatch(
-    contestId,
-    semiRoundId,
-    1,
-    null,
-    null,
-    finalMatchId,
-    'A',
-    {
-      stage: 'SEMI_FINAL',
-    },
-  );
-  const semi2Id = await ensureBracketMatch(
-    contestId,
-    semiRoundId,
-    2,
-    null,
-    null,
-    finalMatchId,
-    'B',
-    {
-      stage: 'SEMI_FINAL',
-    },
-  );
-
-  await ensureBracketMatch(
-    contestId,
-    quarterRoundId,
-    1,
-    registrationIds[0],
-    registrationIds[1],
-    semi1Id,
-    'A',
-    { stage: 'QUARTER_FINAL', seed_pair: [1, 8] },
-  );
-  await ensureBracketMatch(
-    contestId,
-    quarterRoundId,
-    2,
-    registrationIds[2],
-    registrationIds[3],
-    semi1Id,
-    'B',
-    { stage: 'QUARTER_FINAL', seed_pair: [4, 5] },
-  );
-  await ensureBracketMatch(
-    contestId,
-    quarterRoundId,
-    3,
-    registrationIds[4],
-    registrationIds[5],
-    semi2Id,
-    'A',
-    { stage: 'QUARTER_FINAL', seed_pair: [2, 7] },
-  );
-  await ensureBracketMatch(
-    contestId,
-    quarterRoundId,
-    4,
-    registrationIds[6],
-    registrationIds[7],
-    semi2Id,
-    'B',
-    { stage: 'QUARTER_FINAL', seed_pair: [3, 6] },
-  );
-
-  return { quarterRoundId, semiRoundId, finalRoundId, semi1Id, semi2Id, finalMatchId };
+async function resetMatchParticipants(matchId: string, registrationIds: string[]): Promise<void> {
+  await AppDataSource.query(`DELETE FROM contest_match_participants WHERE match_id = $1`, [
+    matchId,
+  ]);
+  for (const [index, registrationId] of registrationIds.entries()) {
+    await AppDataSource.query(
+      `INSERT INTO contest_match_participants (
+         match_id, registration_id, slot_no, lane, grid_position, seed_no, status, metadata
+       ) VALUES ($1,$2,$3,$4,$3,$3,'READY',$5)`,
+      [
+        matchId,
+        registrationId,
+        index + 1,
+        String.fromCharCode(65 + index),
+        JSON.stringify({ demo_seed: true }),
+      ],
+    );
+  }
 }
 
+async function seedBracket(contestId: string, registrationIds: string[]) {
+  const finalMatchId = await ensureMatch(contestId, 3, 1, 'Final', 'FINAL', null, {
+    stage: 'FINAL',
+  });
+  const semi1Id = await ensureMatch(contestId, 2, 1, 'Semi Final 1', 'HEAD_TO_HEAD', finalMatchId, {
+    stage: 'SEMI_FINAL',
+  });
+  const semi2Id = await ensureMatch(contestId, 2, 2, 'Semi Final 2', 'HEAD_TO_HEAD', finalMatchId, {
+    stage: 'SEMI_FINAL',
+  });
+
+  const quarter1Id = await ensureMatch(
+    contestId,
+    1,
+    1,
+    'Quarter Final 1',
+    'HEAD_TO_HEAD',
+    semi1Id,
+    {
+      stage: 'QUARTER_FINAL',
+      seed_pair: [1, 8],
+    },
+  );
+  const quarter2Id = await ensureMatch(
+    contestId,
+    1,
+    2,
+    'Quarter Final 2',
+    'HEAD_TO_HEAD',
+    semi1Id,
+    {
+      stage: 'QUARTER_FINAL',
+      seed_pair: [4, 5],
+    },
+  );
+  const quarter3Id = await ensureMatch(
+    contestId,
+    1,
+    3,
+    'Quarter Final 3',
+    'HEAD_TO_HEAD',
+    semi2Id,
+    {
+      stage: 'QUARTER_FINAL',
+      seed_pair: [2, 7],
+    },
+  );
+  const quarter4Id = await ensureMatch(
+    contestId,
+    1,
+    4,
+    'Quarter Final 4',
+    'HEAD_TO_HEAD',
+    semi2Id,
+    {
+      stage: 'QUARTER_FINAL',
+      seed_pair: [3, 6],
+    },
+  );
+
+  await resetMatchParticipants(quarter1Id, [registrationIds[0], registrationIds[1]]);
+  await resetMatchParticipants(quarter2Id, [registrationIds[2], registrationIds[3]]);
+  await resetMatchParticipants(quarter3Id, [registrationIds[4], registrationIds[5]]);
+  await resetMatchParticipants(quarter4Id, [registrationIds[6], registrationIds[7]]);
+
+  return { quarter1Id, quarter2Id, quarter3Id, quarter4Id, semi1Id, semi2Id, finalMatchId };
+}
 async function seed() {
   await AppDataSource.initialize();
   logger.database('Connected');
@@ -523,8 +476,7 @@ async function seed() {
   await ensureStaffAssignment(staffId, cafeId, providerId);
   const contestId = await ensureContest(providerId, cafeId, trackTypeId);
   const registrationIds = await ensureRegistrations(contestId, cafeId, staffId, playerIds);
-  const contestClassId = await ensureContestClass(contestId);
-  const bracket = await seedBracket(contestId, contestClassId, registrationIds);
+  const bracket = await seedBracket(contestId, registrationIds);
 
   await AppDataSource.destroy();
   logger.info('ContestDemoSeed', 'Done');
@@ -533,7 +485,6 @@ async function seed() {
   logger.info('ContestDemoSeed', `Players:  contest_player01..08@gmail.com / ${PASSWORD}`);
   logger.info('ContestDemoSeed', `Cafe ID:  ${cafeId}`);
   logger.info('ContestDemoSeed', `Contest:  ${contestId}`);
-  logger.info('ContestDemoSeed', `Class:    ${contestClassId}`);
   logger.info('ContestDemoSeed', `Bracket:  ${JSON.stringify(bracket)}`);
 }
 

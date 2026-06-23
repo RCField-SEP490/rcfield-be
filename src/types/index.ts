@@ -114,47 +114,39 @@ export enum ContestCafeRole {
   PARTICIPATING = 'PARTICIPATING',
 }
 
-export enum ContestRoundType {
-  PRACTICE = 'PRACTICE',
-  QUALIFYING = 'QUALIFYING',
+export enum ContestScheduleFormat {
+  KNOCKOUT = 'KNOCKOUT',
+  MULTI_DRIVER_HEAT = 'MULTI_DRIVER_HEAT',
+  TIME_ATTACK = 'TIME_ATTACK',
+}
+
+export enum ContestSeedingMode {
+  MANUAL = 'MANUAL',
+  CHECK_IN_ORDER = 'CHECK_IN_ORDER',
+}
+
+export enum ContestMatchType {
+  HEAD_TO_HEAD = 'HEAD_TO_HEAD',
+  MULTI_DRIVER = 'MULTI_DRIVER',
+  TIME_ATTACK = 'TIME_ATTACK',
   FINAL = 'FINAL',
 }
 
-export enum ContestHeatStatus {
-  SCHEDULED = 'SCHEDULED',
+export enum ContestMatchStatus {
+  DRAFT = 'DRAFT',
+  READY = 'READY',
   RUNNING = 'RUNNING',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
 }
 
-export enum ContestResultType {
-  TIME_ATTACK = 'TIME_ATTACK',
-  RACE_FINAL = 'RACE_FINAL',
-}
-
-export enum ContestResultStatus {
-  SUBMITTED = 'SUBMITTED',
-  VERIFIED = 'VERIFIED',
-}
-
-export enum ContestRewardType {
-  TROPHY = 'TROPHY',
-  VOUCHER = 'VOUCHER',
-  MERCHANDISE = 'MERCHANDISE',
-  POINTS = 'POINTS',
-  OTHER = 'OTHER',
-}
-
-export enum ContestRewardClaimStatus {
-  ISSUED = 'ISSUED',
-  CLAIMED = 'CLAIMED',
-  VOID = 'VOID',
-}
-
-export enum ContestBracketMatchStatus {
-  SCHEDULED = 'SCHEDULED',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
+export enum ContestMatchParticipantStatus {
+  READY = 'READY',
+  STARTED = 'STARTED',
+  FINISHED = 'FINISHED',
+  DNS = 'DNS',
+  DNF = 'DNF',
+  DQ = 'DQ',
 }
 
 // ── Payment ───────────────────────────────────────────────────────────────────

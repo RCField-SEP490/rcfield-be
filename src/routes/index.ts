@@ -22,13 +22,7 @@ import { vnpayRouter } from './vnpay.routes';
 import { bookingRouter } from './booking.routes';
 import { contestRouter } from './contest.routes';
 import { contestRegistrationRouter } from './contest-registration.routes';
-import {
-  contestHeatRouter,
-  contestBracketMatchRouter,
-  contestResultRouter,
-  contestRoundRouter,
-} from './contest-competition.routes';
-import { contestLeaderboardController } from '../controllers/contest-leaderboard.controller';
+import { contestMatchRouter } from './contest-match.routes';
 import { contestRegistrationController } from '../controllers/contest-registration.controller';
 import { bookingController } from '../controllers/booking.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
@@ -128,16 +122,7 @@ router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
 router.use('/contests', contestRouter);
 router.use('/contest-registrations', contestRegistrationRouter);
-router.use('/contest-rounds', contestRoundRouter);
-router.use('/contest-heats', contestHeatRouter);
-router.use('/contest-results', contestResultRouter);
-router.use('/contest-bracket-matches', contestBracketMatchRouter);
-router.get(
-  '/me/contest-reward-claims',
-  authenticate,
-  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
-  contestLeaderboardController.myRewardClaims,
-);
+router.use('/contest-matches', contestMatchRouter);
 router.get(
   '/me/contest-registrations',
   authenticate,

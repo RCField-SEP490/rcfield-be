@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { contestController } from '../controllers/contest.controller';
 import { contestRegistrationController } from '../controllers/contest-registration.controller';
-import { contestCompetitionController } from '../controllers/contest-competition.controller';
-import { contestLeaderboardController } from '../controllers/contest-leaderboard.controller';
+import { contestTournamentController } from '../controllers/contest-tournament.controller';
 import {
   authenticate,
   authorize,
@@ -41,49 +40,23 @@ contestRouter.get(
   contestRegistrationController.lookupByCode,
 );
 contestRouter.get(
-  '/:id/leaderboard',
-  optionalAuthenticate,
-  contestLeaderboardController.getLeaderboard,
+  '/:id/matches',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestTournamentController.listMatches,
+);
+contestRouter.post(
+  '/:id/matches/generate',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestTournamentController.generate,
 );
 contestRouter.post(
   '/:id/leaderboard/publish',
   authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
-  contestLeaderboardController.publishLeaderboard,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestTournamentController.publishLeaderboard,
 );
-contestRouter.post(
-  '/:id/rewards',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
-  contestLeaderboardController.createReward,
-);
-contestRouter.get('/:id/rewards', optionalAuthenticate, contestLeaderboardController.listRewards);
-contestRouter.post(
-  '/:id/rewards/issue',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
-  contestLeaderboardController.issueRewards,
-);
-contestRouter.post(
-  '/:id/classes',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
-  contestCompetitionController.createClass,
-);
-contestRouter.get('/:id/classes', optionalAuthenticate, contestCompetitionController.listClasses);
-contestRouter.post(
-  '/:id/rounds',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
-  contestCompetitionController.createRound,
-);
-contestRouter.get('/:id/rounds', optionalAuthenticate, contestCompetitionController.listRounds);
-contestRouter.get('/:id/bracket', optionalAuthenticate, contestCompetitionController.listBracket);
 contestRouter.get('/:id', optionalAuthenticate, contestController.detail);
 contestRouter.patch(
   '/:id',
@@ -98,6 +71,13 @@ contestRouter.post(
   authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.open,
+);
+contestRouter.post(
+  '/:id/close',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.close,
 );
 contestRouter.post(
   '/:id/cancel',

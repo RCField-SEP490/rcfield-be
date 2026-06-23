@@ -4,6 +4,7 @@ import { Cafe } from '../models/cafe.entity';
 import { Contest } from '../models/contest.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { writeContestAudit } from './contest-audit.service';
 import {
   AppError,
   CafeStatus,
@@ -321,6 +322,19 @@ export async function createContest(providerId: string, body: ContestBody): Prom
     );
     await manager.getRepository(ContestCafe).save(contestCafes);
 
+    await writeContestAudit(manager, {
+      contestId: saved.id,
+      actorId: providerId,
+      actorRole: UserRole.PROVIDER,
+      eventType: 'contest.created',
+      afterJson: {
+        status: saved.status,
+        capacity: saved.capacity,
+        entry_fee: saved.entryFee,
+        cafe_ids: uniqueIds(body.participating_cafe_ids),
+      },
+    });
+
     return toContestDto(manager, saved);
   });
 }
@@ -333,6 +347,12 @@ export async function updateContest(
   return AppDataSource.transaction(async (manager) => {
     const contest = await getContestOrThrow(manager, contestId);
     assertOwner(contest, providerId);
+    const before = {
+      name: contest.name,
+      status: contest.status,
+      capacity: contest.capacity,
+      config: contest.config,
+    };
 
     if (contest.status !== ContestStatus.DRAFT && body.participating_cafe_ids !== undefined) {
       throw new AppError(
@@ -378,6 +398,22 @@ export async function updateContest(
       await manager.getRepository(ContestCafe).save(contestCafes);
     }
 
+    await writeContestAudit(manager, {
+      contestId: saved.id,
+      actorId: providerId,
+      actorRole: UserRole.PROVIDER,
+      eventType: 'contest.updated',
+      beforeJson: before,
+      afterJson: {
+        name: saved.name,
+        status: saved.status,
+        capacity: saved.capacity,
+        config: saved.config,
+        changed_fields: Object.keys(body),
+        cafe_ids: body.participating_cafe_ids ? uniqueIds(body.participating_cafe_ids) : undefined,
+      },
+    });
+
     return toContestDto(manager, saved);
   });
 }
@@ -386,6 +422,7 @@ export async function openContest(contestId: string, providerId: string): Promis
   return AppDataSource.transaction(async (manager) => {
     const contest = await getContestOrThrow(manager, contestId);
     assertOwner(contest, providerId);
+    const before = { status: contest.status };
     if (contest.status !== ContestStatus.DRAFT) {
       throw new AppError('Chỉ contest DRAFT mới được mở đăng ký', 409, 'CONTEST_STATUS_INVALID');
     }
@@ -402,6 +439,41 @@ export async function openContest(contestId: string, providerId: string): Promis
 
     contest.status = ContestStatus.OPEN;
     const saved = await manager.getRepository(Contest).save(contest);
+    await writeContestAudit(manager, {
+      contestId: saved.id,
+      actorId: providerId,
+      actorRole: UserRole.PROVIDER,
+      eventType: 'contest.opened',
+      beforeJson: before,
+      afterJson: {
+        status: saved.status,
+        registration_opens_at: saved.registrationOpensAt,
+        registration_closes_at: saved.registrationClosesAt,
+      },
+    });
+    return toContestDto(manager, saved);
+  });
+}
+
+export async function closeContest(contestId: string, providerId: string): Promise<ContestDto> {
+  return AppDataSource.transaction(async (manager) => {
+    const contest = await getContestOrThrow(manager, contestId);
+    assertOwner(contest, providerId);
+    const before = { status: contest.status };
+    if (contest.status !== ContestStatus.OPEN) {
+      throw new AppError('Chỉ contest OPEN mới được đóng đăng ký', 409, 'CONTEST_STATUS_INVALID');
+    }
+
+    contest.status = ContestStatus.CLOSED;
+    const saved = await manager.getRepository(Contest).save(contest);
+    await writeContestAudit(manager, {
+      contestId: saved.id,
+      actorId: providerId,
+      actorRole: UserRole.PROVIDER,
+      eventType: 'contest.closed',
+      beforeJson: before,
+      afterJson: { status: saved.status },
+    });
     return toContestDto(manager, saved);
   });
 }
@@ -410,6 +482,7 @@ export async function cancelContest(contestId: string, providerId: string): Prom
   return AppDataSource.transaction(async (manager) => {
     const contest = await getContestOrThrow(manager, contestId);
     assertOwner(contest, providerId);
+    const before = { status: contest.status };
     if ([ContestStatus.CANCELLED, ContestStatus.COMPLETED].includes(contest.status)) {
       throw new AppError(
         'Contest không thể hủy ở trạng thái hiện tại',
@@ -418,7 +491,7 @@ export async function cancelContest(contestId: string, providerId: string): Prom
       );
     }
     contest.status = ContestStatus.CANCELLED;
-    await manager
+    const cancelledRegistrations = await manager
       .getRepository(ContestRegistration)
       .createQueryBuilder()
       .update(ContestRegistration)
@@ -438,6 +511,18 @@ export async function cancelContest(contestId: string, providerId: string): Prom
       })
       .execute();
     const saved = await manager.getRepository(Contest).save(contest);
+    await writeContestAudit(manager, {
+      contestId: saved.id,
+      actorId: providerId,
+      actorRole: UserRole.PROVIDER,
+      eventType: 'contest.cancelled',
+      beforeJson: before,
+      afterJson: {
+        status: saved.status,
+        cancelled_registration_count: cancelledRegistrations.affected ?? 0,
+      },
+      reason: 'Contest cancelled by provider',
+    });
     return toContestDto(manager, saved);
   });
 }

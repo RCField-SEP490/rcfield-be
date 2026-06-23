@@ -4,6 +4,7 @@ import { AppDataSource } from '../config/database';
 import { Contest } from '../models/contest.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { writeContestAudit } from './contest-audit.service';
 import { User } from '../models/user.entity';
 import {
   AppError,
@@ -268,7 +269,22 @@ export async function registerContest(
       metadata: body.metadata ?? {},
     });
 
-    return toRegistrationDto(await manager.getRepository(ContestRegistration).save(registration));
+    const saved = await manager.getRepository(ContestRegistration).save(registration);
+    await writeContestAudit(manager, {
+      contestId,
+      registrationId: saved.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.created',
+      afterJson: {
+        user_id: viewer.userId,
+        participant_role: viewer.role,
+        vehicle_source: saved.vehicleSource,
+        status: saved.status,
+      },
+      metadata: { active_count_before_create: activeCount },
+    });
+    return toRegistrationDto(saved);
   });
 }
 
@@ -377,12 +393,29 @@ export async function checkInRegistration(
       );
     }
 
+    const before = { status: registration.status, checked_in_at: registration.checkedInAt };
+
     registration.status = ContestRegistrationStatus.CHECKED_IN;
     registration.checkedInCafeId = body.cafe_id;
     registration.checkedInBy = viewer.userId;
     registration.checkedInAt = new Date();
 
-    return toRegistrationDto(await manager.getRepository(ContestRegistration).save(registration));
+    const saved = await manager.getRepository(ContestRegistration).save(registration);
+    await writeContestAudit(manager, {
+      contestId: contest.id,
+      registrationId: saved.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.checked_in',
+      beforeJson: before,
+      afterJson: {
+        status: saved.status,
+        checked_in_cafe_id: saved.checkedInCafeId,
+        checked_in_by: saved.checkedInBy,
+        checked_in_at: saved.checkedInAt,
+      },
+    });
+    return toRegistrationDto(saved);
   });
 }
 
@@ -408,11 +441,29 @@ export async function cancelRegistration(
       );
     }
 
+    const before = { status: registration.status, cancelled_at: registration.cancelledAt };
+
     registration.status = ContestRegistrationStatus.CANCELLED;
     registration.cancelledBy = viewer.userId;
     registration.cancelledAt = new Date();
     registration.cancellationReason = body.reason ?? null;
 
-    return toRegistrationDto(await manager.getRepository(ContestRegistration).save(registration));
+    const saved = await manager.getRepository(ContestRegistration).save(registration);
+    await writeContestAudit(manager, {
+      contestId: contest.id,
+      registrationId: saved.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.cancelled',
+      beforeJson: before,
+      afterJson: {
+        status: saved.status,
+        cancelled_by: saved.cancelledBy,
+        cancelled_at: saved.cancelledAt,
+        cancellation_reason: saved.cancellationReason,
+      },
+      reason: saved.cancellationReason,
+    });
+    return toRegistrationDto(saved);
   });
 }
