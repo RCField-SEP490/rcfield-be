@@ -55,10 +55,11 @@ async function getCafesForPage(pageId: string): Promise<{ id: string; name: stri
      FROM cafes c
      WHERE c.provider_id = (
        SELECT ca.provider_id FROM cafes ca
-       JOIN cafe_channels ch ON ch.cafe_id = ca.id
+       JOIN cafe_channels ch ON ch.cafe_id::uuid = ca.id
        WHERE ch.page_id = $1
          AND ch.channel_type = 'FACEBOOK_MESSENGER'
          AND ch.status = 'CONNECTED'
+         AND ch.deleted_at IS NULL
        LIMIT 1
      )
      AND c.deleted_at IS NULL

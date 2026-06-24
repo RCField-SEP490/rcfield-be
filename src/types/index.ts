@@ -322,9 +322,16 @@ export enum ChannelStatus {
   DISCONNECTED = 'DISCONNECTED',
 }
 
+export interface FbButton {
+  type: 'web_url';
+  url: string;
+  title: string;
+}
+
 export interface FbFormattedMessage {
   text: string;
   quickReplies: FbQuickReply[];
+  buttons?: FbButton[]; // present → renders as button template, URL hidden from user
 }
 
 export interface FbQuickReply {

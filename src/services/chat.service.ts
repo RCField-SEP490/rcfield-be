@@ -235,6 +235,16 @@ function buildSystemPrompt(
   parts.push(
     `- Nếu khách chỉ nói "ngày 12" mà không rõ tháng → dùng tháng hiện tại hoặc tháng kế tiếp, ĐỪNG hỏi lại.`,
   );
+  parts.push(
+    `- Khi khách hỏi về khuyến mãi, ưu đãi, giảm giá, mã giảm giá, deal: GỌI NGAY get_promotions.`,
+  );
+  parts.push(
+    `- Khi khách hỏi về gói chơi, thẻ tháng, gói buổi, mua gói, giá gói: GỌI NGAY get_packages.`,
+  );
+  parts.push(`- Khi khách hỏi về menu, đồ ăn, thức uống, đồ uống, giá đồ ăn: GỌI NGAY get_menu.`);
+  parts.push(
+    `- Khi khách hỏi về xe RC, loại xe, xe nào phù hợp, giá thuê xe, xe cho người mới: GỌI NGAY get_vehicles.`,
+  );
   parts.push('');
   parts.push(`## Kiến thức về chi nhánh`);
   parts.push(
@@ -405,7 +415,7 @@ export async function ragChat(
       ]);
 
       const answer = finalResponse.text ?? '';
-      ragCache.set(cafeId, message, queryEmbedding, answer, sources, quickReplies);
+      ragCache.set(cafeId, cafe.name, message, queryEmbedding, answer, sources, quickReplies);
       return { answer, responseType: 'text', sources, quickReplies };
     }
 
@@ -415,7 +425,7 @@ export async function ragChat(
       generateQuickReplies(message, cafe.name),
     ]);
 
-    ragCache.set(cafeId, message, queryEmbedding, answer, sources, quickReplies);
+    ragCache.set(cafeId, cafe.name, message, queryEmbedding, answer, sources, quickReplies);
     return { answer, responseType: 'text', sources, quickReplies };
   } catch (err) {
     logger.error('Chat', 'Gemini error', err);
@@ -609,7 +619,7 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
 
     logger.info('RAG', `Stream complete  ${t()}`, { cafeId });
     const quickReplies = await quickRepliesPromise;
-    ragCache.set(cafeId, message, queryEmbedding, fullAnswer, sources, quickReplies);
+    ragCache.set(cafeId, cafe.name, message, queryEmbedding, fullAnswer, sources, quickReplies);
   }
 
   return { stream: tokenStream(), sources, quickRepliesPromise };
