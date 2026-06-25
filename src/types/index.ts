@@ -340,6 +340,20 @@ export interface FbQuickReply {
   payload: string;
 }
 
+export interface FbMessagingEvent {
+  sender: { id: string };
+  recipient: { id: string };
+  timestamp: number;
+  message?: {
+    mid: string;
+    text?: string;
+    is_echo?: boolean;
+    attachments?: unknown[];
+    quick_reply?: { payload: string };
+  };
+  postback?: { payload: string; title: string };
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export class AppError extends Error {

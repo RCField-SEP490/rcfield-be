@@ -3,7 +3,7 @@ import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { AppError, ChannelStatus, ChannelType } from '../types';
+import { AppError, ChannelStatus, ChannelType, FbMessagingEvent } from '../types';
 import { CafeChannel } from '../models/cafe-channel.entity';
 import { incrementAIQuota } from '../services/subscription.service';
 import { decryptToken } from '../utils/crypto';
@@ -17,20 +17,7 @@ import {
 } from '../services/chat.service';
 import { FbMessengerFormatter } from '../services/fb-messenger.formatter';
 import { sendMessage, sendText, markSeen, typingOn } from '../services/fb-messenger.service';
-
-interface FbMessagingEvent {
-  sender: { id: string };
-  recipient: { id: string };
-  timestamp: number;
-  message?: {
-    mid: string;
-    text?: string;
-    is_echo?: boolean;
-    attachments?: unknown[];
-    quick_reply?: { payload: string };
-  };
-  postback?: { payload: string; title: string };
-}
+import { fbChatQueue } from '../queues/fb-chat.queue';
 
 interface FbWebhookPayload {
   object: string;
@@ -88,7 +75,7 @@ async function sendCafeSelection(
   );
 }
 
-async function processEvent(event: FbMessagingEvent, pageId: string): Promise<void> {
+export async function processEvent(event: FbMessagingEvent, pageId: string): Promise<void> {
   if (event.message?.is_echo) return;
   if (!event.message?.text && !event.postback) return;
 
@@ -260,9 +247,18 @@ export function handleWebhookEvent(req: Request, res: Response): void {
   for (const entry of payload.entry ?? []) {
     const pageId = entry.id;
     for (const event of entry.messaging ?? []) {
-      processEvent(event, pageId).catch((err) => {
-        logger.error('Facebook Webhook', 'unhandled error in processEvent', err);
-      });
+      fbChatQueue
+        .add('process', { event, pageId })
+        .then((job) => {
+          logger.info('Facebook Webhook', 'enqueued', {
+            jobId: job.id,
+            pageId,
+            psid: event.sender.id,
+          });
+        })
+        .catch((err) => {
+          logger.error('Facebook Webhook', 'failed to enqueue event', err);
+        });
     }
   }
 }
