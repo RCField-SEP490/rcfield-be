@@ -4,6 +4,7 @@ import { logger } from '../config/logger';
 import { CreateStaffSchema, TransferStaffSchema, UpdateFnbOrderStatusSchema } from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
+import { confirmRefund } from '../services/payment.service';
 import { env } from '../config/env';
 
 export const staffController = {
@@ -174,6 +175,154 @@ export const staffController = {
         status,
       });
       res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/bookings/:bookingId/check-in [auth]
+  async checkIn(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.startCheckIn(req.params.bookingId, req.user.userId);
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/sessions/:sessionId [auth]
+  async getSessionDetail(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.getSessionDetail(req.params.sessionId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/inspections [auth]
+  async submitInspection(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.submitInspection(
+        req.params.sessionId,
+        req.user.userId,
+        req.body,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/extensions [auth]
+  async proposeExtension(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.proposeExtension(
+        req.params.sessionId,
+        req.user.userId,
+        req.body,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/fnb-orders [auth]
+  async addSessionFnbOrder(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.addSessionFnbOrder(
+        req.params.sessionId,
+        req.user.userId,
+        req.body,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/swap-vehicle [auth]
+  async swapSessionVehicle(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { oldVehicleId, newVehicleId, oldVehicleNewStatus } = req.body;
+      const data = await staffService.swapSessionVehicle(
+        req.params.sessionId,
+        oldVehicleId,
+        newVehicleId,
+        oldVehicleNewStatus,
+        req.user.userId,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/simulate-check-in-response [auth]
+  async simulateClientCheckIn(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.simulateClientCheckInResponse(req.params.sessionId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/simulate-check-out-response [auth]
+  async simulateClientCheckOut(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.simulateClientCheckOutResponse(req.params.sessionId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/simulate-extension-response [auth]
+  async simulateClientExtension(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { approved } = req.body;
+      const data = await staffService.simulateClientExtensionResponse(
+        req.params.sessionId,
+        approved,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/bookings/:bookingId/settle-pending-payments [auth]
+  async settlePendingPayments(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.settlePendingPayments(req.params.bookingId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/bookings/:bookingId/confirm-refund [auth]
+  async confirmRefund(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      await confirmRefund(req.params.bookingId);
+      res.json({ success: true, message: 'Đã xác nhận hoàn tiền thành công' });
     } catch (err) {
       next(err);
     }

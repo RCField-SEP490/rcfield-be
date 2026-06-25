@@ -106,6 +106,16 @@ export async function transition(
       [NotificationType.TRIAL_EXPIRING_SOON]: ['', ''],
       [NotificationType.PAYMENT_REQUEST_CONFIRMED]: ['', ''],
       [NotificationType.PAYMENT_REQUEST_REJECTED]: ['', ''],
+      [NotificationType.SESSION_CHECKIN_INSPECTION]: ['', ''],
+      [NotificationType.SESSION_CHECKOUT_INSPECTION]: ['', ''],
+      [NotificationType.SESSION_EXTENSION_PROPOSED]: ['', ''],
+      [NotificationType.SESSION_FNB_ORDER_ADDED]: ['', ''],
+      [NotificationType.CUSTOMER_CHECKIN_CONFIRMED]: ['', ''],
+      [NotificationType.CUSTOMER_CHECKOUT_CONFIRMED]: ['', ''],
+      [NotificationType.CUSTOMER_INSPECTION_DISPUTED]: ['', ''],
+      [NotificationType.CUSTOMER_EXTENSION_APPROVED]: ['', ''],
+      [NotificationType.CUSTOMER_EXTENSION_REJECTED]: ['', ''],
+      [NotificationType.CUSTOMER_PAYMENT_CONFIRMED]: ['', ''],
     };
     const [title, message] = messages[notifType];
     if (title) await createNotification(sub.providerId, notifType, title, message);

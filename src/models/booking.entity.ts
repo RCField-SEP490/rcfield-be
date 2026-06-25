@@ -52,6 +52,9 @@ export class Booking {
   @Column({ name: 'slot_end', type: 'timestamptz' })
   slotEnd: Date;
 
+  @Column({ name: 'slot_count', type: 'integer', default: 1 })
+  slotCount: number;
+
   @Column({ name: 'payment_expires_at', type: 'timestamptz' })
   paymentExpiresAt: Date;
 

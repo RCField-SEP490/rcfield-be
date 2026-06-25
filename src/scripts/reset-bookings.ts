@@ -24,6 +24,13 @@ async function resetBookings() {
   logger.info('Reset', 'Deleting booking-related data...');
 
   // Delete in FK-safe order
+  await q(`DELETE FROM notifications`);
+  await q(`DELETE FROM disputes`);
+  await q(`DELETE FROM incidents`);
+  await q(`DELETE FROM inspections`);
+  await q(`DELETE FROM extension_proposals`);
+  await q(`DELETE FROM session_vehicles`);
+  await q(`DELETE FROM sessions`);
   await q(`DELETE FROM fnb_order_items`);
   await q(`DELETE FROM fnb_orders`);
   await q(`DELETE FROM booking_vehicles`);

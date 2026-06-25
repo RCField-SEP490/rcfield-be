@@ -29,6 +29,13 @@ bookingRouter.post(
 );
 
 bookingRouter.post(
+  '/:id/checkout-additional-payment',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  bookingController.createCheckoutAdditionalPayment,
+);
+
+bookingRouter.post(
   '/:id/mock-checkout',
   authenticate,
   authorize(UserRole.CUSTOMER),

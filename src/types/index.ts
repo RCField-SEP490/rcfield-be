@@ -109,8 +109,10 @@ export enum PaymentComponentStatus {
   PENDING = 'PENDING',
   HELD = 'HELD',
   DISBURSED = 'DISBURSED',
-  REFUNDED = 'REFUNDED',
-  PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED',
+  // Deposit-specific statuses: system calculates refund amount, Staff confirms actual handoff
+  PENDING_REFUND = 'PENDING_REFUND', // System computed refund amount, awaiting Staff confirmation
+  REFUNDED = 'REFUNDED', // Staff confirmed full deposit returned to customer
+  PARTIALLY_REFUNDED = 'PARTIALLY_REFUNDED', // Staff confirmed partial return (damage deducted)
 }
 
 export enum PaymentTransactionType {
@@ -157,6 +159,67 @@ export enum PackageStatus {
 export enum InspectionType {
   CHECK_IN = 'CHECK_IN',
   CHECK_OUT = 'CHECK_OUT',
+}
+
+export enum SessionStatus {
+  CHECKED_IN = 'CHECKED_IN',
+  ACTIVE = 'ACTIVE',
+  EXTENDING = 'EXTENDING',
+  CHECKING_OUT = 'CHECKING_OUT',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ParticipantRole {
+  DRIVER = 'DRIVER',
+  PLAYER = 'PLAYER',
+  SPECTATOR = 'SPECTATOR',
+  GUARDIAN = 'GUARDIAN',
+}
+
+export enum VehicleSource {
+  RENTAL = 'RENTAL',
+  BYOC = 'BYOC',
+}
+
+export enum SessionVehicleStatus {
+  ASSIGNED = 'ASSIGNED',
+  IN_USE = 'IN_USE',
+  RETURNED = 'RETURNED',
+  DAMAGED = 'DAMAGED',
+}
+
+export enum InspectionSubjectType {
+  RENTAL_VEHICLE = 'RENTAL_VEHICLE',
+  BYOC_VEHICLE = 'BYOC_VEHICLE',
+}
+
+export enum InspectionItemStatus {
+  OK = 'OK',
+  SCRATCHED = 'SCRATCHED',
+  BROKEN = 'BROKEN',
+  MISSING = 'MISSING',
+  DIRTY = 'DIRTY',
+  NEEDS_REVIEW = 'NEEDS_REVIEW',
+}
+
+export enum PhotoAngle {
+  FRONT = 'FRONT',
+  BACK = 'BACK',
+  LEFT = 'LEFT',
+  RIGHT = 'RIGHT',
+  TOP = 'TOP',
+  BOTTOM = 'BOTTOM',
+  DETAIL = 'DETAIL',
+  OTHER = 'OTHER',
+}
+
+export enum ExtensionProposalStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
 }
 
 // ── Dispute ───────────────────────────────────────────────────────────────────
@@ -229,6 +292,16 @@ export enum NotificationType {
   SUBSCRIPTION_ACTIVATED = 'SUBSCRIPTION_ACTIVATED',
   PAYMENT_REQUEST_CONFIRMED = 'PAYMENT_REQUEST_CONFIRMED',
   PAYMENT_REQUEST_REJECTED = 'PAYMENT_REQUEST_REJECTED',
+  SESSION_CHECKIN_INSPECTION = 'SESSION_CHECKIN_INSPECTION',
+  SESSION_CHECKOUT_INSPECTION = 'SESSION_CHECKOUT_INSPECTION',
+  SESSION_EXTENSION_PROPOSED = 'SESSION_EXTENSION_PROPOSED',
+  SESSION_FNB_ORDER_ADDED = 'SESSION_FNB_ORDER_ADDED',
+  CUSTOMER_CHECKIN_CONFIRMED = 'CUSTOMER_CHECKIN_CONFIRMED',
+  CUSTOMER_CHECKOUT_CONFIRMED = 'CUSTOMER_CHECKOUT_CONFIRMED',
+  CUSTOMER_INSPECTION_DISPUTED = 'CUSTOMER_INSPECTION_DISPUTED',
+  CUSTOMER_EXTENSION_APPROVED = 'CUSTOMER_EXTENSION_APPROVED',
+  CUSTOMER_EXTENSION_REJECTED = 'CUSTOMER_EXTENSION_REJECTED',
+  CUSTOMER_PAYMENT_CONFIRMED = 'CUSTOMER_PAYMENT_CONFIRMED',
 }
 
 // ── Pricing ───────────────────────────────────────────────────────────────────

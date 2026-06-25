@@ -17,6 +17,8 @@ async function bootstrap() {
     await AppDataSource.initialize();
     logger.database(`PostgreSQL connected on port ${env.db.port}`);
 
+    // Note: Database notification type column was migrated to VARCHAR(255), so pg_enum checks are no longer required.
+
     await redis.connect();
     logger.info('Redis', `Connected on port ${env.redis.port}`);
 
