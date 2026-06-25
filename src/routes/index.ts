@@ -24,6 +24,7 @@ import { bookingRouter } from './booking.routes';
 import { bookingController } from '../controllers/booking.controller';
 import { customerPackageRouter } from './customer-package.routes';
 import { pricingRouter } from './pricing.routes';
+import { sessionRouter } from './session.routes';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -41,7 +42,6 @@ router.get('/health', (_req, res) => {
 router.get('/subscription-plans', async (_req, res, next) => {
   try {
     const plans = await AppDataSource.getRepository(SubscriptionPlan).find({
-      where: { isTrial: false },
       order: { pricePerMonth: 'ASC' },
     });
     res.json(
@@ -52,6 +52,7 @@ router.get('/subscription-plans', async (_req, res, next) => {
         aiQuotaPerMonth: p.aiQuotaPerMonth,
         channelLimit: p.channelLimit,
         pricePerMonth: Number(p.pricePerMonth),
+        isTrial: p.isTrial,
       })),
     );
   } catch (err) {
@@ -120,6 +121,7 @@ router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
+router.use('/sessions', sessionRouter);
 router.use('/', customerPackageRouter);
 router.use('/', pricingRouter);
 router.get(

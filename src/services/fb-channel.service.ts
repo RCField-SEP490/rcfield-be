@@ -177,10 +177,33 @@ export async function handleOAuthCallback(
   const encrypted = encryptToken(page.access_token, env.facebook.encryptionKey as Buffer);
 
   const repo = AppDataSource.getRepository(CafeChannel);
+
+  // Force-disconnect any other cafe currently connected to this same page_id
+  const conflicting = await repo.find({
+    where: {
+      pageId: page.id,
+      channelType: ChannelType.FACEBOOK_MESSENGER,
+      status: ChannelStatus.CONNECTED,
+    },
+  });
+  for (const stale of conflicting) {
+    if (stale.cafeId !== cafeId) {
+      stale.status = ChannelStatus.DISCONNECTED;
+      await repo.softRemove(stale);
+      logger.warn('FbChannel', 'force-disconnected stale channel on reconnect', {
+        staleCafeId: stale.cafeId,
+        pageId: page.id,
+      });
+    }
+  }
+
   const existing = await repo.findOne({
     where: { cafeId, channelType: ChannelType.FACEBOOK_MESSENGER },
     withDeleted: true,
   });
+
+  // Track old pageId to clear sessions if the page changed
+  const oldPageId = existing?.pageId;
 
   if (existing) {
     existing.pageId = page.id;
@@ -202,6 +225,14 @@ export async function handleOAuthCallback(
         connectedAt: new Date(),
       }),
     );
+  }
+
+  // Clear stale Redis sessions so users re-route to the new cafe mapping
+  const sessionPatterns = [`fb:cafe-session:${page.id}:*`];
+  if (oldPageId && oldPageId !== page.id) sessionPatterns.push(`fb:cafe-session:${oldPageId}:*`);
+  for (const pattern of sessionPatterns) {
+    const keys = await redis.keys(pattern);
+    if (keys.length > 0) await redis.del(...(keys as [string, ...string[]]));
   }
 
   await subscribePageToWebhook(page.id, page.access_token);
@@ -278,7 +309,13 @@ export async function disconnect(cafeId: string, requestingUserId: string): Prom
   if (!channel)
     throw new AppError('Không có kết nối Facebook nào đang hoạt động', 404, 'NOT_FOUND');
 
+  const { pageId } = channel;
   channel.status = ChannelStatus.DISCONNECTED;
   await repo.softRemove(channel);
-  logger.info('FbChannel', 'disconnected', { cafeId, pageId: channel.pageId });
+
+  // Clear all Redis sessions for this page so next message re-routes correctly
+  const sessionKeys = await redis.keys(`fb:cafe-session:${pageId}:*`);
+  if (sessionKeys.length > 0) await redis.del(...(sessionKeys as [string, ...string[]]));
+
+  logger.info('FbChannel', 'disconnected', { cafeId, pageId });
 }

@@ -28,13 +28,28 @@ export async function sendMessage(
   formatted: FbFormattedMessage,
   pageToken: string,
 ): Promise<void> {
+  const messagePayload: Record<string, unknown> =
+    formatted.buttons && formatted.buttons.length > 0
+      ? {
+          attachment: {
+            type: 'template',
+            payload: {
+              template_type: 'button',
+              text: formatted.text,
+              buttons: formatted.buttons,
+            },
+          },
+        }
+      : { text: formatted.text };
+
+  if (formatted.quickReplies.length > 0) {
+    messagePayload.quick_replies = formatted.quickReplies;
+  }
+
   const body: Record<string, unknown> = {
     recipient: { id: psid },
     messaging_type: 'RESPONSE',
-    message: {
-      text: formatted.text,
-      ...(formatted.quickReplies.length > 0 && { quick_replies: formatted.quickReplies }),
-    },
+    message: messagePayload,
   };
 
   const res = await fetch(`${FB_GRAPH}/me/messages?access_token=${pageToken}`, {

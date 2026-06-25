@@ -13,7 +13,7 @@ export class CafeChannel {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'cafe_id' })
+  @Column({ name: 'cafe_id', type: 'uuid' })
   cafeId: string;
 
   @Column({ name: 'channel_type', type: 'varchar', length: 50 })

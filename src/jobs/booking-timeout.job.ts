@@ -25,13 +25,15 @@ export function scheduleBookingTimeout(): void {
         }
       }
 
-      // NO_SHOW: CONFIRMED bookings where slot_start + 30 min has passed
+      // NO_SHOW: CONFIRMED bookings where slot_start + 30 min has passed and no session exists
       const noShows: { id: string }[] = await AppDataSource.query(
-        `SELECT id FROM bookings
-         WHERE status = 'CONFIRMED'
-           AND slot_start + INTERVAL '30 minutes' < NOW()
-           AND updated_at <= slot_start
-           AND deleted_at IS NULL`,
+        `SELECT b.id FROM bookings b
+         WHERE b.status = 'CONFIRMED'
+           AND b.slot_start + INTERVAL '30 minutes' < NOW()
+           AND b.deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM sessions s WHERE s.booking_id = b.id
+           )`,
       );
 
       if (noShows.length > 0) {
