@@ -1004,7 +1004,10 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     }
   }
 
-  const fnbOrders = await AppDataSource.getRepository(FnbOrder).find({ where: { sessionId } });
+  // Include both on-site session orders AND the booking's pre-order
+  const fnbOrders = await AppDataSource.getRepository(FnbOrder).find({
+    where: [{ sessionId }, { bookingId: session.bookingId, orderType: FnbOrderType.PRE_ORDER }],
+  });
   const mappedFnbOrders = [];
   for (const order of fnbOrders) {
     const items = await AppDataSource.getRepository(FnbOrderItem).find({
@@ -1023,6 +1026,8 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     }
     mappedFnbOrders.push({
       orderId: order.id,
+      orderType: order.orderType,
+      status: order.status,
       items: itemDetails,
       total: Number(order.totalAmount),
     });

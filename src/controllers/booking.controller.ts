@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from 'express';
+import { In, Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
-import { AppError, AuthRequest, UserRole } from '../types';
+import { AppError, AuthRequest, UserRole, SessionStatus } from '../types';
 import {
   CreateBookingSchema,
   CancelBookingSchema,
@@ -258,7 +259,37 @@ export const bookingController = {
         qb = qb.andWhere('b.status = :status', { status: query.status });
       }
 
-      const [data, total] = await Promise.all([qb.getMany(), qb.getCount()]);
+      const [bookings, total] = await Promise.all([qb.getMany(), qb.getCount()]);
+
+      // Batch-fetch active sessions for these bookings
+      const bookingIds = bookings.map((b) => b.id);
+      const activeSessions =
+        bookingIds.length > 0
+          ? await AppDataSource.getRepository(Session).find({
+              where: {
+                bookingId: In(bookingIds),
+                status: Not(In([SessionStatus.COMPLETED, SessionStatus.CANCELLED])),
+              },
+              select: ['id', 'bookingId', 'status', 'plannedEndAt', 'actualStartAt'],
+            })
+          : [];
+
+      const sessionByBookingId = new Map(activeSessions.map((s) => [s.bookingId, s]));
+      const data = bookings.map((b) => {
+        const sess = sessionByBookingId.get(b.id);
+        return {
+          ...b,
+          session: sess
+            ? {
+                id: sess.id,
+                status: sess.status,
+                plannedEndAt: sess.plannedEndAt,
+                actualStartAt: sess.actualStartAt,
+              }
+            : null,
+        };
+      });
+
       res.json({ success: true, data, total, page: query.page, limit: query.limit });
     } catch (err) {
       next(err);
