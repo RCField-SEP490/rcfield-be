@@ -21,6 +21,7 @@ router.post('/forgot-password/verify', authController.verifyPasswordResetCode);
 router.post('/reset-password', authController.resetPassword);
 router.get('/me', authenticate, authController.me);
 router.patch('/me', authenticate, authController.updateMe);
+router.post('/change-password', authenticate, authController.changePassword);
 router.post('/logout', authenticate, authController.logout);
 
 export { router as authRouter };

@@ -83,6 +83,17 @@ export function calculateRefundAmounts(
   const totalRentalFee = snapshot.vehicles.reduce((sum, v) => sum + v.rental_fee, 0);
   const totalDeposit = snapshot.vehicles.reduce((sum, v) => sum + v.security_deposit, 0);
 
+  // R3: no-show or payment timeout — 0% slot, 100% rental + deposit
+  if (isNoShow) {
+    return {
+      slotFeeRefund: 0,
+      rentalFeeRefund: totalRentalFee,
+      depositRefund: totalDeposit,
+      fnbRefund: snapshot.fnb_total,
+      totalRefund: totalRentalFee + totalDeposit + snapshot.fnb_total,
+    };
+  }
+
   // R2: provider cancellation — always 100% regardless of timing
   if (role === UserRole.PROVIDER) {
     const total = snapshot.slot_fee_total + totalRentalFee + totalDeposit + snapshot.fnb_total;
@@ -92,17 +103,6 @@ export function calculateRefundAmounts(
       depositRefund: totalDeposit,
       fnbRefund: snapshot.fnb_total,
       totalRefund: total,
-    };
-  }
-
-  // R3: no-show or payment timeout — 0% slot, 100% rental + deposit
-  if (isNoShow) {
-    return {
-      slotFeeRefund: 0,
-      rentalFeeRefund: totalRentalFee,
-      depositRefund: totalDeposit,
-      fnbRefund: snapshot.fnb_total,
-      totalRefund: totalRentalFee + totalDeposit + snapshot.fnb_total,
     };
   }
 

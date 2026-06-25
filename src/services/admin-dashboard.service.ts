@@ -1,5 +1,5 @@
 import { AppDataSource } from '../config/database';
-import { BookingStatus, PaymentRequestStatus, SubscriptionStatus, SessionStatus } from '../types';
+import { PaymentRequestStatus, SubscriptionStatus, SessionStatus } from '../types';
 
 export interface AdminKpi {
   totalCafes: {
@@ -175,14 +175,13 @@ export async function getAdminDashboardSummary(): Promise<AdminDashboardSummary>
         WHEN EXTRACT(ISODOW FROM d.day) = 6 THEN 'T7'
         WHEN EXTRACT(ISODOW FROM d.day) = 7 THEN 'CN'
       END AS "name",
-      COUNT(b.id)::int AS "value"
+      COUNT(s.id)::int AS "value"
      FROM (
        SELECT generate_series(NOW() - INTERVAL '6 days', NOW(), '1 day')::date AS day
      ) d
-     LEFT JOIN bookings b ON b.slot_start::date = d.day AND b.status NOT IN ($1, $2)
+     LEFT JOIN sessions s ON s.actual_start_at::date = d.day
      GROUP BY d.day
      ORDER BY d.day ASC`,
-    [BookingStatus.PENDING, BookingStatus.CANCELLED],
   );
 
   // 8. Table: Đối tác đăng ký gần đây

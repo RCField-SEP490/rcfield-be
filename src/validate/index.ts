@@ -58,6 +58,11 @@ export const UpdateMeSchema = z
   })
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
 
+export const ChangePasswordSchema = z.object({
+  current_password: z.string().min(6, 'Mật khẩu hiện tại tối thiểu 6 ký tự'),
+  new_password: z.string().min(6, 'Mật khẩu mới tối thiểu 6 ký tự').max(100),
+});
+
 export const CreateStaffSchema = z.object({
   cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
   full_name: z.string().trim().min(2).max(255),
