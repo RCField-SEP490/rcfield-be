@@ -12,6 +12,7 @@ import {
   VerifyPasswordResetCodeSchema,
   ResetPasswordWithCodeSchema,
   UpdateMeSchema,
+  ChangePasswordSchema,
 } from '../validate';
 
 export const authController = {
@@ -93,6 +94,18 @@ export const authController = {
       const input = UpdateMeSchema.parse(req.body);
       const data = await authService.updateMe(req.user!.userId, input);
       res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/auth/change-password  [auth]
+  async changePassword(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const input = ChangePasswordSchema.parse(req.body);
+      await authService.changePassword(req.user!.userId, input);
+      logger.auth('password changed', { userId: req.user!.userId });
+      res.json({ success: true, message: 'Đổi mật khẩu thành công' });
     } catch (err) {
       next(err);
     }

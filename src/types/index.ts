@@ -80,6 +80,15 @@ export enum BookingStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum SessionStatus {
+  CHECKED_IN = 'CHECKED_IN',
+  ACTIVE = 'ACTIVE',
+  EXTENDING = 'EXTENDING',
+  CHECKING_OUT = 'CHECKING_OUT',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
 export enum BookingParticipantType {
   BOOKER = 'BOOKER',
   REGISTERED_USER = 'REGISTERED_USER',
@@ -159,15 +168,6 @@ export enum PackageStatus {
 export enum InspectionType {
   CHECK_IN = 'CHECK_IN',
   CHECK_OUT = 'CHECK_OUT',
-}
-
-export enum SessionStatus {
-  CHECKED_IN = 'CHECKED_IN',
-  ACTIVE = 'ACTIVE',
-  EXTENDING = 'EXTENDING',
-  CHECKING_OUT = 'CHECKING_OUT',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
 }
 
 export enum ParticipantRole {

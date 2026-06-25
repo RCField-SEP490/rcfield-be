@@ -408,6 +408,31 @@ class AuthService {
     await this.passwordResetRepo.update(row.id, { used_at: new Date() });
     await this.tokenRepo.delete({ user_id: user.id });
   }
+
+  async changePassword(
+    userId: string,
+    input: { current_password: string; new_password: string },
+  ): Promise<void> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new AppError('Người dùng không tồn tại', 404, 'USER_NOT_FOUND');
+
+    if (!user.password_hash) {
+      throw new AppError(
+        'Tài khoản đăng nhập bằng Google không thể đổi mật khẩu.',
+        400,
+        'LOCAL_PASSWORD_NOT_AVAILABLE',
+      );
+    }
+
+    const isValid = await bcrypt.compare(input.current_password, user.password_hash);
+    if (!isValid) {
+      throw new AppError('Mật khẩu hiện tại không chính xác', 400, 'INCORRECT_CURRENT_PASSWORD');
+    }
+
+    user.password_hash = await bcrypt.hash(input.new_password, 10);
+    await this.userRepo.save(user);
+    await this.tokenRepo.delete({ user_id: userId });
+  }
 }
 
 export const authService = new AuthService();

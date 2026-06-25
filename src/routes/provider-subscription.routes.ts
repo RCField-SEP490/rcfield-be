@@ -5,6 +5,7 @@ import { paymentRequestController } from '../controllers/payment-request.control
 import { providerOnboardingController } from '../controllers/provider-onboarding.controller';
 import { staffController } from '../controllers/staff.controller';
 import { shiftController } from '../controllers/shift.controller';
+import { providerDashboardController } from '../controllers/provider-dashboard.controller';
 
 export const providerSubscriptionRouter = Router();
 
@@ -117,4 +118,31 @@ providerSubscriptionRouter.get(
   '/payment-requests',
   requireActiveProvider,
   paymentRequestController.listMyPaymentRequests,
+);
+
+// Provider Dashboard statistics
+providerSubscriptionRouter.get(
+  '/dashboard/kpi',
+  requireActiveProvider,
+  providerDashboardController.getKpi,
+);
+providerSubscriptionRouter.get(
+  '/dashboard/revenue-trend',
+  requireActiveProvider,
+  providerDashboardController.getRevenueTrend,
+);
+providerSubscriptionRouter.get(
+  '/dashboard/revenue-breakdown',
+  requireActiveProvider,
+  providerDashboardController.getRevenueBreakdown,
+);
+providerSubscriptionRouter.get(
+  '/dashboard/branch-performance',
+  requireActiveProvider,
+  providerDashboardController.getBranchPerformance,
+);
+providerSubscriptionRouter.get(
+  '/dashboard/recent-bookings',
+  requireActiveProvider,
+  providerDashboardController.getRecentBookings,
 );
