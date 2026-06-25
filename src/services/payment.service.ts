@@ -160,6 +160,16 @@ export async function createCheckoutUrl(
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
   const bookingVehicles = await bvRepo.find({ where: { bookingId } });
 
+  logger.info('PaymentService', 'checkout vehicles snapshot', {
+    bookingId,
+    count: bookingVehicles.length,
+    rows: bookingVehicles.map((v) => ({
+      vehicleId: v.vehicleId,
+      rentalFeeSnapshot: Number(v.rentalFeeSnapshot),
+      securityDepositSnapshot: Number(v.securityDepositSnapshot),
+    })),
+  });
+
   const fnbRepo = AppDataSource.getRepository(FnbOrder);
   const fnbOrders = await fnbRepo.find({ where: { bookingId, orderType: FnbOrderType.PRE_ORDER } });
   const fnbTotal = fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
@@ -182,13 +192,32 @@ export async function createCheckoutUrl(
 
   const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
-  const rawSlotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount);
+
+  // Read the pricing multiplier frozen at booking creation (snapshot-first principle).
+  // Do NOT recalculate from live pricing rules — the multiplier may have changed.
+  const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
+  const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
+  const rawSlotFee = Math.round(
+    Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier,
+  );
 
   // If package was applied, slot fee is 0 (createBooking already validated ownership)
   const packageUsed = (booking.snapshot as unknown as BookingSnapshot | null)?.package_used;
   const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
 
   const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+
+  logger.info('PaymentService', 'checkout totals', {
+    bookingId,
+    slotFee,
+    rentalFeeTotal,
+    depositTotal,
+    fnbTotal,
+    totalCharged,
+    playerCount,
+    slotCount,
+    slotMultiplier,
+  });
 
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
@@ -711,9 +740,17 @@ export async function mockConfirmPayment(
   const cafe = await cafeRepo.findOne({ where: { id: booking.cafeId } });
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
 
+  const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
+    where: { bookingId },
+  });
+  const playerCount = Math.max(1, participantCount);
+
   const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
-  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount);
+
+  const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
+  const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
+  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier);
   const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
 
   const snapshot: BookingSnapshot = {

@@ -64,10 +64,15 @@ export async function oauthCallback(
 
   try {
     const { returnPath } = await handleOAuthCallback(code, state);
-    res.redirect(`${fe}${returnPath}?status=connected`);
+    const successUrl = new URL(returnPath, fe);
+    successUrl.searchParams.set('status', 'connected');
+    res.redirect(successUrl.toString());
   } catch (err) {
     if (err instanceof AppError) {
-      res.redirect(`${fe}${fallbackPath}?status=error&reason=${err.code ?? 'unknown'}`);
+      const errorUrl = new URL(fallbackPath, fe);
+      errorUrl.searchParams.set('status', 'error');
+      errorUrl.searchParams.set('reason', err.code ?? 'unknown');
+      res.redirect(errorUrl.toString());
     } else {
       next(err);
     }

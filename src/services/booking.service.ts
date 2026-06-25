@@ -67,8 +67,10 @@ function vehicleLockKey(vehicleId: string, slotStart: Date): string {
   return `slot:lock:vehicle:${vehicleId}:${slotStart.getTime()}`;
 }
 
-function byocCounterKey(cafeId: string, slotStart: Date): string {
-  return `slot:byoc:${cafeId}:${slotStart.getTime()}`;
+function byocCounterKey(cafeId: string, slotStart: Date, trackConfigId?: string | null): string {
+  return trackConfigId
+    ? `slot:byoc:${cafeId}:${trackConfigId}:${slotStart.getTime()}`
+    : `slot:byoc:${cafeId}:${slotStart.getTime()}`;
 }
 
 async function acquireVehicleLock(
@@ -93,8 +95,9 @@ async function acquireByocSlot(
   slotStart: Date,
   capacity: number,
   count: number,
+  trackConfigId?: string | null,
 ): Promise<boolean> {
-  const key = byocCounterKey(cafeId, slotStart);
+  const key = byocCounterKey(cafeId, slotStart, trackConfigId);
   const next = await redis.incrby(key, count);
   await redis.expire(key, env.platform.slotLockTtlSeconds);
   if (next > capacity) {
@@ -104,8 +107,13 @@ async function acquireByocSlot(
   return true;
 }
 
-async function releaseByocSlot(cafeId: string, slotStart: Date, count: number): Promise<void> {
-  const key = byocCounterKey(cafeId, slotStart);
+async function releaseByocSlot(
+  cafeId: string,
+  slotStart: Date,
+  count: number,
+  trackConfigId?: string | null,
+): Promise<void> {
+  const key = byocCounterKey(cafeId, slotStart, trackConfigId);
   const current = Number((await redis.get(key)) ?? 0);
   if (current > 0) {
     await redis.set(
@@ -145,7 +153,12 @@ export async function transition(bookingId: string, event: string): Promise<Book
       const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
         where: { bookingId },
       });
-      await releaseByocSlot(booking.cafeId, booking.slotStart, participantCount || 1);
+      await releaseByocSlot(
+        booking.cafeId,
+        booking.slotStart,
+        participantCount || 1,
+        booking.trackConfigId,
+      );
     }
     await cancelPendingFnbOrders(bookingId);
     logger.info('BookingService', `transition → CANCELLED bookingId=${bookingId}`);
@@ -417,7 +430,13 @@ export async function createBooking(
 
   if (body.play_mode === BookingMode.BYOC) {
     const capacity = resolvedTrackConfig ? resolvedTrackConfig.byocCapacity : cafe.byocCapacity;
-    const locked = await acquireByocSlot(body.cafe_id, slotStart, capacity, playerCount);
+    const locked = await acquireByocSlot(
+      body.cafe_id,
+      slotStart,
+      capacity,
+      playerCount,
+      resolvedTrackConfig?.id,
+    );
     if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
   }
 
@@ -642,7 +661,7 @@ export async function createBooking(
     // Release locks on transaction failure
     await releaseVehicleLocks(lockedVehicleIds, slotStart);
     if (body.play_mode === BookingMode.BYOC) {
-      await releaseByocSlot(body.cafe_id, slotStart, playerCount);
+      await releaseByocSlot(body.cafe_id, slotStart, playerCount, resolvedTrackConfig?.id);
     }
     throw err;
   }
@@ -685,7 +704,12 @@ export async function cancelBooking(
     const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
       where: { bookingId },
     });
-    await releaseByocSlot(booking.cafeId, booking.slotStart, participantCount || 1);
+    await releaseByocSlot(
+      booking.cafeId,
+      booking.slotStart,
+      participantCount || 1,
+      booking.trackConfigId,
+    );
   }
 
   await cancelPendingFnbOrders(bookingId);

@@ -41,7 +41,6 @@ router.get('/health', (_req, res) => {
 router.get('/subscription-plans', async (_req, res, next) => {
   try {
     const plans = await AppDataSource.getRepository(SubscriptionPlan).find({
-      where: { isTrial: false },
       order: { pricePerMonth: 'ASC' },
     });
     res.json(
@@ -52,6 +51,7 @@ router.get('/subscription-plans', async (_req, res, next) => {
         aiQuotaPerMonth: p.aiQuotaPerMonth,
         channelLimit: p.channelLimit,
         pricePerMonth: Number(p.pricePerMonth),
+        isTrial: p.isTrial,
       })),
     );
   } catch (err) {
