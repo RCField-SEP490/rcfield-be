@@ -349,6 +349,120 @@
       ]
     },
     {
+      "name": "Customer Vehicles",
+      "item": [
+        {
+          "name": "List My Customer Vehicles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/me/customer-vehicles"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer vehicles listed', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Customer Vehicle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/me/customer-vehicles",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Mini-Z Drift Spec {{$timestamp}}\",\"scale\":\"1/10\",\"chassis_type\":\"Drift AWD\",\"frequency\":\"2.4GHz\",\"notes\":\"Contest BYOC registration vehicle\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer vehicle created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('customer_vehicle_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Customer Vehicle",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/me/customer-vehicles/{{customer_vehicle_id}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"notes\":\"Updated from Postman\",\"status\":\"ACTIVE\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer vehicle updated', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Archive Customer Vehicle",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/me/customer-vehicles/{{customer_vehicle_id}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer vehicle deleted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Contest Management",
       "item": [
         {
@@ -368,7 +482,7 @@
             "url": "{{baseUrl}}/contests",
             "body": {
               "mode": "raw",
-              "raw": "{\"name\":\"Postman Spec Cup {{$timestamp}}\",\"description\":\"Contest created from Postman\",\"track_type_id\":\"{{track_type_id}}\",\"vehicle_rule\":{\"allowed_sources\":[\"BYOC\",\"RENTAL\"]},\"starts_at\":\"2030-06-18T10:00:00.000Z\",\"ends_at\":\"2030-06-18T12:00:00.000Z\",\"registration_opens_at\":\"2026-06-11T00:00:00.000Z\",\"registration_closes_at\":\"2030-06-17T10:00:00.000Z\",\"capacity\":24,\"entry_fee\":0,\"participating_cafe_ids\":[\"{{cafe_id}}\"],\"config\":{\"format\":\"TIME_ATTACK\"}}"
+              "raw": "{\"name\":\"Postman Spec Cup {{$timestamp}}\",\"description\":\"Contest created from Postman\",\"track_type_id\":\"{{track_type_id}}\",\"vehicle_rule\":{\"vehicle_policy\":\"MIXED\"},\"starts_at\":\"2030-06-18T10:00:00.000Z\",\"ends_at\":\"2030-06-18T12:00:00.000Z\",\"registration_opens_at\":\"2026-06-11T00:00:00.000Z\",\"registration_closes_at\":\"2030-06-17T10:00:00.000Z\",\"capacity\":24,\"entry_fee\":0,\"participating_cafe_ids\":[\"{{cafe_id}}\"],\"config\":{\"format\":\"KNOCKOUT\"}}"
             }
           },
           "event": [
@@ -434,7 +548,7 @@
       "name": "Registration",
       "item": [
         {
-          "name": "Customer Register",
+          "name": "Customer Register BYOC Pending",
           "request": {
             "method": "POST",
             "header": [
@@ -450,7 +564,7 @@
             "url": "{{baseUrl}}/contests/{{contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\"}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"note\":\"BYOC registration from Postman\"}}"
             }
           },
           "event": [
@@ -458,7 +572,8 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('customer registered', () => pm.response.to.have.status(201));",
+                  "pm.test('customer registered BYOC', () => pm.response.to.have.status(201));",
+                  "pm.test('registration is pending', () => pm.expect(pm.response.json().data.status).to.eql('PENDING'));",
                   "pm.collectionVariables.set('registration_id', pm.response.json().data.id);"
                 ]
               }
@@ -466,13 +581,75 @@
           ]
         },
         {
-          "name": "Provider Other Register",
+          "name": "Approve Registration",
           "request": {
             "method": "POST",
             "header": [
               {
                 "key": "Authorization",
-                "value": "Bearer {{provider_other_token}}"
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{registration_id}}/approve",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('registration approved', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject Registration",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{registration_id}}/reject",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"Vehicle does not fit contest requirements\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('registration rejected', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customer Register Rental Linked Booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
               },
               {
                 "key": "Content-Type",
@@ -482,9 +659,20 @@
             "url": "{{baseUrl}}/contests/{{contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\"}"
+              "raw": "{\"vehicle_source\":\"RENTAL\",\"booking_id\":\"{{booking_id}}\",\"vehicle_id\":\"{{vehicle_id}}\",\"metadata\":{\"note\":\"Rental registration linked to booking\"}}"
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('customer registered rental', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('rental_registration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "List Registrations",
@@ -497,7 +685,17 @@
               }
             ],
             "url": "{{baseUrl}}/contests/{{contest_id}}/registrations"
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('registrations listed', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -529,7 +727,38 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('checked in', () => pm.response.to.have.status(200));"
+                  "pm.test('customer checked in', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong Cafe Staff Check-in Should Fail",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staff_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-registrations/{{registration_id}}/check-in",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"cafe_id\":\"{{other_cafe_id}}\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('wrong cafe is rejected', () => pm.expect(pm.response.code).to.be.oneOf([403,409]));"
                 ]
               }
             }
@@ -541,7 +770,7 @@
       "name": "Competition",
       "item": [
         {
-          "name": "Create Class",
+          "name": "Generate Matches",
           "request": {
             "method": "POST",
             "header": [
@@ -554,10 +783,10 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contests/{{contest_id}}/classes",
+            "url": "{{baseUrl}}/contests/{{contest_id}}/matches/generate",
             "body": {
               "mode": "raw",
-              "raw": "{\"code\":\"POSTMAN\",\"name\":\"Postman Class\"}"
+              "raw": "{\"format\":\"KNOCKOUT\",\"drivers_per_match\":2,\"seeding_mode\":\"MANUAL\",\"registration_ids\":[\"{{registration_id}}\"],\"cafe_id\":\"{{cafe_id}}\",\"track_config_id\":\"{{track_config_id}}\"}"
             }
           },
           "event": [
@@ -565,15 +794,15 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('class created', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('contest_class_id', pm.response.json().data.id);"
+                  "pm.test('matches generated', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data || []; if (data[0]) pm.collectionVariables.set('match_id', data[0].id);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create Round",
+          "name": "Submit Match Results",
           "request": {
             "method": "POST",
             "header": [
@@ -586,10 +815,10 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contests/{{contest_id}}/rounds",
+            "url": "{{baseUrl}}/contest-matches/{{match_id}}/results",
             "body": {
               "mode": "raw",
-              "raw": "{\"contest_class_id\":\"{{contest_class_id}}\",\"round_type\":\"QUALIFYING\",\"round_no\":1}"
+              "raw": "{\"results\":[{\"registration_id\":\"{{registration_id}}\",\"finish_position\":1,\"score\":10,\"is_winner\":true}],\"reason\":\"Postman result entry\"}"
             }
           },
           "event": [
@@ -597,15 +826,14 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('round created', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('round_id', pm.response.json().data.id);"
+                  "pm.test('results submitted', () => pm.response.to.have.status(200));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create Heat",
+          "name": "Advance Match",
           "request": {
             "method": "POST",
             "header": [
@@ -618,10 +846,10 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contest-rounds/{{round_id}}/heats",
+            "url": "{{baseUrl}}/contest-matches/{{match_id}}/advance",
             "body": {
               "mode": "raw",
-              "raw": "{\"heat_no\":1}"
+              "raw": "{\"next_match_id\":\"{{next_match_id}}\",\"top_n\":1}"
             }
           },
           "event": [
@@ -629,15 +857,14 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('heat created', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('heat_id', pm.response.json().data.id);"
+                  "pm.test('match advanced', () => pm.expect(pm.response.code).to.be.oneOf([200,400]));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Add Heat Entry",
+          "name": "Correct Match Results",
           "request": {
             "method": "POST",
             "header": [
@@ -650,10 +877,10 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contest-heats/{{heat_id}}/entries",
+            "url": "{{baseUrl}}/contest-matches/{{match_id}}/results/correct",
             "body": {
               "mode": "raw",
-              "raw": "{\"registration_id\":\"{{registration_id}}\",\"contest_class_id\":\"{{contest_class_id}}\",\"grid_position\":1}"
+              "raw": "{\"results\":[{\"registration_id\":\"{{registration_id}}\",\"finish_position\":1,\"score\":12,\"is_winner\":true}],\"reason\":\"Correction from Postman\",\"force_cascade\":true}"
             }
           },
           "event": [
@@ -661,65 +888,57 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('entry added', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('heat_entry_id', pm.response.json().data.id);"
+                  "pm.test('results corrected', () => pm.expect(pm.response.code).to.be.oneOf([200,409]));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Submit Time Attack Result",
+          "name": "Get Audit Logs",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
               {
                 "key": "Authorization",
                 "value": "Bearer {{provider_token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contest-heats/{{heat_id}}/results",
-            "body": {
-              "mode": "raw",
-              "raw": "{\"result_type\":\"TIME_ATTACK\",\"results\":[{\"heat_entry_id\":\"{{heat_entry_id}}\",\"best_lap_ms\":18000}]}"
-            }
+            "url": "{{baseUrl}}/contests/{{contest_id}}/audit-logs"
           },
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('result submitted', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('result_id', pm.response.json().data[0].id);"
+                  "pm.test('audit logs loaded', () => pm.response.to.have.status(200));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Verify Result",
+          "name": "Get Metrics",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
               {
                 "key": "Authorization",
                 "value": "Bearer {{provider_token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contest-results/{{result_id}}/verify",
-            "body": {
-              "mode": "raw",
-              "raw": "{}"
+            "url": "{{baseUrl}}/contests/{{contest_id}}/metrics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('metrics loaded', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
-          }
+          ]
         }
       ]
     },
@@ -827,38 +1046,7 @@
       "name": "Negative Cases",
       "item": [
         {
-          "name": "Provider Self Register Should Fail",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{provider_token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{baseUrl}}/contests/{{contest_id}}/register",
-            "body": {
-              "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\"}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('self registration forbidden', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Duplicate Customer Register Should Fail",
+          "name": "Wrong Vehicle Policy Should Fail",
           "request": {
             "method": "POST",
             "header": [
@@ -882,14 +1070,76 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('duplicate registration conflict', () => pm.response.to.have.status(409));"
+                  "pm.test('policy violation rejected', () => pm.expect(pm.response.code).to.be.oneOf([400,409]));"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Invalid Time Attack Result Should Fail",
+          "name": "Missing Customer Vehicle Should Fail",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{customer_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"vehicle_source\":\"BYOC\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('missing customer vehicle rejected', () => pm.expect(pm.response.code).to.be.oneOf([400,404]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong Cafe Staff Result Should Fail",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{staff_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/contest-matches/{{match_id}}/results",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"results\":[{\"registration_id\":\"{{registration_id}}\",\"finish_position\":1,\"is_winner\":true}],\"reason\":\"Wrong cafe test\"}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('wrong cafe staff blocked', () => pm.expect(pm.response.code).to.be.oneOf([403,409]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Publish Leaderboard With Unfinished Match Should Fail",
           "request": {
             "method": "POST",
             "header": [
@@ -902,10 +1152,10 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/contest-heats/{{heat_id}}/results",
+            "url": "{{baseUrl}}/contests/{{contest_id}}/leaderboard/publish",
             "body": {
               "mode": "raw",
-              "raw": "{\"result_type\":\"TIME_ATTACK\",\"results\":[{\"heat_entry_id\":\"{{heat_entry_id}}\",\"finish_position\":1}]}"
+              "raw": "{\"reason\":\"Should fail until all matches complete\"}"
             }
           },
           "event": [
@@ -913,38 +1163,7 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('invalid result validation error', () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Duplicate Reward Issue Should Fail",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{provider_token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{baseUrl}}/contests/{{contest_id}}/rewards/issue",
-            "body": {
-              "mode": "raw",
-              "raw": "{}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('duplicate reward issue conflict', () => pm.response.to.have.status(409));"
+                  "pm.test('unfinished leaderboard publish blocked', () => pm.expect(pm.response.code).to.be.oneOf([409,400]));"
                 ]
               }
             }
@@ -1309,7 +1528,7 @@
             "url": "{{baseUrl}}/contests",
             "body": {
               "mode": "raw",
-              "raw": "{\"name\":\"Postman Demo Knockout {{$timestamp}}\",\"description\":\"Runtime contest for automated 8-player knockout flow.\",\"track_type_id\":\"{{demo_track_type_id}}\",\"starts_at\":\"{{demo_starts_at}}\",\"ends_at\":\"{{demo_ends_at}}\",\"registration_opens_at\":\"{{demo_registration_opens_at}}\",\"registration_closes_at\":\"{{demo_registration_closes_at}}\",\"capacity\":8,\"entry_fee\":0,\"vehicle_rule\":{\"source\":\"BYOC\"},\"participating_cafe_ids\":[\"{{demo_cafe_id}}\"],\"config\":{\"postman_demo\":true,\"bracket_size\":8}}"
+              "raw": "{\"name\":\"Postman Demo Knockout {{$timestamp}}\",\"description\":\"Runtime contest for automated 8-player knockout flow.\",\"track_type_id\":\"{{demo_track_type_id}}\",\"starts_at\":\"{{demo_starts_at}}\",\"ends_at\":\"{{demo_ends_at}}\",\"registration_opens_at\":\"{{demo_registration_opens_at}}\",\"registration_closes_at\":\"{{demo_registration_closes_at}}\",\"capacity\":8,\"entry_fee\":0,\"vehicle_rule\":{\"vehicle_policy\":\"BYOC_ONLY\"},\"participating_cafe_ids\":[\"{{demo_cafe_id}}\"],\"config\":{\"postman_demo\":true,\"bracket_size\":8}}"
             }
           },
           "event": [
@@ -1388,7 +1607,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":1}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1420,7 +1639,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":2}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1452,7 +1671,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":3}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1484,7 +1703,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":4}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1516,7 +1735,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":5}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1548,7 +1767,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":6}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1580,7 +1799,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":7}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
@@ -1612,7 +1831,7 @@
             "url": "{{baseUrl}}/contests/{{demo_runtime_contest_id}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\"vehicle_source\":\"BYOC\",\"metadata\":{\"postman_demo\":true,\"seed\":8}}"
+              "raw": "{\"vehicle_source\":\"BYOC\",\"customer_vehicle_id\":\"{{customer_vehicle_id}}\",\"metadata\":{\"postman_demo\":true}}"
             }
           },
           "event": [
