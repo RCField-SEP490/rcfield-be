@@ -94,4 +94,31 @@ export const contestRegistrationController = {
       next(err);
     }
   },
+
+  // POST /api/v1/contest-registrations/:id/approve [auth]
+  async approve(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestRegistrationIdParamsSchema.parse(req.params);
+      const data = await contestRegistrationService.approveRegistration(id, authViewer(req));
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/contest-registrations/:id/reject [auth]
+  async reject(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestRegistrationIdParamsSchema.parse(req.params);
+      const body = CancelContestRegistrationSchema.parse(req.body);
+      const data = await contestRegistrationService.rejectRegistration(
+        id,
+        authViewer(req),
+        body.reason,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

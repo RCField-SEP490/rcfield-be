@@ -29,6 +29,7 @@ import { bookingController } from '../controllers/booking.controller';
 import { customerPackageRouter } from './customer-package.routes';
 import { pricingRouter } from './pricing.routes';
 import { sessionRouter } from './session.routes';
+import { customerVehicleRouter } from './customer-vehicle.routes';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -131,6 +132,7 @@ router.use('/', pricingRouter);
 router.use('/contests', contestRouter);
 router.use('/contest-registrations', contestRegistrationRouter);
 router.use('/contest-matches', contestMatchRouter);
+router.use('/me/customer-vehicles', customerVehicleRouter);
 router.get(
   '/me/contest-registrations',
   authenticate,

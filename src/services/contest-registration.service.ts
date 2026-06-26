@@ -214,6 +214,10 @@ function assertContestOwner(contest: Contest, providerId: string): void {
   }
 }
 
+import { CustomerVehicle } from '../models/customer-vehicle.entity';
+import { Vehicle } from '../models/vehicle.entity';
+import { VehicleStatus } from '../types';
+
 export async function registerContest(
   contestId: string,
   viewer: Viewer,
@@ -257,6 +261,115 @@ export async function registerContest(
       throw new AppError('Contest đã đủ số lượng đăng ký', 409, 'CONTEST_CAPACITY_FULL');
     }
 
+    // Enforce Contest Vehicle Policy rules
+    const policy = (contest.vehicleRule as Record<string, unknown>)?.vehicle_policy || 'MIXED';
+    if (policy === 'RENTAL_ONLY' && body.vehicle_source !== VehicleSource.RENTAL) {
+      throw new AppError(
+        'Giải đấu này chỉ cho phép sử dụng xe thuê của chi nhánh',
+        400,
+        'CONTEST_VEHICLE_POLICY_VIOLATED',
+      );
+    }
+    if (policy === 'BYOC_ONLY' && body.vehicle_source !== VehicleSource.BYOC) {
+      throw new AppError(
+        'Giải đấu này bắt buộc người chơi tự mang xe (BYOC)',
+        400,
+        'CONTEST_VEHICLE_POLICY_VIOLATED',
+      );
+    }
+
+    // Validate Selected Vehicle based on source
+    if (body.vehicle_source === VehicleSource.BYOC) {
+      if (!body.customer_vehicle_id) {
+        throw new AppError(
+          'Đăng ký BYOC bắt buộc customer_vehicle_id',
+          400,
+          'CUSTOMER_VEHICLE_REQUIRED',
+        );
+      }
+      const customerVehicle = await manager.getRepository(CustomerVehicle).findOne({
+        where: { id: body.customer_vehicle_id, userId: viewer.userId },
+      });
+      if (!customerVehicle) {
+        throw new AppError(
+          'Phương tiện cá nhân không tồn tại hoặc không thuộc sở hữu của bạn',
+          404,
+          'CUSTOMER_VEHICLE_NOT_FOUND',
+        );
+      }
+
+      // Ensure vehicle is not already registered in active registrations for this contest
+      const activeCustomerVehicleReg = await manager.getRepository(ContestRegistration).findOne({
+        where: {
+          contestId,
+          customerVehicleId: body.customer_vehicle_id,
+          status: In(ACTIVE_REGISTRATION_STATUSES),
+        },
+      });
+      if (activeCustomerVehicleReg) {
+        throw new AppError(
+          'Phương tiện cá nhân này đã được đăng ký bởi một người chơi khác trong giải đấu',
+          409,
+          'CONTEST_VEHICLE_ALREADY_REGISTERED',
+        );
+      }
+    } else {
+      if (!body.vehicle_id) {
+        throw new AppError('Đăng ký xe thuê bắt buộc vehicle_id', 400, 'RENTAL_VEHICLE_REQUIRED');
+      }
+      const vehicle = await manager.getRepository(Vehicle).findOne({
+        where: { id: body.vehicle_id },
+        relations: ['catalog'],
+      });
+      if (!vehicle) {
+        throw new AppError('Phương tiện thuê không tồn tại', 404, 'VEHICLE_NOT_FOUND');
+      }
+      if (vehicle.status !== VehicleStatus.AVAILABLE) {
+        throw new AppError(
+          'Phương tiện thuê hiện tại không sẵn sàng',
+          400,
+          'VEHICLE_NOT_AVAILABLE',
+        );
+      }
+
+      // Check if vehicle belongs to a participating cafe
+      const contestCafe = await manager.getRepository(ContestCafe).findOne({
+        where: { contestId, cafeId: vehicle.cafeId },
+      });
+      if (!contestCafe) {
+        throw new AppError(
+          'Phương tiện thuê phải thuộc chi nhánh tham gia giải đấu này',
+          400,
+          'CONTEST_VEHICLE_CAFE_INVALID',
+        );
+      }
+
+      // Check compatible track types
+      if (!vehicle.catalog?.compatibleTrackTypes?.includes(contest.trackTypeId)) {
+        throw new AppError(
+          'Phương tiện thuê không tương thích với loại cấu hình sân của giải đấu',
+          400,
+          'CONTEST_VEHICLE_TRACK_INCOMPATIBLE',
+        );
+      }
+
+      // Ensure vehicle is not already registered in active registrations for this contest
+      const activeVehicleReg = await manager.getRepository(ContestRegistration).findOne({
+        where: {
+          contestId,
+          vehicleId: body.vehicle_id,
+          status: In(ACTIVE_REGISTRATION_STATUSES),
+        },
+      });
+      if (activeVehicleReg) {
+        throw new AppError(
+          'Phương tiện thuê này đã được đăng ký bởi một người chơi khác trong giải đấu',
+          409,
+          'CONTEST_VEHICLE_ALREADY_REGISTERED',
+        );
+      }
+    }
+
     const registration = manager.getRepository(ContestRegistration).create({
       contestId,
       userId: viewer.userId,
@@ -264,7 +377,7 @@ export async function registerContest(
       vehicleSource: body.vehicle_source,
       vehicleId: body.vehicle_id ?? null,
       customerVehicleId: body.customer_vehicle_id ?? null,
-      status: ContestRegistrationStatus.CONFIRMED,
+      status: ContestRegistrationStatus.PENDING, // Default all new registrations to PENDING
       checkInCode: randomUUID(),
       metadata: body.metadata ?? {},
     });
@@ -455,6 +568,116 @@ export async function cancelRegistration(
       actorId: viewer.userId,
       actorRole: viewer.role,
       eventType: 'registration.cancelled',
+      beforeJson: before,
+      afterJson: {
+        status: saved.status,
+        cancelled_by: saved.cancelledBy,
+        cancelled_at: saved.cancelledAt,
+        cancellation_reason: saved.cancellationReason,
+      },
+      reason: saved.cancellationReason,
+    });
+    return toRegistrationDto(saved);
+  });
+}
+
+export async function approveRegistration(
+  registrationId: string,
+  viewer: Viewer,
+): Promise<RegistrationDto> {
+  if (![UserRole.PROVIDER, UserRole.STAFF].includes(viewer.role)) {
+    throw new AppError(
+      'Role hiện tại không được duyệt registration contest',
+      403,
+      'CONTEST_REGISTRATION_APPROVE_FORBIDDEN',
+    );
+  }
+
+  return AppDataSource.transaction(async (manager) => {
+    const registration = await getRegistrationOrThrow(manager, registrationId);
+    const contest = await getContestOrThrow(manager, registration.contestId);
+
+    if (viewer.role === UserRole.PROVIDER) {
+      assertContestOwner(contest, viewer.userId);
+    } else {
+      await assertStaffAssignedToAnyContestCafe(manager, viewer.userId, contest.id);
+    }
+
+    if (registration.status !== ContestRegistrationStatus.PENDING) {
+      throw new AppError(
+        'Chỉ có thể duyệt đơn đăng ký đang ở trạng thái PENDING',
+        400,
+        'CONTEST_REGISTRATION_STATUS_INVALID',
+      );
+    }
+
+    const before = { status: registration.status };
+    registration.status = ContestRegistrationStatus.CONFIRMED;
+
+    const saved = await manager.getRepository(ContestRegistration).save(registration);
+    await writeContestAudit(manager, {
+      contestId: contest.id,
+      registrationId: saved.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.approved',
+      beforeJson: before,
+      afterJson: {
+        status: saved.status,
+      },
+    });
+    return toRegistrationDto(saved);
+  });
+}
+
+export async function rejectRegistration(
+  registrationId: string,
+  viewer: Viewer,
+  reason?: string,
+): Promise<RegistrationDto> {
+  if (![UserRole.PROVIDER, UserRole.STAFF].includes(viewer.role)) {
+    throw new AppError(
+      'Role hiện tại không được từ chối registration contest',
+      403,
+      'CONTEST_REGISTRATION_REJECT_FORBIDDEN',
+    );
+  }
+
+  return AppDataSource.transaction(async (manager) => {
+    const registration = await getRegistrationOrThrow(manager, registrationId);
+    const contest = await getContestOrThrow(manager, registration.contestId);
+
+    if (viewer.role === UserRole.PROVIDER) {
+      assertContestOwner(contest, viewer.userId);
+    } else {
+      await assertStaffAssignedToAnyContestCafe(manager, viewer.userId, contest.id);
+    }
+
+    if (
+      registration.status !== ContestRegistrationStatus.PENDING &&
+      registration.status !== ContestRegistrationStatus.CONFIRMED
+    ) {
+      throw new AppError(
+        'Chỉ có thể từ chối đơn đăng ký ở trạng thái PENDING hoặc CONFIRMED',
+        400,
+        'CONTEST_REGISTRATION_STATUS_INVALID',
+      );
+    }
+
+    const before = { status: registration.status, cancelled_at: registration.cancelledAt };
+
+    registration.status = ContestRegistrationStatus.CANCELLED;
+    registration.cancelledBy = viewer.userId;
+    registration.cancelledAt = new Date();
+    registration.cancellationReason = reason ?? 'Bị từ chối bởi quản trị viên/nhân viên';
+
+    const saved = await manager.getRepository(ContestRegistration).save(registration);
+    await writeContestAudit(manager, {
+      contestId: contest.id,
+      registrationId: saved.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.rejected',
       beforeJson: before,
       afterJson: {
         status: saved.status,

@@ -29,6 +29,8 @@ export interface GenerateContestMatchesBody {
   registration_ids: string[];
   seeding_mode: ContestSeedingMode;
   advancement_rule?: Record<string, unknown>;
+  cafe_id?: string | null;
+  track_config_id?: string | null;
 }
 
 export interface UpdateContestMatchParticipantsBody {
@@ -104,6 +106,8 @@ interface MatchDto {
   name: string | null;
   match_type: ContestMatchType;
   status: ContestMatchStatus;
+  cafe_id: string | null;
+  track_config_id: string | null;
   scheduled_at: Date | null;
   started_at: Date | null;
   ended_at: Date | null;
@@ -284,6 +288,8 @@ async function toMatchDto(manager: EntityManager, match: ContestMatch): Promise<
     name: match.name,
     match_type: match.matchType,
     status: match.status,
+    cafe_id: match.cafeId,
+    track_config_id: match.trackConfigId,
     scheduled_at: match.scheduledAt,
     started_at: match.startedAt,
     ended_at: match.endedAt,
@@ -356,6 +362,8 @@ async function generateKnockout(
   registrations: ContestRegistration[],
   driversPerMatch: number,
   advancementRule: Record<string, unknown>,
+  cafeId: string | null = null,
+  trackConfigId: string | null = null,
 ): Promise<ContestMatch[]> {
   if (driversPerMatch < 2) {
     throw new AppError('Knockout cần ít nhất 2 người mỗi match', 400, 'CONTEST_MATCH_SIZE_INVALID');
@@ -379,6 +387,8 @@ async function generateKnockout(
           name: isFinal ? 'Final' : `Round ${roundNo} - Match ${matchNo}`,
           matchType: matchTypeFor(ContestScheduleFormat.KNOCKOUT, driversPerMatch, isFinal),
           status: roundNo === 1 ? ContestMatchStatus.READY : ContestMatchStatus.DRAFT,
+          cafeId,
+          trackConfigId,
           nextMatchId: null,
           advancementRule: { top_n: 1, ...advancementRule },
           resultSummary: {},
@@ -420,6 +430,8 @@ async function generateGroupedMatches(
   format: ContestScheduleFormat,
   driversPerMatch: number,
   advancementRule: Record<string, unknown>,
+  cafeId: string | null = null,
+  trackConfigId: string | null = null,
 ): Promise<ContestMatch[]> {
   const matches: ContestMatch[] = [];
   for (let index = 0; index < registrations.length; index += driversPerMatch) {
@@ -437,6 +449,8 @@ async function generateGroupedMatches(
           matches.length === 0 && registrations.length <= driversPerMatch,
         ),
         status: ContestMatchStatus.READY,
+        cafeId,
+        trackConfigId,
         nextMatchId: null,
         advancementRule: { top_n: 1, ...advancementRule },
         resultSummary: {},
@@ -498,6 +512,8 @@ export async function generateContestMatches(
             sortedRegistrations,
             body.drivers_per_match,
             body.advancement_rule ?? {},
+            body.cafe_id ?? null,
+            body.track_config_id ?? null,
           )
         : await generateGroupedMatches(
             manager,
@@ -507,6 +523,8 @@ export async function generateContestMatches(
             body.format,
             body.drivers_per_match,
             body.advancement_rule ?? {},
+            body.cafe_id ?? null,
+            body.track_config_id ?? null,
           );
     await manager.getRepository(Contest).save(contest);
     await writeContestAudit(manager, {
@@ -521,7 +539,14 @@ export async function generateContestMatches(
         match_count: matches.length,
       },
     });
-    return Promise.all(matches.map((match) => toMatchDto(manager, match)));
+
+    await autoAdvanceByeMatches(manager, contestId, viewer.userId);
+
+    const finalMatches = await manager.getRepository(ContestMatch).find({
+      where: { contestId },
+      order: { roundNo: 'ASC', matchNo: 'ASC' },
+    });
+    return Promise.all(finalMatches.map((match) => toMatchDto(manager, match)));
   });
 }
 
@@ -657,6 +682,126 @@ function rankParticipants(participants: ContestMatchParticipant[]): ContestMatch
   });
 }
 
+async function invalidateDescendants(manager: EntityManager, matchId: string): Promise<void> {
+  const match = await manager.getRepository(ContestMatch).findOne({ where: { id: matchId } });
+  if (!match) return;
+
+  const sourceMatches = await manager.getRepository(ContestMatch).find({
+    where: { nextMatchId: match.id },
+  });
+  const allSourcesCompleted =
+    sourceMatches.length > 0 &&
+    sourceMatches.every((sm) => sm.status === ContestMatchStatus.COMPLETED);
+
+  match.status = allSourcesCompleted ? ContestMatchStatus.READY : ContestMatchStatus.DRAFT;
+  match.endedAt = null;
+  match.decidedBy = null;
+  match.decidedAt = null;
+  match.resultSummary = {};
+  await manager.getRepository(ContestMatch).save(match);
+
+  const participants = await manager.getRepository(ContestMatchParticipant).find({
+    where: { matchId: match.id },
+  });
+  for (const p of participants) {
+    p.status = ContestMatchParticipantStatus.READY;
+    p.score = null;
+    p.finishPosition = null;
+    p.bestLapMs = null;
+    p.totalTimeMs = null;
+    p.isWinner = false;
+    p.resultNote = null;
+    await manager.getRepository(ContestMatchParticipant).save(p);
+  }
+
+  if (match.nextMatchId) {
+    await invalidateDescendants(manager, match.nextMatchId);
+  }
+}
+
+async function autoAdvanceByeMatches(
+  manager: EntityManager,
+  contestId: string,
+  createdBy: string | null,
+): Promise<void> {
+  let foundBye = true;
+  while (foundBye) {
+    foundBye = false;
+    const matches = await manager.getRepository(ContestMatch).find({
+      where: { contestId },
+      order: { roundNo: 'ASC', matchNo: 'ASC' },
+    });
+
+    for (const match of matches) {
+      if (
+        match.status === ContestMatchStatus.COMPLETED ||
+        match.status === ContestMatchStatus.CANCELLED
+      ) {
+        continue;
+      }
+      const participants = await manager.getRepository(ContestMatchParticipant).find({
+        where: { matchId: match.id },
+      });
+
+      if (match.status === ContestMatchStatus.READY && participants.length === 1) {
+        const participant = participants[0];
+
+        participant.isWinner = true;
+        participant.status = ContestMatchParticipantStatus.FINISHED;
+        participant.finishPosition = 1;
+        await manager.getRepository(ContestMatchParticipant).save(participant);
+
+        match.status = ContestMatchStatus.COMPLETED;
+        match.endedAt = new Date();
+        match.decidedBy = createdBy;
+        match.decidedAt = match.endedAt;
+        match.resultSummary = { note: 'Bye-round auto advancement' };
+        await manager.getRepository(ContestMatch).save(match);
+
+        if (match.nextMatchId) {
+          const nextMatch = await manager.getRepository(ContestMatch).findOne({
+            where: { id: match.nextMatchId },
+          });
+          if (nextMatch) {
+            const existingParticipants = await manager.getRepository(ContestMatchParticipant).find({
+              where: { matchId: nextMatch.id },
+            });
+            const alreadyIn = existingParticipants.some(
+              (p) => p.registrationId === participant.registrationId,
+            );
+            if (!alreadyIn) {
+              const newSlot = existingParticipants.length + 1;
+              const nextParticipant = manager.getRepository(ContestMatchParticipant).create({
+                matchId: nextMatch.id,
+                registrationId: participant.registrationId,
+                slotNo: newSlot,
+                lane: String.fromCharCode(65 + existingParticipants.length),
+                gridPosition: newSlot,
+                seedNo: participant.seedNo,
+                status: ContestMatchParticipantStatus.READY,
+                metadata: { advanced_from_match_id: match.id, is_bye_advanced: true },
+              });
+              await manager.getRepository(ContestMatchParticipant).save(nextParticipant);
+            }
+
+            const sourceMatches = await manager.getRepository(ContestMatch).find({
+              where: { nextMatchId: nextMatch.id },
+            });
+            const allSourcesCompleted = sourceMatches.every(
+              (sm) => sm.status === ContestMatchStatus.COMPLETED,
+            );
+            if (allSourcesCompleted) {
+              nextMatch.status = ContestMatchStatus.READY;
+              await manager.getRepository(ContestMatch).save(nextMatch);
+            }
+          }
+        }
+        foundBye = true;
+      }
+    }
+  }
+}
+
 export async function advanceContestMatch(
   matchId: string,
   viewer: Viewer,
@@ -755,7 +900,122 @@ export async function advanceContestMatch(
       },
       reason: body.reason ?? null,
     });
-    return toMatchDto(manager, savedNextMatch);
+
+    await autoAdvanceByeMatches(manager, contest.id, viewer.userId);
+
+    const updatedNextMatch = await manager.getRepository(ContestMatch).findOne({
+      where: { id: nextMatch.id },
+    });
+    return toMatchDto(manager, updatedNextMatch ?? savedNextMatch);
+  });
+}
+
+export async function correctMatchResult(
+  matchId: string,
+  viewer: Viewer,
+  body: SubmitContestMatchResultsBody,
+): Promise<MatchDto> {
+  return AppDataSource.transaction(async (manager) => {
+    const match = await getMatchOrThrow(manager, matchId);
+    const contest = await getContestOrThrow(manager, match.contestId);
+    await assertOperator(manager, contest, viewer);
+
+    const prevParticipants = await manager.getRepository(ContestMatchParticipant).find({
+      where: { matchId },
+    });
+    const before = prevParticipants.map(toParticipantDto);
+
+    const participantByRegistration = new Map(
+      prevParticipants.map((participant) => [participant.registrationId, participant]),
+    );
+    const missing = body.results.find(
+      (result) => !participantByRegistration.has(result.registration_id),
+    );
+    if (missing) {
+      throw new AppError(
+        'Result chứa registration không thuộc match',
+        400,
+        'CONTEST_MATCH_RESULT_INVALID',
+      );
+    }
+
+    for (const result of body.results) {
+      const participant = participantByRegistration.get(result.registration_id)!;
+      participant.finishPosition = result.finish_position ?? null;
+      participant.score = result.score ?? null;
+      participant.bestLapMs = result.best_lap_ms ?? null;
+      participant.totalTimeMs = result.total_time_ms ?? null;
+      participant.isWinner = result.is_winner ?? result.finish_position === 1;
+      participant.resultNote = result.result_note ?? null;
+      participant.status = ContestMatchParticipantStatus.FINISHED;
+      participant.metadata = { ...(participant.metadata ?? {}), ...(result.metadata ?? {}) };
+      await manager.getRepository(ContestMatchParticipant).save(participant);
+    }
+
+    match.status = ContestMatchStatus.COMPLETED;
+    match.endedAt = new Date();
+    match.decidedBy = viewer.userId;
+    match.decidedAt = match.endedAt;
+    match.resultSummary = { results: body.results, reason: body.reason ?? 'Corrected result' };
+    const savedMatch = await manager.getRepository(ContestMatch).save(match);
+
+    await writeContestAudit(manager, {
+      contestId: contest.id,
+      matchId,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'match.result_corrected',
+      beforeJson: { participants: before, status: ContestMatchStatus.COMPLETED },
+      afterJson: { results: body.results, status: savedMatch.status },
+      reason: body.reason ?? 'Corrected result',
+    });
+
+    if (match.nextMatchId) {
+      const nextMatch = await manager.getRepository(ContestMatch).findOne({
+        where: { id: match.nextMatchId },
+      });
+      if (nextMatch) {
+        const topN = getTopN(match.advancementRule, 1);
+        const newWinners = rankParticipants(prevParticipants).slice(0, topN);
+
+        const oldWinnerIds = before.filter((p) => p.is_winner).map((p) => p.registration_id);
+
+        await manager.getRepository(ContestMatchParticipant).delete({
+          matchId: nextMatch.id,
+          registrationId: In(oldWinnerIds),
+        });
+
+        const remainingParticipants = await manager.getRepository(ContestMatchParticipant).find({
+          where: { matchId: nextMatch.id },
+          order: { slotNo: 'ASC' },
+        });
+
+        const newRows = newWinners.map((participant, index) =>
+          manager.getRepository(ContestMatchParticipant).create({
+            matchId: nextMatch.id,
+            registrationId: participant.registrationId,
+            slotNo: remainingParticipants.length + index + 1,
+            lane: String.fromCharCode(65 + remainingParticipants.length + index),
+            gridPosition: remainingParticipants.length + index + 1,
+            seedNo: participant.seedNo,
+            status: ContestMatchParticipantStatus.READY,
+            metadata: { advanced_from_match_id: match.id },
+          }),
+        );
+        if (newRows.length > 0) {
+          await manager.getRepository(ContestMatchParticipant).save(newRows);
+        }
+
+        await invalidateDescendants(manager, nextMatch.id);
+      }
+    }
+
+    await autoAdvanceByeMatches(manager, contest.id, viewer.userId);
+
+    const updatedMatch = await manager
+      .getRepository(ContestMatch)
+      .findOne({ where: { id: matchId } });
+    return toMatchDto(manager, updatedMatch ?? savedMatch);
   });
 }
 

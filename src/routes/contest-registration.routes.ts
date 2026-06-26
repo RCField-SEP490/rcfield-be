@@ -17,3 +17,15 @@ contestRegistrationRouter.post(
   authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
   contestRegistrationController.cancel,
 );
+contestRegistrationRouter.post(
+  '/:id/approve',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestRegistrationController.approve,
+);
+contestRegistrationRouter.post(
+  '/:id/reject',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestRegistrationController.reject,
+);

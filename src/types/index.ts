@@ -240,11 +240,6 @@ export enum ParticipantRole {
   GUARDIAN = 'GUARDIAN',
 }
 
-export enum VehicleSource {
-  RENTAL = 'RENTAL',
-  BYOC = 'BYOC',
-}
-
 export enum SessionVehicleStatus {
   ASSIGNED = 'ASSIGNED',
   IN_USE = 'IN_USE',

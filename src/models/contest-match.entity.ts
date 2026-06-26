@@ -33,6 +33,12 @@ export class ContestMatch {
   @Column({ type: 'varchar', length: 30, default: ContestMatchStatus.DRAFT })
   status: ContestMatchStatus;
 
+  @Column({ name: 'cafe_id', type: 'uuid', nullable: true })
+  cafeId: string | null;
+
+  @Column({ name: 'track_config_id', type: 'uuid', nullable: true })
+  trackConfigId: string | null;
+
   @Column({ name: 'scheduled_at', type: 'timestamptz', nullable: true })
   scheduledAt: Date | null;
 

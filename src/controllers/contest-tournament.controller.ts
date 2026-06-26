@@ -76,6 +76,18 @@ export const contestTournamentController = {
     }
   },
 
+  // POST /api/v1/contest-matches/:id/correct [auth]
+  async correctResults(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestMatchIdParamsSchema.parse(req.params);
+      const body = SubmitContestMatchResultsSchema.parse(req.body);
+      const data = await tournamentService.correctMatchResult(id, authViewer(req), body);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // POST /api/v1/contests/:id/leaderboard/publish [auth]
   async publishLeaderboard(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

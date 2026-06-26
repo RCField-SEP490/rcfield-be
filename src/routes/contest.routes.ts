@@ -86,3 +86,17 @@ contestRouter.post(
   requireActiveProvider,
   contestController.cancel,
 );
+
+contestRouter.get(
+  '/:id/audit-logs',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestController.listAuditLogs,
+);
+
+contestRouter.get(
+  '/:id/metrics',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestController.getMetrics,
+);

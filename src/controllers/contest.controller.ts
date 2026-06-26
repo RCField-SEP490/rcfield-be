@@ -1,6 +1,7 @@
 import type { NextFunction, Response } from 'express';
 import { AppError, AuthRequest, UserRole } from '../types';
 import * as contestService from '../services/contest.service';
+import * as auditService from '../services/contest-audit.service';
 import {
   CafeIdParamsSchema,
   ContestIdParamsSchema,
@@ -110,6 +111,36 @@ export const contestController = {
     try {
       const { id } = ContestIdParamsSchema.parse(req.params);
       const data = await contestService.cancelContest(id, providerId(req));
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/contests/:id/audit-logs [auth]
+  async listAuditLogs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await auditService.listContestAuditLogs(id, {
+        userId: req.user.userId,
+        role: req.user.role,
+      });
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/contests/:id/metrics [auth]
+  async getMetrics(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await auditService.getContestMetrics(id, {
+        userId: req.user.userId,
+        role: req.user.role,
+      });
       res.json({ success: true, data });
     } catch (err) {
       next(err);
