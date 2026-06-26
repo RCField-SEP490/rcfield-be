@@ -2,6 +2,9 @@ import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import {
+  BookingMode,
+  BookingSource,
+  BookingStatus,
   CafeStatus,
   ContestRegistrationStatus,
   ContestStatus,
@@ -9,7 +12,7 @@ import {
   SubscriptionStatus,
   UserRole,
 } from '../../types';
-import { createTestCafe, createTestUser, generateToken } from '../helpers';
+import { createTestCafe, createTestUser, createTestVehicle, generateToken } from '../helpers';
 
 async function activateProvider(providerId: string): Promise<void> {
   await AppDataSource.query(
@@ -103,6 +106,49 @@ async function createCustomerVehicle(customer: { id: string; email: string; role
   return res.body.data;
 }
 
+async function createConfirmedRentalBooking(
+  customerId: string,
+  cafeId: string,
+  trackTypeId: string,
+) {
+  const vehicle = await createTestVehicle({
+    cafe_id: cafeId,
+    tier: 'STANDARD',
+    status: 'AVAILABLE',
+    compatible_track_types: [trackTypeId],
+  });
+
+  const slotStart = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const slotEnd = new Date(slotStart.getTime() + 2 * 60 * 60 * 1000);
+  const paymentExpiresAt = new Date(slotStart.getTime() - 60 * 60 * 1000);
+
+  const [booking] = await AppDataSource.query<{ id: string }[]>(
+    `INSERT INTO bookings
+       (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9)
+     RETURNING id`,
+    [
+      customerId,
+      cafeId,
+      trackTypeId,
+      BookingMode.RENTAL,
+      BookingSource.APP,
+      BookingStatus.CONFIRMED,
+      slotStart,
+      slotEnd,
+      paymentExpiresAt,
+    ],
+  );
+
+  await AppDataSource.query(
+    `INSERT INTO booking_vehicles
+       (booking_id, vehicle_id, hourly_rate_snapshot, rental_fee_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
+     VALUES ($1, $2, 50000, 100000, 500000, 1.0)`,
+    [booking.id, vehicle.id],
+  );
+
+  return { bookingId: booking.id, vehicleId: vehicle.id };
+}
 async function registerContest(
   contestId: string,
   reviewer?: { id: string; email: string; role: UserRole },
@@ -207,6 +253,44 @@ describe('Compact contest routes', () => {
 
     expect(approve.status).toBe(200);
     expect(approve.body.data.status).toBe(ContestRegistrationStatus.CONFIRMED);
+  });
+
+  it('revalidates linked rental booking at approve and check-in', async () => {
+    const { provider, cafe, contest } = await createOpenContest();
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const rental = await createConfirmedRentalBooking(customer.id, cafe.id, contest.track_type_id);
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contest.id}/register`)
+      .set('Authorization', `Bearer ${generateToken(customer)}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        booking_id: rental.bookingId,
+        vehicle_id: rental.vehicleId,
+      });
+
+    expect(registerRes.status).toBe(201);
+    expect(registerRes.body.data.status).toBe(ContestRegistrationStatus.PENDING);
+
+    const approveRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+    expect(approveRes.status).toBe(200);
+    expect(approveRes.body.data.status).toBe(ContestRegistrationStatus.CONFIRMED);
+
+    await AppDataSource.query(`UPDATE bookings SET status = $2 WHERE id = $1`, [
+      rental.bookingId,
+      BookingStatus.CANCELLED,
+    ]);
+
+    const checkInRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/check-in`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ cafe_id: cafe.id });
+
+    expect(checkInRes.status).toBe(400);
+    expect(checkInRes.body.code).toBe('CONTEST_RENTAL_BOOKING_NOT_CONFIRMED');
   });
   it('staff check-in is allowed only at participating assigned cafe', async () => {
     const { provider, cafe, contest } = await createOpenContest();
