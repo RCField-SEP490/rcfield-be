@@ -222,6 +222,179 @@ function assertContestOwner(contest: Contest, providerId: string): void {
     throw new AppError('Bạn không có quyền thao tác contest này', 403, 'CONTEST_FORBIDDEN');
   }
 }
+async function assertNoDuplicateRentalVehicleRegistration(
+  manager: EntityManager,
+  contestId: string,
+  vehicleId: string,
+  excludeRegistrationId?: string,
+): Promise<void> {
+  const qb = manager
+    .getRepository(ContestRegistration)
+    .createQueryBuilder('registration')
+    .where('registration.contestId = :contestId', { contestId })
+    .andWhere('registration.vehicleId = :vehicleId', { vehicleId })
+    .andWhere('registration.status IN (:...statuses)', { statuses: ACTIVE_REGISTRATION_STATUSES });
+
+  if (excludeRegistrationId) {
+    qb.andWhere('registration.id != :excludeRegistrationId', { excludeRegistrationId });
+  }
+
+  const activeVehicleReg = await qb.getOne();
+  if (activeVehicleReg) {
+    throw new AppError(
+      'Phuong tien thue nay da duoc dang ky trong giai dau',
+      409,
+      'CONTEST_VEHICLE_ALREADY_REGISTERED',
+    );
+  }
+}
+
+async function validateLegacyRentalVehicle(
+  manager: EntityManager,
+  contest: Contest,
+  vehicleId: string,
+): Promise<string> {
+  const vehicle = await manager.getRepository(Vehicle).findOne({
+    where: { id: vehicleId },
+    relations: ['catalog'],
+  });
+  if (!vehicle) {
+    throw new AppError('Phuong tien thue khong ton tai', 404, 'VEHICLE_NOT_FOUND');
+  }
+  if (vehicle.status !== VehicleStatus.AVAILABLE) {
+    throw new AppError('Phuong tien thue hien tai khong san sang', 400, 'VEHICLE_NOT_AVAILABLE');
+  }
+
+  const contestCafe = await manager.getRepository(ContestCafe).findOne({
+    where: { contestId: contest.id, cafeId: vehicle.cafeId },
+  });
+  if (!contestCafe) {
+    throw new AppError(
+      'Phuong tien thue phai thuoc chi nhanh tham gia giai dau nay',
+      400,
+      'CONTEST_VEHICLE_CAFE_INVALID',
+    );
+  }
+
+  const compatibleTrackTypes = vehicle.catalog?.compatibleTrackTypes ?? [];
+  if (compatibleTrackTypes.length > 0 && !compatibleTrackTypes.includes(contest.trackTypeId)) {
+    throw new AppError(
+      'Phuong tien thue khong tuong thich voi duong dua cua contest',
+      400,
+      'CONTEST_VEHICLE_TRACK_INCOMPATIBLE',
+    );
+  }
+
+  return vehicle.id;
+}
+
+async function validateRentalBookingLink(
+  manager: EntityManager,
+  contest: Contest,
+  userId: string,
+  bookingId: string,
+  requestedVehicleId?: string | null,
+): Promise<string> {
+  const booking = await manager.getRepository(Booking).findOne({
+    where: { id: bookingId, customerId: userId },
+  });
+  if (!booking) {
+    throw new AppError('Booking thue xe khong ton tai', 404, 'CONTEST_RENTAL_BOOKING_NOT_FOUND');
+  }
+  if (booking.status !== BookingStatus.CONFIRMED) {
+    throw new AppError(
+      'Booking thue xe phai thanh toan/xac nhan truoc khi dang ky contest',
+      400,
+      'CONTEST_RENTAL_BOOKING_NOT_CONFIRMED',
+    );
+  }
+  if (booking.trackTypeId !== contest.trackTypeId) {
+    throw new AppError(
+      'Booking thue xe khong dung loai duong dua cua contest',
+      400,
+      'CONTEST_RENTAL_BOOKING_TRACK_INVALID',
+    );
+  }
+  if (booking.slotStart > contest.startsAt || booking.slotEnd < contest.endsAt) {
+    throw new AppError(
+      'Booking thue xe phai bao phu thoi gian dien ra contest',
+      400,
+      'CONTEST_RENTAL_BOOKING_TIME_INVALID',
+    );
+  }
+
+  const contestCafe = await manager.getRepository(ContestCafe).findOne({
+    where: { contestId: contest.id, cafeId: booking.cafeId },
+  });
+  if (!contestCafe) {
+    throw new AppError(
+      'Booking thue xe phai thuoc chi nhanh tham gia giai dau nay',
+      400,
+      'CONTEST_RENTAL_BOOKING_CAFE_INVALID',
+    );
+  }
+
+  const bookingVehicles = await manager.getRepository(BookingVehicle).find({
+    where: { bookingId: booking.id },
+    order: { createdAt: 'ASC' },
+  });
+  if (bookingVehicles.length === 0) {
+    throw new AppError(
+      'Booking thue xe chua co xe rental',
+      400,
+      'CONTEST_RENTAL_BOOKING_VEHICLE_REQUIRED',
+    );
+  }
+
+  if (
+    requestedVehicleId &&
+    !bookingVehicles.some((vehicle) => vehicle.vehicleId === requestedVehicleId)
+  ) {
+    throw new AppError(
+      'vehicle_id khong thuoc booking thue xe da chon',
+      400,
+      'CONTEST_RENTAL_BOOKING_VEHICLE_INVALID',
+    );
+  }
+
+  return requestedVehicleId ?? bookingVehicles[0].vehicleId;
+}
+
+async function revalidateRentalRegistration(
+  manager: EntityManager,
+  contest: Contest,
+  registration: ContestRegistration,
+): Promise<void> {
+  if (registration.vehicleSource !== VehicleSource.RENTAL) return;
+
+  const resolvedVehicleId = registration.bookingId
+    ? await validateRentalBookingLink(
+        manager,
+        contest,
+        registration.userId,
+        registration.bookingId,
+        registration.vehicleId,
+      )
+    : registration.vehicleId
+      ? await validateLegacyRentalVehicle(manager, contest, registration.vehicleId)
+      : null;
+
+  if (!resolvedVehicleId) {
+    throw new AppError(
+      'Dang ky xe thue khong day du thong tin booking/vehicle',
+      400,
+      'CONTEST_RENTAL_BOOKING_VEHICLE_REQUIRED',
+    );
+  }
+
+  await assertNoDuplicateRentalVehicleRegistration(
+    manager,
+    contest.id,
+    resolvedVehicleId,
+    registration.id,
+  );
+  registration.vehicleId = resolvedVehicleId;
+}
 
 export async function registerContest(
   contestId: string,
@@ -319,124 +492,26 @@ export async function registerContest(
         );
       }
     } else if (body.booking_id) {
-      const booking = await manager.getRepository(Booking).findOne({
-        where: { id: body.booking_id, customerId: viewer.userId },
-      });
-      if (!booking) {
-        throw new AppError(
-          'Booking thue xe khong ton tai',
-          404,
-          'CONTEST_RENTAL_BOOKING_NOT_FOUND',
-        );
-      }
-      if (booking.status !== BookingStatus.CONFIRMED) {
-        throw new AppError(
-          'Booking thue xe phai thanh toan/xac nhan truoc khi dang ky contest',
-          400,
-          'CONTEST_RENTAL_BOOKING_NOT_CONFIRMED',
-        );
-      }
-      if (booking.trackTypeId !== contest.trackTypeId) {
-        throw new AppError(
-          'Booking thue xe khong dung loai duong dua cua contest',
-          400,
-          'CONTEST_RENTAL_BOOKING_TRACK_INVALID',
-        );
-      }
-      if (booking.slotStart > contest.startsAt || booking.slotEnd < contest.endsAt) {
-        throw new AppError(
-          'Booking thue xe phai bao phu thoi gian dien ra contest',
-          400,
-          'CONTEST_RENTAL_BOOKING_TIME_INVALID',
-        );
-      }
-      const contestCafe = await manager.getRepository(ContestCafe).findOne({
-        where: { contestId, cafeId: booking.cafeId },
-      });
-      if (!contestCafe) {
-        throw new AppError(
-          'Booking thue xe phai thuoc chi nhanh tham gia giai dau nay',
-          400,
-          'CONTEST_RENTAL_BOOKING_CAFE_INVALID',
-        );
-      }
-      const bookingVehicles = await manager.getRepository(BookingVehicle).find({
-        where: { bookingId: booking.id },
-        order: { createdAt: 'ASC' },
-      });
-      if (bookingVehicles.length === 0) {
-        throw new AppError(
-          'Booking thue xe chua co xe rental',
-          400,
-          'CONTEST_RENTAL_BOOKING_VEHICLE_REQUIRED',
-        );
-      }
-      if (
-        body.vehicle_id &&
-        !bookingVehicles.some((vehicle) => vehicle.vehicleId === body.vehicle_id)
-      ) {
-        throw new AppError(
-          'vehicle_id khong thuoc booking thue xe da chon',
-          400,
-          'CONTEST_RENTAL_BOOKING_VEHICLE_INVALID',
-        );
-      }
-      resolvedRentalVehicleId = body.vehicle_id ?? bookingVehicles[0].vehicleId;
+      resolvedRentalVehicleId = await validateRentalBookingLink(
+        manager,
+        contest,
+        viewer.userId,
+        body.booking_id,
+        body.vehicle_id,
+      );
     } else {
       if (!body.vehicle_id) {
         throw new AppError('Dang ky xe thue bat buoc vehicle_id', 400, 'RENTAL_VEHICLE_REQUIRED');
       }
-      const vehicle = await manager.getRepository(Vehicle).findOne({
-        where: { id: body.vehicle_id },
-        relations: ['catalog'],
-      });
-      if (!vehicle) {
-        throw new AppError('Phuong tien thue khong ton tai', 404, 'VEHICLE_NOT_FOUND');
-      }
-      if (vehicle.status !== VehicleStatus.AVAILABLE) {
-        throw new AppError(
-          'Phuong tien thue hien tai khong san sang',
-          400,
-          'VEHICLE_NOT_AVAILABLE',
-        );
-      }
-
-      const contestCafe = await manager.getRepository(ContestCafe).findOne({
-        where: { contestId, cafeId: vehicle.cafeId },
-      });
-      if (!contestCafe) {
-        throw new AppError(
-          'Phuong tien thue phai thuoc chi nhanh tham gia giai dau nay',
-          400,
-          'CONTEST_VEHICLE_CAFE_INVALID',
-        );
-      }
-
-      const compatibleTrackTypes = vehicle.catalog?.compatibleTrackTypes ?? [];
-      if (compatibleTrackTypes.length > 0 && !compatibleTrackTypes.includes(contest.trackTypeId)) {
-        throw new AppError(
-          'Phuong tien thue khong tuong thich voi duong dua cua contest',
-          400,
-          'CONTEST_VEHICLE_TRACK_INCOMPATIBLE',
-        );
-      }
+      resolvedRentalVehicleId = await validateLegacyRentalVehicle(
+        manager,
+        contest,
+        body.vehicle_id,
+      );
     }
 
     if (resolvedRentalVehicleId) {
-      const activeVehicleReg = await manager.getRepository(ContestRegistration).findOne({
-        where: {
-          contestId,
-          vehicleId: resolvedRentalVehicleId,
-          status: In(ACTIVE_REGISTRATION_STATUSES),
-        },
-      });
-      if (activeVehicleReg) {
-        throw new AppError(
-          'Phuong tien thue nay da duoc dang ky trong giai dau',
-          409,
-          'CONTEST_VEHICLE_ALREADY_REGISTERED',
-        );
-      }
+      await assertNoDuplicateRentalVehicleRegistration(manager, contestId, resolvedRentalVehicleId);
     }
     const registration = manager.getRepository(ContestRegistration).create({
       contestId,
@@ -574,6 +649,8 @@ export async function checkInRegistration(
         'CONTEST_REGISTRATION_STATUS_INVALID',
       );
     }
+
+    await revalidateRentalRegistration(manager, contest, registration);
 
     const before = { status: registration.status, checked_in_at: registration.checkedInAt };
 
