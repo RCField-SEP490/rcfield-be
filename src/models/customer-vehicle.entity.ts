@@ -18,6 +18,9 @@ export class CustomerVehicle {
   @Column({ name: 'customer_id', type: 'uuid' })
   customerId: string;
 
+  @Column({ name: 'user_id', type: 'uuid', nullable: true })
+  userIdLegacy: string | null;
+
   @Column({ type: 'varchar', length: 255 })
   name: string;
 

@@ -67,6 +67,7 @@ export async function createCustomerVehicle(
   const repo = AppDataSource.getRepository(CustomerVehicle);
   const vehicle = repo.create({
     customerId,
+    userIdLegacy: customerId,
     name: body.name,
     scale: body.scale,
     chassisType: body.chassis_type,
@@ -85,10 +86,12 @@ export async function createCustomerVehicle(
 }
 
 export async function listCustomerVehicles(customerId: string): Promise<CustomerVehicleDto[]> {
-  const vehicles = await AppDataSource.getRepository(CustomerVehicle).find({
-    where: { customerId },
-    order: { createdAt: 'DESC' },
-  });
+  const vehicles = await AppDataSource.getRepository(CustomerVehicle)
+    .createQueryBuilder('vehicle')
+    .where('vehicle.customer_id = :customerId OR vehicle.user_id = :customerId', { customerId })
+    .orderBy('vehicle.created_at', 'DESC')
+    .getMany();
+
   return vehicles.map(toCustomerVehicleDto);
 }
 
@@ -96,9 +99,14 @@ export async function getCustomerVehicleOrThrow(
   id: string,
   customerId: string,
 ): Promise<CustomerVehicle> {
-  const vehicle = await AppDataSource.getRepository(CustomerVehicle).findOne({
-    where: { id, customerId },
-  });
+  const vehicle = await AppDataSource.getRepository(CustomerVehicle)
+    .createQueryBuilder('vehicle')
+    .where('vehicle.id = :id', { id })
+    .andWhere('(vehicle.customer_id = :customerId OR vehicle.user_id = :customerId)', {
+      customerId,
+    })
+    .getOne();
+
   if (!vehicle) {
     throw new AppError(
       'Phuong tien khong ton tai hoac khong thuoc quyen so huu cua ban',
@@ -135,6 +143,7 @@ export async function updateCustomerVehicle(
   if (body.notes !== undefined) vehicle.notes = body.notes;
   if (body.image_url !== undefined) vehicle.imageUrl = body.image_url;
   if (body.metadata !== undefined) vehicle.metadata = body.metadata;
+  if (!vehicle.userIdLegacy) vehicle.userIdLegacy = vehicle.customerId;
 
   return toCustomerVehicleDto(await AppDataSource.getRepository(CustomerVehicle).save(vehicle));
 }

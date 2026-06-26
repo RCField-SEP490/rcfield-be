@@ -778,7 +778,18 @@ async function autoAdvanceByeMatches(
         where: { matchId: match.id },
       });
 
-      if (match.status === ContestMatchStatus.READY && participants.length === 1) {
+      const sourceMatches = await manager.getRepository(ContestMatch).find({
+        where: { nextMatchId: match.id },
+      });
+      const canAutoAdvanceBye =
+        sourceMatches.length === 0 ||
+        sourceMatches.every((sourceMatch) => sourceMatch.status === ContestMatchStatus.COMPLETED);
+
+      if (
+        match.status === ContestMatchStatus.READY &&
+        participants.length === 1 &&
+        canAutoAdvanceBye
+      ) {
         const participant = participants[0];
 
         participant.isWinner = true;
