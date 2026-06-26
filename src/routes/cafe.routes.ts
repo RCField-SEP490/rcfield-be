@@ -15,6 +15,7 @@ import { menuRouter } from './menu.routes';
 import { promotionController } from '../controllers/promotion.controller';
 import { packageController } from '../controllers/package.controller';
 import { customerPackageController } from '../controllers/customer-package.controller';
+import { contestController } from '../controllers/contest.controller';
 import { UserRole } from '../types';
 
 export const cafeRouter = Router();
@@ -27,6 +28,7 @@ const upload = multer({
 cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
 cafeRouter.get('/:cafeId/menu', optionalAuthenticate, menuController.listMenuItems);
 cafeRouter.use('/:cafeId/menu', menuRouter);
+cafeRouter.get('/:cafeId/contests', optionalAuthenticate, contestController.listByCafe);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);

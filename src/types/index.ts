@@ -60,6 +60,11 @@ export enum VehicleStatus {
   RETIRED = 'RETIRED',
 }
 
+export enum VehicleSource {
+  RENTAL = 'RENTAL',
+  BYOC = 'BYOC',
+}
+
 // ── Booking ───────────────────────────────────────────────────────────────────
 
 export enum BookingMode {
@@ -93,6 +98,64 @@ export enum BookingParticipantType {
   BOOKER = 'BOOKER',
   REGISTERED_USER = 'REGISTERED_USER',
   WALK_IN_GUEST = 'WALK_IN_GUEST',
+}
+
+// ── Contest ──────────────────────────────────────────────────────────────────
+
+export enum ContestStatus {
+  DRAFT = 'DRAFT',
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestRegistrationStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  CANCELLED = 'CANCELLED',
+  CHECKED_IN = 'CHECKED_IN',
+}
+
+export enum ContestCafeRole {
+  HOST = 'HOST',
+  PARTICIPATING = 'PARTICIPATING',
+}
+
+export enum ContestScheduleFormat {
+  KNOCKOUT = 'KNOCKOUT',
+  MULTI_DRIVER_HEAT = 'MULTI_DRIVER_HEAT',
+  TIME_ATTACK = 'TIME_ATTACK',
+}
+
+export enum ContestSeedingMode {
+  MANUAL = 'MANUAL',
+  CHECK_IN_ORDER = 'CHECK_IN_ORDER',
+}
+
+export enum ContestMatchType {
+  HEAD_TO_HEAD = 'HEAD_TO_HEAD',
+  MULTI_DRIVER = 'MULTI_DRIVER',
+  TIME_ATTACK = 'TIME_ATTACK',
+  FINAL = 'FINAL',
+}
+
+export enum ContestMatchStatus {
+  DRAFT = 'DRAFT',
+  READY = 'READY',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestMatchParticipantStatus {
+  READY = 'READY',
+  STARTED = 'STARTED',
+  FINISHED = 'FINISHED',
+  DNS = 'DNS',
+  DNF = 'DNF',
+  DQ = 'DQ',
 }
 
 // ── Payment ───────────────────────────────────────────────────────────────────

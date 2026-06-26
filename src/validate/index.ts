@@ -7,11 +7,15 @@ import {
   BookingStatus,
   CafeStatus,
   CustomerPackageStatus,
+  ContestStatus,
+  ContestScheduleFormat,
+  ContestSeedingMode,
   DiscountType,
   FnbOrderStatus,
   PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
+  VehicleSource,
   VehicleStatus,
 } from '../types';
 
@@ -407,6 +411,175 @@ export const UpdatePackageSchema = PackageBaseSchema.partial().refine(
 
 export const PackageIdParamsSchema = z.object({
   packageId: z.string().uuid(),
+});
+
+// ── contests ─────────────────────────────────────────────────────────────────
+
+const ContestVehicleRuleSchema = z
+  .object({
+    allowed_sources: z.array(z.nativeEnum(VehicleSource)).min(1).optional(),
+    requires_tech_check: z.boolean().optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  .passthrough()
+  .optional()
+  .default({});
+
+const ContestBaseSchema = z.object({
+  name: z.string().trim().min(3).max(255),
+  description: z.string().trim().max(5000).nullable().optional(),
+  track_type_id: z.string().uuid(),
+  vehicle_rule: ContestVehicleRuleSchema,
+  starts_at: z.coerce.date(),
+  ends_at: z.coerce.date(),
+  registration_opens_at: z.coerce.date(),
+  registration_closes_at: z.coerce.date(),
+  capacity: z.coerce.number().int().positive().max(10000),
+  entry_fee: z.coerce.number().nonnegative().optional().default(0),
+  banner_image_url: z.string().url().nullable().optional(),
+  config: z.record(z.any()).optional().default({}),
+  participating_cafe_ids: z.array(z.string().uuid()).min(1),
+});
+
+function validContestTimeRange(value: {
+  starts_at?: Date;
+  ends_at?: Date;
+  registration_opens_at?: Date;
+  registration_closes_at?: Date;
+}) {
+  if (value.starts_at && value.ends_at && value.ends_at <= value.starts_at) return false;
+  if (
+    value.registration_opens_at &&
+    value.registration_closes_at &&
+    value.registration_closes_at <= value.registration_opens_at
+  ) {
+    return false;
+  }
+  if (
+    value.starts_at &&
+    value.registration_closes_at &&
+    value.registration_closes_at > value.starts_at
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export const CreateContestSchema = ContestBaseSchema.refine(validContestTimeRange, {
+  message: 'Thời gian contest hoặc thời gian đăng ký không hợp lệ',
+});
+
+export const UpdateContestSchema = ContestBaseSchema.partial()
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
+  .refine(validContestTimeRange, {
+    message: 'Thời gian contest hoặc thời gian đăng ký không hợp lệ',
+  });
+
+export const ContestIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const ContestRegistrationIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const ContestListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  status: z.nativeEnum(ContestStatus).optional(),
+  upcoming: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
+  notify_within_hours: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(24 * 30)
+    .optional(),
+});
+
+export const MyContestRegistrationsQuerySchema = z.object({
+  contest_id: z.string().uuid().optional(),
+});
+
+export const ContestRegistrationLookupQuerySchema = z.object({
+  check_in_code: z.string().uuid(),
+});
+
+export const RegisterContestSchema = z
+  .object({
+    vehicle_source: z.nativeEnum(VehicleSource).optional().default(VehicleSource.BYOC),
+    vehicle_id: z.string().uuid().nullable().optional(),
+    customer_vehicle_id: z.string().uuid().nullable().optional(),
+    metadata: z.record(z.any()).optional().default({}),
+  })
+  .refine(
+    (value) => value.vehicle_source !== VehicleSource.RENTAL || Boolean(value.vehicle_id),
+    'Đăng ký xe thuê cần vehicle_id',
+  )
+  .refine(
+    (value) => value.vehicle_source !== VehicleSource.BYOC || !value.vehicle_id,
+    'Đăng ký BYOC không dùng vehicle_id thuê của cafe',
+  );
+
+export const CheckInContestRegistrationSchema = z.object({
+  cafe_id: z.string().uuid(),
+});
+
+export const CancelContestRegistrationSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+
+export const ContestMatchIdParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const GenerateContestMatchesSchema = z.object({
+  format: z.nativeEnum(ContestScheduleFormat).optional().default(ContestScheduleFormat.KNOCKOUT),
+  drivers_per_match: z.coerce.number().int().positive().max(16).optional().default(2),
+  registration_ids: z.array(z.string().uuid()).min(1),
+  seeding_mode: z.nativeEnum(ContestSeedingMode).optional().default(ContestSeedingMode.MANUAL),
+  advancement_rule: z.record(z.any()).optional().default({}),
+});
+
+const ContestMatchParticipantInputSchema = z.object({
+  registration_id: z.string().uuid(),
+  slot_no: z.coerce.number().int().positive(),
+  lane: z.string().trim().max(30).nullable().optional(),
+  grid_position: z.coerce.number().int().positive().nullable().optional(),
+  seed_no: z.coerce.number().int().positive().nullable().optional(),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+export const UpdateContestMatchParticipantsSchema = z.object({
+  participants: z.array(ContestMatchParticipantInputSchema).min(1),
+});
+
+const ContestMatchResultInputSchema = z.object({
+  registration_id: z.string().uuid(),
+  finish_position: z.coerce.number().int().positive().nullable().optional(),
+  score: z.coerce.number().nullable().optional(),
+  best_lap_ms: z.coerce.number().int().positive().nullable().optional(),
+  total_time_ms: z.coerce.number().int().positive().nullable().optional(),
+  is_winner: z.boolean().optional(),
+  result_note: z.string().trim().max(1000).nullable().optional(),
+  metadata: z.record(z.any()).optional().default({}),
+});
+
+export const SubmitContestMatchResultsSchema = z.object({
+  results: z.array(ContestMatchResultInputSchema).min(1),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export const AdvanceContestMatchSchema = z.object({
+  next_match_id: z.string().uuid().nullable().optional(),
+  top_n: z.coerce.number().int().positive().max(16).optional(),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export const PublishContestLeaderboardSchema = z.object({
+  reason: z.string().trim().max(1000).optional(),
 });
 
 export const CafeImageCreateSchema = z.object({

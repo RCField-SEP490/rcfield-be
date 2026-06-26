@@ -21,6 +21,10 @@ import { adminTrackTypeRouter } from './admin-track-type.routes';
 import { adminDashboardRouter } from './admin-dashboard.routes';
 import { vnpayRouter } from './vnpay.routes';
 import { bookingRouter } from './booking.routes';
+import { contestRouter } from './contest.routes';
+import { contestRegistrationRouter } from './contest-registration.routes';
+import { contestMatchRouter } from './contest-match.routes';
+import { contestRegistrationController } from '../controllers/contest-registration.controller';
 import { bookingController } from '../controllers/booking.controller';
 import { customerPackageRouter } from './customer-package.routes';
 import { pricingRouter } from './pricing.routes';
@@ -124,6 +128,15 @@ router.use('/bookings', bookingRouter);
 router.use('/sessions', sessionRouter);
 router.use('/', customerPackageRouter);
 router.use('/', pricingRouter);
+router.use('/contests', contestRouter);
+router.use('/contest-registrations', contestRegistrationRouter);
+router.use('/contest-matches', contestMatchRouter);
+router.get(
+  '/me/contest-registrations',
+  authenticate,
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  contestRegistrationController.listMine,
+);
 router.get(
   '/provider/cafes/:cafeId/bookings',
   authenticate,
