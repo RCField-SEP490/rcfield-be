@@ -58,7 +58,7 @@ function contestBody(cafeIds: string[], overrides: Record<string, unknown> = {})
     name: 'RCField Spec Cup',
     description: 'Spec race for community drivers',
     track_type_id: driftId,
-    vehicle_rule: { allowed_sources: ['RENTAL', 'BYOC'] },
+    vehicle_rule: { vehicle_policy: 'MIXED' },
     starts_at: new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString(),
     ends_at: new Date(now + 7 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000).toISOString(),
     registration_opens_at: new Date(now - 60 * 60 * 1000).toISOString(),
@@ -88,16 +88,41 @@ async function createOpenContest() {
   return { provider, cafe, contest: openRes.body.data };
 }
 
-async function registerContest(contestId: string) {
+async function createCustomerVehicle(customer: { id: string; email: string; role: UserRole }) {
+  const res = await request(app)
+    .post('/api/v1/me/customer-vehicles')
+    .set('Authorization', `Bearer ${generateToken(customer)}`)
+    .send({
+      name: 'Mini-Z Drift Spec',
+      scale: '1/10',
+      chassis_type: 'Drift AWD',
+      frequency: '2.4GHz',
+      notes: 'Contest BYOC test car',
+    });
+  expect(res.status).toBe(201);
+  return res.body.data;
+}
+
+async function registerContest(
+  contestId: string,
+  reviewer?: { id: string; email: string; role: UserRole },
+) {
   const customer = await createTestUser({ role: UserRole.CUSTOMER });
+  const customerVehicle = await createCustomerVehicle(customer);
   const res = await request(app)
     .post(`/api/v1/contests/${contestId}/register`)
     .set('Authorization', `Bearer ${generateToken(customer)}`)
-    .send({ vehicle_source: 'BYOC' });
+    .send({ vehicle_source: 'BYOC', customer_vehicle_id: customerVehicle.id });
   expect(res.status).toBe(201);
-  return { customer, registration: res.body.data };
-}
+  if (!reviewer) return { customer, customerVehicle, registration: res.body.data };
 
+  const approve = await request(app)
+    .post(`/api/v1/contest-registrations/${res.body.data.id}/approve`)
+    .set('Authorization', `Bearer ${generateToken(reviewer)}`)
+    .send({});
+  expect(approve.status).toBe(200);
+  return { customer, customerVehicle, registration: approve.body.data };
+}
 async function checkedInRegistrations(
   contestId: string,
   cafeId: string,
@@ -106,7 +131,7 @@ async function checkedInRegistrations(
 ) {
   const registrations = [];
   for (let index = 0; index < count; index += 1) {
-    const { registration } = await registerContest(contestId);
+    const { registration } = await registerContest(contestId, provider);
     const checkIn = await request(app)
       .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
       .set('Authorization', `Bearer ${generateToken(provider)}`)
@@ -154,7 +179,7 @@ describe('Compact contest routes', () => {
 
   it('blocks registration after provider closes contest', async () => {
     const { provider, contest } = await createOpenContest();
-    const first = await registerContest(contest.id);
+    const first = await registerContest(contest.id, provider);
     expect(first.registration.status).toBe(ContestRegistrationStatus.CONFIRMED);
 
     const closed = await closeContest(contest.id, provider);
@@ -168,11 +193,26 @@ describe('Compact contest routes', () => {
     expect(blocked.status).toBe(409);
   });
 
+  it('keeps BYOC registration pending until provider approves the contest vehicle entry', async () => {
+    const { provider, contest } = await createOpenContest();
+    const { registration, customerVehicle } = await registerContest(contest.id);
+    expect(customerVehicle.scale).toBe('1/10');
+    expect(registration.status).toBe(ContestRegistrationStatus.PENDING);
+    expect(registration.customer_vehicle_id).toBe(customerVehicle.id);
+
+    const approve = await request(app)
+      .post(`/api/v1/contest-registrations/${registration.id}/approve`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({});
+
+    expect(approve.status).toBe(200);
+    expect(approve.body.data.status).toBe(ContestRegistrationStatus.CONFIRMED);
+  });
   it('staff check-in is allowed only at participating assigned cafe', async () => {
     const { provider, cafe, contest } = await createOpenContest();
     const staff = await createTestUser({ role: UserRole.STAFF });
     await assignStaffToCafe(staff.id, cafe.id, provider.id);
-    const { registration } = await registerContest(contest.id);
+    const { registration } = await registerContest(contest.id, provider);
 
     const res = await request(app)
       .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
@@ -328,7 +368,7 @@ describe('Compact contest routes', () => {
 
   it('rejects schedule generation when selected registration is cancelled', async () => {
     const { provider, contest } = await createOpenContest();
-    const { registration } = await registerContest(contest.id);
+    const { registration } = await registerContest(contest.id, provider);
     const cancel = await request(app)
       .post(`/api/v1/contest-registrations/${registration.id}/cancel`)
       .set('Authorization', `Bearer ${generateToken(provider)}`)
@@ -350,7 +390,7 @@ describe('Compact contest routes', () => {
 
   it('writes audit logs for business mutations', async () => {
     const { provider, contest } = await createOpenContest();
-    const { registration } = await registerContest(contest.id);
+    const { registration } = await registerContest(contest.id, provider);
     await closeContest(contest.id, provider);
 
     const rows = await AppDataSource.query<{ event_type: string }[]>(

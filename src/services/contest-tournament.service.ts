@@ -56,6 +56,7 @@ export interface SubmitContestMatchResultsBody {
     metadata?: Record<string, unknown>;
   }>;
   reason?: string;
+  force_cascade?: boolean;
 }
 
 export interface AdvanceContestMatchBody {
@@ -177,6 +178,40 @@ async function assertOperator(
   throw new AppError('Bạn không có quyền vận hành contest này', 403, 'CONTEST_OPERATOR_FORBIDDEN');
 }
 
+async function assertMatchOperator(
+  manager: EntityManager,
+  contest: Contest,
+  match: ContestMatch,
+  viewer: Viewer,
+): Promise<void> {
+  if (viewer.role === UserRole.PROVIDER && contest.providerId === viewer.userId) return;
+  if (viewer.role === UserRole.STAFF) {
+    if (!match.cafeId) {
+      throw new AppError(
+        'Match chua duoc gan chi nhanh cafe',
+        403,
+        'CONTEST_MATCH_LOCATION_REQUIRED',
+      );
+    }
+    const rows = await manager.query<Array<{ id: string }>>(
+      `SELECT id FROM staff_cafe_assignments WHERE staff_id = $1 AND cafe_id = $2 LIMIT 1`,
+      [viewer.userId, match.cafeId],
+    );
+    if (rows.length > 0) return;
+  }
+  throw new AppError(
+    'Ban khong co quyen thao tac match tai chi nhanh nay',
+    403,
+    'CONTEST_MATCH_CAFE_FORBIDDEN',
+  );
+}
+
+async function hasCompletedDescendant(manager: EntityManager, matchId: string): Promise<boolean> {
+  const match = await manager.getRepository(ContestMatch).findOne({ where: { id: matchId } });
+  if (!match) return false;
+  if (match.status === ContestMatchStatus.COMPLETED) return true;
+  return match.nextMatchId ? hasCompletedDescendant(manager, match.nextMatchId) : false;
+}
 async function getRegistrationsForSchedule(
   manager: EntityManager,
   contestId: string,
@@ -558,7 +593,7 @@ export async function updateMatchParticipants(
   return AppDataSource.transaction(async (manager) => {
     const match = await getMatchOrThrow(manager, matchId);
     const contest = await getContestOrThrow(manager, match.contestId);
-    await assertOperator(manager, contest, viewer);
+    await assertMatchOperator(manager, contest, match, viewer);
     if (match.status === ContestMatchStatus.COMPLETED) {
       throw new AppError(
         'Không thể đổi participants của match đã hoàn tất',
@@ -611,7 +646,7 @@ export async function submitMatchResults(
   return AppDataSource.transaction(async (manager) => {
     const match = await getMatchOrThrow(manager, matchId);
     const contest = await getContestOrThrow(manager, match.contestId);
-    await assertOperator(manager, contest, viewer);
+    await assertMatchOperator(manager, contest, match, viewer);
     if (match.status === ContestMatchStatus.CANCELLED) {
       throw new AppError('Match đã bị hủy', 409, 'CONTEST_MATCH_CANCELLED');
     }
@@ -810,7 +845,7 @@ export async function advanceContestMatch(
   return AppDataSource.transaction(async (manager) => {
     const match = await getMatchOrThrow(manager, matchId);
     const contest = await getContestOrThrow(manager, match.contestId);
-    await assertOperator(manager, contest, viewer);
+    await assertMatchOperator(manager, contest, match, viewer);
     if (match.status !== ContestMatchStatus.COMPLETED) {
       throw new AppError(
         'Chỉ match COMPLETED mới được advance',
@@ -918,8 +953,18 @@ export async function correctMatchResult(
   return AppDataSource.transaction(async (manager) => {
     const match = await getMatchOrThrow(manager, matchId);
     const contest = await getContestOrThrow(manager, match.contestId);
-    await assertOperator(manager, contest, viewer);
+    await assertMatchOperator(manager, contest, match, viewer);
 
+    if (match.nextMatchId) {
+      const downstreamCompleted = await hasCompletedDescendant(manager, match.nextMatchId);
+      if (downstreamCompleted && !(viewer.role === UserRole.PROVIDER && body.force_cascade)) {
+        throw new AppError(
+          'Ket qua downstream da hoan tat, Provider can force_cascade de sua',
+          409,
+          'CONTEST_RESULT_CORRECTION_LOCKED',
+        );
+      }
+    }
     const prevParticipants = await manager.getRepository(ContestMatchParticipant).find({
       where: { matchId },
     });
@@ -1027,6 +1072,21 @@ export async function publishLeaderboard(
   return AppDataSource.transaction(async (manager) => {
     const contest = await getContestOrThrow(manager, contestId);
     await assertOperator(manager, contest, viewer);
+    const unfinishedMatchCount = await manager
+      .getRepository(ContestMatch)
+      .createQueryBuilder('match')
+      .where('match.contestId = :contestId', { contestId })
+      .andWhere('match.status NOT IN (:...terminalStatuses)', {
+        terminalStatuses: [ContestMatchStatus.COMPLETED, ContestMatchStatus.CANCELLED],
+      })
+      .getCount();
+    if (unfinishedMatchCount > 0) {
+      throw new AppError(
+        'Con match chua hoan tat, khong the publish leaderboard',
+        409,
+        'CONTEST_LEADERBOARD_MATCHES_UNFINISHED',
+      );
+    }
     const completedMatches = await manager.getRepository(ContestMatch).find({
       where: { contestId, status: ContestMatchStatus.COMPLETED },
       order: { roundNo: 'DESC', matchNo: 'ASC' },

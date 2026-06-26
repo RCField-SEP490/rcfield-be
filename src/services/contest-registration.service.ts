@@ -4,6 +4,10 @@ import { AppDataSource } from '../config/database';
 import { Contest } from '../models/contest.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { CustomerVehicle } from '../models/customer-vehicle.entity';
+import { Vehicle } from '../models/vehicle.entity';
+import { Booking } from '../models/booking.entity';
+import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { writeContestAudit } from './contest-audit.service';
 import { User } from '../models/user.entity';
 import {
@@ -12,6 +16,8 @@ import {
   ContestStatus,
   UserRole,
   VehicleSource,
+  VehicleStatus,
+  BookingStatus,
 } from '../types';
 
 interface Viewer {
@@ -23,6 +29,7 @@ export interface RegisterContestBody {
   vehicle_source: VehicleSource;
   vehicle_id?: string | null;
   customer_vehicle_id?: string | null;
+  booking_id?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -42,6 +49,7 @@ interface RegistrationDto {
   vehicle_source: VehicleSource;
   vehicle_id: string | null;
   customer_vehicle_id: string | null;
+  booking_id: string | null;
   status: ContestRegistrationStatus;
   check_in_code: string;
   checked_in_cafe_id: string | null;
@@ -79,6 +87,7 @@ function toRegistrationDto(
     vehicle_source: registration.vehicleSource,
     vehicle_id: registration.vehicleId,
     customer_vehicle_id: registration.customerVehicleId,
+    booking_id: registration.bookingId,
     status: registration.status,
     check_in_code: registration.checkInCode,
     checked_in_cafe_id: registration.checkedInCafeId,
@@ -214,10 +223,6 @@ function assertContestOwner(contest: Contest, providerId: string): void {
   }
 }
 
-import { CustomerVehicle } from '../models/customer-vehicle.entity';
-import { Vehicle } from '../models/vehicle.entity';
-import { VehicleStatus } from '../types';
-
 export async function registerContest(
   contestId: string,
   viewer: Viewer,
@@ -278,27 +283,27 @@ export async function registerContest(
       );
     }
 
-    // Validate Selected Vehicle based on source
+    // Validate selected vehicle source. Rental can link to the normal booking flow; BYOC is reviewed per registration.
+    let resolvedRentalVehicleId = body.vehicle_id ?? null;
     if (body.vehicle_source === VehicleSource.BYOC) {
       if (!body.customer_vehicle_id) {
         throw new AppError(
-          'Đăng ký BYOC bắt buộc customer_vehicle_id',
+          'Dang ky BYOC bat buoc customer_vehicle_id',
           400,
           'CUSTOMER_VEHICLE_REQUIRED',
         );
       }
       const customerVehicle = await manager.getRepository(CustomerVehicle).findOne({
-        where: { id: body.customer_vehicle_id, userId: viewer.userId },
+        where: { id: body.customer_vehicle_id, customerId: viewer.userId },
       });
       if (!customerVehicle) {
         throw new AppError(
-          'Phương tiện cá nhân không tồn tại hoặc không thuộc sở hữu của bạn',
+          'Phuong tien ca nhan khong ton tai hoac khong thuoc so huu cua ban',
           404,
           'CUSTOMER_VEHICLE_NOT_FOUND',
         );
       }
 
-      // Ensure vehicle is not already registered in active registrations for this contest
       const activeCustomerVehicleReg = await manager.getRepository(ContestRegistration).findOne({
         where: {
           contestId,
@@ -308,75 +313,139 @@ export async function registerContest(
       });
       if (activeCustomerVehicleReg) {
         throw new AppError(
-          'Phương tiện cá nhân này đã được đăng ký bởi một người chơi khác trong giải đấu',
+          'Phuong tien ca nhan nay da duoc dang ky trong giai dau',
           409,
           'CONTEST_VEHICLE_ALREADY_REGISTERED',
         );
       }
+    } else if (body.booking_id) {
+      const booking = await manager.getRepository(Booking).findOne({
+        where: { id: body.booking_id, customerId: viewer.userId },
+      });
+      if (!booking) {
+        throw new AppError(
+          'Booking thue xe khong ton tai',
+          404,
+          'CONTEST_RENTAL_BOOKING_NOT_FOUND',
+        );
+      }
+      if (booking.status !== BookingStatus.CONFIRMED) {
+        throw new AppError(
+          'Booking thue xe phai thanh toan/xac nhan truoc khi dang ky contest',
+          400,
+          'CONTEST_RENTAL_BOOKING_NOT_CONFIRMED',
+        );
+      }
+      if (booking.trackTypeId !== contest.trackTypeId) {
+        throw new AppError(
+          'Booking thue xe khong dung loai duong dua cua contest',
+          400,
+          'CONTEST_RENTAL_BOOKING_TRACK_INVALID',
+        );
+      }
+      if (booking.slotStart > contest.startsAt || booking.slotEnd < contest.endsAt) {
+        throw new AppError(
+          'Booking thue xe phai bao phu thoi gian dien ra contest',
+          400,
+          'CONTEST_RENTAL_BOOKING_TIME_INVALID',
+        );
+      }
+      const contestCafe = await manager.getRepository(ContestCafe).findOne({
+        where: { contestId, cafeId: booking.cafeId },
+      });
+      if (!contestCafe) {
+        throw new AppError(
+          'Booking thue xe phai thuoc chi nhanh tham gia giai dau nay',
+          400,
+          'CONTEST_RENTAL_BOOKING_CAFE_INVALID',
+        );
+      }
+      const bookingVehicles = await manager.getRepository(BookingVehicle).find({
+        where: { bookingId: booking.id },
+        order: { createdAt: 'ASC' },
+      });
+      if (bookingVehicles.length === 0) {
+        throw new AppError(
+          'Booking thue xe chua co xe rental',
+          400,
+          'CONTEST_RENTAL_BOOKING_VEHICLE_REQUIRED',
+        );
+      }
+      if (
+        body.vehicle_id &&
+        !bookingVehicles.some((vehicle) => vehicle.vehicleId === body.vehicle_id)
+      ) {
+        throw new AppError(
+          'vehicle_id khong thuoc booking thue xe da chon',
+          400,
+          'CONTEST_RENTAL_BOOKING_VEHICLE_INVALID',
+        );
+      }
+      resolvedRentalVehicleId = body.vehicle_id ?? bookingVehicles[0].vehicleId;
     } else {
       if (!body.vehicle_id) {
-        throw new AppError('Đăng ký xe thuê bắt buộc vehicle_id', 400, 'RENTAL_VEHICLE_REQUIRED');
+        throw new AppError('Dang ky xe thue bat buoc vehicle_id', 400, 'RENTAL_VEHICLE_REQUIRED');
       }
       const vehicle = await manager.getRepository(Vehicle).findOne({
         where: { id: body.vehicle_id },
         relations: ['catalog'],
       });
       if (!vehicle) {
-        throw new AppError('Phương tiện thuê không tồn tại', 404, 'VEHICLE_NOT_FOUND');
+        throw new AppError('Phuong tien thue khong ton tai', 404, 'VEHICLE_NOT_FOUND');
       }
       if (vehicle.status !== VehicleStatus.AVAILABLE) {
         throw new AppError(
-          'Phương tiện thuê hiện tại không sẵn sàng',
+          'Phuong tien thue hien tai khong san sang',
           400,
           'VEHICLE_NOT_AVAILABLE',
         );
       }
 
-      // Check if vehicle belongs to a participating cafe
       const contestCafe = await manager.getRepository(ContestCafe).findOne({
         where: { contestId, cafeId: vehicle.cafeId },
       });
       if (!contestCafe) {
         throw new AppError(
-          'Phương tiện thuê phải thuộc chi nhánh tham gia giải đấu này',
+          'Phuong tien thue phai thuoc chi nhanh tham gia giai dau nay',
           400,
           'CONTEST_VEHICLE_CAFE_INVALID',
         );
       }
 
-      // Check compatible track types
-      if (!vehicle.catalog?.compatibleTrackTypes?.includes(contest.trackTypeId)) {
+      const compatibleTrackTypes = vehicle.catalog?.compatibleTrackTypes ?? [];
+      if (compatibleTrackTypes.length > 0 && !compatibleTrackTypes.includes(contest.trackTypeId)) {
         throw new AppError(
-          'Phương tiện thuê không tương thích với loại cấu hình sân của giải đấu',
+          'Phuong tien thue khong tuong thich voi duong dua cua contest',
           400,
           'CONTEST_VEHICLE_TRACK_INCOMPATIBLE',
         );
       }
+    }
 
-      // Ensure vehicle is not already registered in active registrations for this contest
+    if (resolvedRentalVehicleId) {
       const activeVehicleReg = await manager.getRepository(ContestRegistration).findOne({
         where: {
           contestId,
-          vehicleId: body.vehicle_id,
+          vehicleId: resolvedRentalVehicleId,
           status: In(ACTIVE_REGISTRATION_STATUSES),
         },
       });
       if (activeVehicleReg) {
         throw new AppError(
-          'Phương tiện thuê này đã được đăng ký bởi một người chơi khác trong giải đấu',
+          'Phuong tien thue nay da duoc dang ky trong giai dau',
           409,
           'CONTEST_VEHICLE_ALREADY_REGISTERED',
         );
       }
     }
-
     const registration = manager.getRepository(ContestRegistration).create({
       contestId,
       userId: viewer.userId,
       participantRoleSnapshot: viewer.role,
       vehicleSource: body.vehicle_source,
-      vehicleId: body.vehicle_id ?? null,
+      vehicleId: resolvedRentalVehicleId,
       customerVehicleId: body.customer_vehicle_id ?? null,
+      bookingId: body.booking_id ?? null,
       status: ContestRegistrationStatus.PENDING, // Default all new registrations to PENDING
       checkInCode: randomUUID(),
       metadata: body.metadata ?? {},

@@ -5,27 +5,45 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   DeleteDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('customer_vehicles')
+@Index(['customerId'])
+@Index(['status'])
 export class CustomerVehicle {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'user_id', type: 'uuid' })
-  userId: string;
+  @Column({ name: 'customer_id', type: 'uuid' })
+  customerId: string;
 
   @Column({ type: 'varchar', length: 255 })
   name: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  brand: string | null;
+  @Column({ type: 'varchar', length: 50 })
+  scale: string;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  model: string | null;
+  @Column({ name: 'chassis_type', type: 'varchar', length: 100 })
+  chassisType: string;
+
+  @Column({ type: 'varchar', length: 100 })
+  frequency: string;
+
+  @Column({ type: 'varchar', length: 30, default: 'ACTIVE' })
+  status: string;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
-  color: string | null;
+  brand: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  model: string | null;
+
+  @Column({ name: 'serial_number', type: 'varchar', length: 100, nullable: true })
+  serialNumber: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  description: string | null;
 
   @Column({ type: 'text', nullable: true })
   notes: string | null;

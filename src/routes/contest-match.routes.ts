@@ -24,6 +24,12 @@ contestMatchRouter.post(
   contestTournamentController.advance,
 );
 contestMatchRouter.post(
+  '/:id/results/correct',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestTournamentController.correctResults,
+);
+contestMatchRouter.post(
   '/:id/correct',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),

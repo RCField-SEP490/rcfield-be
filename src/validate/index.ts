@@ -511,22 +511,25 @@ export const RegisterContestSchema = z
   .object({
     vehicle_source: z.nativeEnum(VehicleSource).optional().default(VehicleSource.BYOC),
     vehicle_id: z.string().uuid().nullable().optional(),
+    booking_id: z.string().uuid().nullable().optional(),
     customer_vehicle_id: z.string().uuid().nullable().optional(),
     metadata: z.record(z.any()).optional().default({}),
   })
   .refine(
-    (value) => value.vehicle_source !== VehicleSource.RENTAL || Boolean(value.vehicle_id),
-    'Đăng ký xe thuê cần vehicle_id',
+    (value) =>
+      value.vehicle_source !== VehicleSource.RENTAL ||
+      Boolean(value.booking_id || value.vehicle_id),
+    'Dang ky xe thue can booking_id hoac vehicle_id',
   )
   .refine(
     (value) => value.vehicle_source !== VehicleSource.BYOC || Boolean(value.customer_vehicle_id),
-    'Đăng ký BYOC cần customer_vehicle_id',
+    'Dang ky BYOC can customer_vehicle_id',
   )
   .refine(
-    (value) => value.vehicle_source !== VehicleSource.BYOC || !value.vehicle_id,
-    'Đăng ký BYOC không dùng vehicle_id thuê của cafe',
+    (value) =>
+      value.vehicle_source !== VehicleSource.BYOC || (!value.vehicle_id && !value.booking_id),
+    'Dang ky BYOC khong dung xe thue hoac booking thue xe',
   );
-
 export const CheckInContestRegistrationSchema = z.object({
   cafe_id: z.string().uuid(),
 });
@@ -576,16 +579,19 @@ const ContestMatchResultInputSchema = z.object({
 export const SubmitContestMatchResultsSchema = z.object({
   results: z.array(ContestMatchResultInputSchema).min(1),
   reason: z.string().trim().max(1000).optional(),
+  force_cascade: z.boolean().optional(),
 });
 
 export const AdvanceContestMatchSchema = z.object({
   next_match_id: z.string().uuid().nullable().optional(),
   top_n: z.coerce.number().int().positive().max(16).optional(),
   reason: z.string().trim().max(1000).optional(),
+  force_cascade: z.boolean().optional(),
 });
 
 export const PublishContestLeaderboardSchema = z.object({
   reason: z.string().trim().max(1000).optional(),
+  force_cascade: z.boolean().optional(),
 });
 
 export const CafeImageCreateSchema = z.object({
@@ -1074,13 +1080,19 @@ export const ListHolidaysQuerySchema = z.object({
 // ── customer-vehicles ──────────────────────────────────────────────────────────
 
 export const CreateCustomerVehicleSchema = z.object({
-  name: z.string().trim().min(1, 'Tên xe không được để trống').max(255),
-  brand: z.string().trim().max(255).nullable().optional(),
-  model: z.string().trim().max(255).nullable().optional(),
-  color: z.string().trim().max(100).nullable().optional(),
+  name: z.string().trim().min(1, 'Ten xe khong duoc de trong').max(255),
+  scale: z.string().trim().min(1, 'Ti le xe khong duoc de trong').max(50),
+  chassis_type: z.string().trim().min(1, 'Loai chassis khong duoc de trong').max(100),
+  frequency: z.string().trim().min(1, 'Tan so dieu khien khong duoc de trong').max(100),
+  brand: z.string().trim().max(100).nullable().optional(),
+  model: z.string().trim().max(100).nullable().optional(),
+  serial_number: z.string().trim().max(100).nullable().optional(),
+  description: z.string().trim().max(1000).nullable().optional(),
   notes: z.string().trim().max(1000).nullable().optional(),
-  image_url: z.string().url('URL ảnh không hợp lệ').or(z.literal('')).nullable().optional(),
+  image_url: z.string().url('URL anh khong hop le').or(z.literal('')).nullable().optional(),
   metadata: z.record(z.any()).optional().default({}),
 });
 
-export const UpdateCustomerVehicleSchema = CreateCustomerVehicleSchema.partial();
+export const UpdateCustomerVehicleSchema = CreateCustomerVehicleSchema.partial().extend({
+  status: z.enum(['ACTIVE', 'ARCHIVED']).optional(),
+});

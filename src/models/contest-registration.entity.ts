@@ -39,6 +39,9 @@ export class ContestRegistration {
   @Column({ name: 'customer_vehicle_id', type: 'uuid', nullable: true })
   customerVehicleId: string | null;
 
+  @Column({ name: 'booking_id', type: 'uuid', nullable: true })
+  bookingId: string | null;
+
   @Column({
     type: 'enum',
     enum: ContestRegistrationStatus,
