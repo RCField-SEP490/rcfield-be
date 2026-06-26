@@ -5,6 +5,7 @@ import { Contest } from '../models/contest.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
 import { writeContestAudit } from './contest-audit.service';
+import { deleteImage, extractPublicIdFromUrl, uploadImage } from './cloudinary.service';
 import {
   AppError,
   CafeStatus,
@@ -339,6 +340,54 @@ export async function createContest(providerId: string, body: ContestBody): Prom
   });
 }
 
+export async function uploadContestBanner(
+  contestId: string,
+  providerId: string,
+  file: Express.Multer.File,
+): Promise<{ banner_image_url: string; public_id: string | null }> {
+  return AppDataSource.transaction(async (manager) => {
+    const contest = await getContestOrThrow(manager, contestId);
+    assertOwner(contest, providerId);
+
+    if (![ContestStatus.DRAFT, ContestStatus.OPEN].includes(contest.status)) {
+      throw new AppError(
+        'Chi co the cap nhat banner khi contest dang o trang thai DRAFT hoac OPEN',
+        409,
+        'CONTEST_BANNER_NOT_EDITABLE',
+      );
+    }
+
+    const previousBannerUrl = contest.bannerImageUrl;
+    const uploaded = await uploadImage({
+      buffer: file.buffer,
+      folder: `rcfield/contests/${contest.id}/banner`,
+      publicIdPrefix: `contest-banner-${contest.id}`,
+    });
+
+    contest.bannerImageUrl = uploaded.url;
+    await manager.getRepository(Contest).save(contest);
+
+    const previousPublicId = previousBannerUrl ? extractPublicIdFromUrl(previousBannerUrl) : null;
+    if (previousPublicId && previousPublicId !== uploaded.publicId) {
+      await deleteImage(previousPublicId).catch(() => undefined);
+    }
+
+    await writeContestAudit(manager, {
+      contestId: contest.id,
+      actorId: providerId,
+      actorRole: UserRole.PROVIDER,
+      eventType: 'contest.banner_uploaded',
+      beforeJson: { banner_image_url: previousBannerUrl },
+      afterJson: { banner_image_url: contest.bannerImageUrl },
+      metadata: { public_id: uploaded.publicId },
+    });
+
+    return {
+      banner_image_url: contest.bannerImageUrl,
+      public_id: uploaded.publicId,
+    };
+  });
+}
 export async function updateContest(
   contestId: string,
   providerId: string,

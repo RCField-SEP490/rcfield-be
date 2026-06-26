@@ -22,6 +22,19 @@ function providerId(req: AuthRequest): string {
   return req.user.userId;
 }
 
+function assertImageFile(
+  file: Express.Multer.File | undefined,
+): asserts file is Express.Multer.File {
+  if (!file) {
+    throw new AppError('File la bat buoc.', 400, 'FILE_REQUIRED');
+  }
+
+  const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/jpg']);
+  if (!allowed.has(file.mimetype)) {
+    throw new AppError('Chi ho tro anh JPG, PNG, WEBP.', 422, 'UNSUPPORTED_FORMAT');
+  }
+}
+
 export const contestController = {
   // GET /api/v1/contests
   async list(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -67,6 +80,19 @@ export const contestController = {
     try {
       const body = CreateContestSchema.parse(req.body);
       const data = await contestService.createContest(providerId(req), body);
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/contests/:id/banner [auth]
+  async uploadBanner(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = ContestIdParamsSchema.parse(req.params);
+      const file = req.file;
+      assertImageFile(file);
+      const data = await contestService.uploadContestBanner(id, providerId(req), file);
       res.status(201).json({ success: true, data });
     } catch (err) {
       next(err);
