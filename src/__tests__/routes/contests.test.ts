@@ -332,6 +332,68 @@ describe('Compact contest routes', () => {
     expect(publish.body.data.standings[0].score).toBe(20);
   });
 
+  it('does not auto-complete a knockout downstream match until every source match has finished', async () => {
+    const { provider, cafe, contest } = await createOpenContest();
+    const registrations = await checkedInRegistrations(contest.id, cafe.id, provider, 4);
+    await closeContest(contest.id, provider);
+
+    const generate = await request(app)
+      .post(`/api/v1/contests/${contest.id}/matches/generate`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        format: 'KNOCKOUT',
+        drivers_per_match: 2,
+        seeding_mode: 'MANUAL',
+        registration_ids: registrations.map((registration) => registration.id),
+        cafe_id: cafe.id,
+      });
+
+    expect(generate.status).toBe(201);
+    const firstRound = generate.body.data.filter(
+      (match: { round_no: number }) => match.round_no === 1,
+    );
+    const final = generate.body.data.find((match: { round_no: number }) => match.round_no === 2);
+    expect(firstRound).toHaveLength(2);
+    expect(final).toBeTruthy();
+
+    const firstResult = await request(app)
+      .post(`/api/v1/contest-matches/${firstRound[0].id}/results`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({
+        results: [
+          {
+            registration_id: firstRound[0].participants[0].registration_id,
+            finish_position: 1,
+            score: 10,
+            is_winner: true,
+          },
+          {
+            registration_id: firstRound[0].participants[1].registration_id,
+            finish_position: 2,
+            score: 6,
+          },
+        ],
+      });
+    expect(firstResult.status).toBe(200);
+
+    const advance = await request(app)
+      .post(`/api/v1/contest-matches/${firstRound[0].id}/advance`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send({ next_match_id: final.id, top_n: 1 });
+    expect(advance.status).toBe(200);
+
+    const refreshed = await request(app)
+      .get(`/api/v1/contests/${contest.id}/matches`)
+      .set('Authorization', `Bearer ${generateToken(provider)}`);
+    expect(refreshed.status).toBe(200);
+
+    const refreshedFinal = refreshed.body.data.find(
+      (match: { id: string }) => match.id === final.id,
+    );
+    expect(refreshedFinal.status).toBe('DRAFT');
+    expect(refreshedFinal.participants).toHaveLength(1);
+  });
+
   it('generates multi-driver heat schedule and supports drag/drop participant reorder', async () => {
     const { provider, cafe, contest } = await createOpenContest();
     const registrations = await checkedInRegistrations(contest.id, cafe.id, provider, 4);
