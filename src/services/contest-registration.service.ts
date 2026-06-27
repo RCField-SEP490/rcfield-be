@@ -780,6 +780,7 @@ export async function rejectRegistration(
   registrationId: string,
   viewer: Viewer,
   reason?: string,
+  reasonCode?: 'TRACK_INCOMPATIBLE' | 'RULESET_INCOMPATIBLE' | 'UNVERIFIED_VEHICLE' | 'OTHER',
 ): Promise<RegistrationDto> {
   if (![UserRole.PROVIDER, UserRole.STAFF].includes(viewer.role)) {
     throw new AppError(
@@ -816,6 +817,13 @@ export async function rejectRegistration(
     registration.cancelledBy = viewer.userId;
     registration.cancelledAt = new Date();
     registration.cancellationReason = reason ?? 'Bị từ chối bởi quản trị viên/nhân viên';
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      review_reason_code: reasonCode ?? 'OTHER',
+      rental_recommended:
+        registration.vehicleSource === VehicleSource.BYOC &&
+        ((contest.vehicleRule as Record<string, unknown>)?.vehicle_policy ?? 'MIXED') === 'MIXED',
+    };
 
     const saved = await manager.getRepository(ContestRegistration).save(registration);
     await writeContestAudit(manager, {

@@ -536,6 +536,9 @@ export const CheckInContestRegistrationSchema = z.object({
 
 export const CancelContestRegistrationSchema = z.object({
   reason: z.string().trim().max(500).optional(),
+  reason_code: z
+    .enum(['TRACK_INCOMPATIBLE', 'RULESET_INCOMPATIBLE', 'UNVERIFIED_VEHICLE', 'OTHER'])
+    .optional(),
 });
 
 export const ContestMatchIdParamsSchema = z.object({
