@@ -522,6 +522,40 @@
           ]
         },
         {
+          "name": "Upload Contest Banner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{provider_token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/contests/{{contest_id}}/banner",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('contest banner uploaded', () => pm.response.to.have.status(201));",
+                  "pm.expect(pm.response.json().data.banner_image_url).to.be.a('string');"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List Public Contests",
           "request": {
             "method": "GET",
@@ -628,7 +662,7 @@
             "url": "{{baseUrl}}/contest-registrations/{{registration_id}}/reject",
             "body": {
               "mode": "raw",
-              "raw": "{\"reason\":\"Vehicle does not fit contest requirements\"}"
+              "raw": "{\"reason\":\"Vehicle does not fit contest requirements\",\"reason_code\":\"TRACK_INCOMPATIBLE\"}"
             }
           },
           "event": [
