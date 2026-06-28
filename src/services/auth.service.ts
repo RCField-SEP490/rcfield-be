@@ -167,25 +167,34 @@ class AuthService {
     }
 
     const password_hash = await bcrypt.hash(input.password, 10);
-    const user = await this.userRepo.save(
-      this.userRepo.create({
-        email,
-        full_name: input.full_name.trim(),
-        phone: input.phone ?? null,
-        password_hash,
-        role: input.role,
-        auth_provider: AuthProvider.LOCAL,
-        is_active: true,
-      }),
-    );
+    const user = await AppDataSource.transaction(async (manager) => {
+      const saved = await manager.save(
+        manager.create(User, {
+          email,
+          full_name: input.full_name.trim(),
+          phone: input.phone ?? null,
+          password_hash,
+          role: input.role,
+          auth_provider: AuthProvider.LOCAL,
+          is_active: true,
+        }),
+      );
+      if (input.role === UserRole.PROVIDER) {
+        await manager.save(
+          manager.create(ProviderProfile, {
+            userId: saved.id,
+            businessName: input.full_name.trim(),
+            registrationStatus: ProviderStatus.PENDING,
+          }),
+        );
+      }
+      return saved;
+    });
 
     const tokens = await this.issueTokenPair(user);
     let regStatus: string | undefined;
     if (user.role === UserRole.PROVIDER) {
-      const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
-        where: { userId: user.id },
-      });
-      regStatus = profile?.registrationStatus ?? ProviderStatus.PENDING;
+      regStatus = ProviderStatus.PENDING;
     }
     return {
       ...tokens,
