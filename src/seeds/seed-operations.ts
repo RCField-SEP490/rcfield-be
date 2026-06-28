@@ -155,13 +155,7 @@ async function seed() {
     `INSERT INTO booking_vehicles (
       booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
     ) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [
-      b1.id,
-      v1.id,
-      Number(v1.hourly_rate),
-      Number(v1.security_deposit),
-      Number(v1.damage_multiplier),
-    ],
+    [b1.id, v1.id, Number(v1.hourly_rate), 0, Number(v1.damage_multiplier)],
   );
 
   // Booking Participant
@@ -278,13 +272,7 @@ async function seed() {
     `INSERT INTO booking_vehicles (
       booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
     ) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [
-      b2.id,
-      v2.id,
-      Number(v2.hourly_rate),
-      Number(v2.security_deposit),
-      Number(v2.damage_multiplier),
-    ],
+    [b2.id, v2.id, Number(v2.hourly_rate), 0, Number(v2.damage_multiplier)],
   );
 
   // Booking Participant
@@ -392,13 +380,7 @@ async function seed() {
     `INSERT INTO booking_vehicles (
       booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
     ) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [
-      b3.id,
-      v3.id,
-      Number(v3.hourly_rate),
-      Number(v3.security_deposit),
-      Number(v3.damage_multiplier),
-    ],
+    [b3.id, v3.id, Number(v3.hourly_rate), 0, Number(v3.damage_multiplier)],
   );
 
   // Booking Participant
@@ -514,13 +496,7 @@ async function seed() {
     `INSERT INTO booking_vehicles (
       booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
     ) VALUES ($1, $2, $3, $4, $5)`,
-    [
-      b4.id,
-      v4.id,
-      Number(v4.hourly_rate),
-      Number(v4.security_deposit),
-      Number(v4.damage_multiplier),
-    ],
+    [b4.id, v4.id, Number(v4.hourly_rate), 0, Number(v4.damage_multiplier)],
   );
 
   // ─────────────────────────────────────────────────────────────────────────────

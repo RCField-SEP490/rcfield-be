@@ -98,7 +98,7 @@ class AuthService {
     const access_token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role, ...(cafeId && { cafeId }) },
       env.jwt.secret,
-      { expiresIn: '1h' },
+      { expiresIn: env.jwt.expiresIn as jwt.SignOptions['expiresIn'] },
     );
 
     const raw = crypto.randomBytes(32).toString('hex');

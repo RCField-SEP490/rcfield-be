@@ -52,7 +52,7 @@ export async function handler(cafeId: string): Promise<string> {
       name: r.name,
       tier: TIER_LABEL[r.tier] ?? r.tier,
       hourlyRate: `${Math.round(parseFloat(r.hourly_rate)).toLocaleString('vi-VN')}đ/buổi`,
-      securityDeposit: `${Math.round(parseFloat(r.security_deposit)).toLocaleString('vi-VN')}đ (hoàn sau khi chơi)`,
+      securityDeposit: 'Không yêu cầu cọc',
       available: available > 0 ? `${available} xe sẵn sàng` : 'Hết xe hiện tại',
     };
     if (r.description) item.description = r.description;

@@ -357,7 +357,7 @@ export async function createBooking(
     : rawSlotFee;
 
   let rentalFeeTotal = 0;
-  let depositTotal = 0;
+  const depositTotal = 0;
   const vehiclePricings: Array<{
     vehicleId: string;
     hourlyRate: number;
@@ -402,12 +402,11 @@ export async function createBooking(
       const hourlyRate = Number(catalog.hourlyRate);
       const rentalFee = hourlyRate * (slotMinutes / 60);
       rentalFeeTotal += rentalFee;
-      depositTotal += Number(catalog.securityDeposit);
       vehiclePricings.push({
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        securityDeposit: Number(catalog.securityDeposit),
+        securityDeposit: 0,
         damageMultiplier: Number(catalog.damageMultiplier),
       });
     }

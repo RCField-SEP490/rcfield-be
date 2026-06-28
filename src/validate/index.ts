@@ -656,7 +656,7 @@ export const CreateVehicleCatalogSchema = z.object({
     .openapi({ example: 'Phù hợp cho người mới bắt đầu chơi drift.' }),
   tier: AssetTierSchema.openapi({ example: AssetTier.STANDARD }),
   hourly_rate: z.number().nonnegative().openapi({ example: 40000 }),
-  security_deposit: z.number().nonnegative().openapi({ example: 200000 }),
+  security_deposit: z.number().nonnegative().optional().default(0).openapi({ example: 0 }),
   damage_multiplier: z
     .number()
     .min(0.1)

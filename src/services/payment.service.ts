@@ -378,13 +378,15 @@ export async function createPaymentComponents(
       amount: Number(bv.rentalFeeSnapshot ?? 0),
       status: PaymentComponentStatus.HELD,
     });
-    components.push({
-      bookingId: booking.id,
-      bookingVehicleId: bv.id,
-      type: PaymentComponentType.SECURITY_DEPOSIT,
-      amount: Number(bv.securityDepositSnapshot ?? 0),
-      status: PaymentComponentStatus.HELD,
-    });
+    if (Number(bv.securityDepositSnapshot ?? 0) > 0) {
+      components.push({
+        bookingId: booking.id,
+        bookingVehicleId: bv.id,
+        type: PaymentComponentType.SECURITY_DEPOSIT,
+        amount: Number(bv.securityDepositSnapshot ?? 0),
+        status: PaymentComponentStatus.HELD,
+      });
+    }
   }
 
   const fnbTotal = Number(
