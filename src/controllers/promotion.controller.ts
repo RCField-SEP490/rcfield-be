@@ -66,6 +66,16 @@ export const promotionController = {
     }
   },
 
+  // GET /api/v1/cafes/:cafeId/promotions/active  [public]
+  async listActive(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const data = await promotionService.listActivePublicPromotions(req.params.cafeId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // POST /api/v1/cafes/:cafeId/promotions/preview  [auth]
   async preview(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

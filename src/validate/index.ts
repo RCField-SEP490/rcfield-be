@@ -329,6 +329,7 @@ const PromotionBaseSchema = z.object({
     .optional()
     .default([]),
   is_active: z.boolean().optional().default(true),
+  show_on_cafe_page: z.boolean().optional().default(true),
 });
 
 export const CreatePromotionSchema = PromotionBaseSchema.refine(

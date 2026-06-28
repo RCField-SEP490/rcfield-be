@@ -196,8 +196,8 @@ export async function createCheckoutUrl(
 
   // Read the pricing multiplier frozen at booking creation (snapshot-first principle).
   // Do NOT recalculate from live pricing rules — the multiplier may have changed.
-  const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
-  const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
+  const creationSnapshot = booking.snapshot as unknown as Record<string, unknown> | null;
+  const slotMultiplier = (creationSnapshot?.slot_fee_multiplier as number | undefined) ?? 1;
   const rawSlotFee = Math.round(
     Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier,
   );
@@ -223,6 +223,19 @@ export async function createCheckoutUrl(
     slotMultiplier,
   });
 
+  // Preserve creation-time fields so PaymentResultPage and invoice can still read them
+  const preservedCreationFields: Record<string, unknown> = {};
+  for (const key of [
+    'pricing_rule_label',
+    'slot_fee_multiplier',
+    'promotion_applied',
+    'track_type_id',
+    'track_type_code',
+    'track_type_name',
+  ]) {
+    if (creationSnapshot?.[key] !== undefined) preservedCreationFields[key] = creationSnapshot[key];
+  }
+
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
     vehicles: bookingVehicles.map((v) => ({
@@ -235,7 +248,8 @@ export async function createCheckoutUrl(
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
     ...(packageUsed ? { package_used: packageUsed } : {}),
-  };
+    ...preservedCreationFields,
+  } as BookingSnapshot;
 
   await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
 
@@ -757,12 +771,25 @@ export async function mockConfirmPayment(
   const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
 
-  const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
-  const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
+  const mockCreationSnapshot = booking.snapshot as unknown as Record<string, unknown> | null;
+  const slotMultiplier = (mockCreationSnapshot?.slot_fee_multiplier as number | undefined) ?? 1;
   const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier);
   const grossMockTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
   const mockDiscountAmount = Number(booking.discountAmount) || 0;
   const totalCharged = Math.max(0, grossMockTotal - mockDiscountAmount);
+
+  const mockPreservedFields: Record<string, unknown> = {};
+  for (const key of [
+    'pricing_rule_label',
+    'slot_fee_multiplier',
+    'promotion_applied',
+    'track_type_id',
+    'track_type_code',
+    'track_type_name',
+  ]) {
+    if (mockCreationSnapshot?.[key] !== undefined)
+      mockPreservedFields[key] = mockCreationSnapshot[key];
+  }
 
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
@@ -775,7 +802,8 @@ export async function mockConfirmPayment(
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
-  };
+    ...mockPreservedFields,
+  } as BookingSnapshot;
 
   await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
 

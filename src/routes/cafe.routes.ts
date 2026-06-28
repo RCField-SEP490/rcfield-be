@@ -31,6 +31,8 @@ cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);
 cafeRouter.get('/:cafeId/availability', optionalAuthenticate, cafeController.getAvailability);
+// Public active promotions — no auth, must be BEFORE parameterized routes
+cafeRouter.get('/:cafeId/promotions/active', promotionController.listActive);
 // Customer preview — must be registered BEFORE the parameterized /:promotionId routes
 cafeRouter.post(
   '/:cafeId/promotions/preview',

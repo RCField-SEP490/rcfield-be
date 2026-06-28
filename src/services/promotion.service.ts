@@ -34,6 +34,7 @@ export interface PromotionBody {
   schedule_end_time?: string | null;
   schedule_weekdays?: string[];
   is_active?: boolean;
+  show_on_cafe_page?: boolean;
 }
 
 export type UpdatePromotionBody = Partial<PromotionBody>;
@@ -113,6 +114,7 @@ export async function createPromotion(
     scheduleEndTime: body.schedule_end_time ?? null,
     scheduleWeekdays: body.schedule_weekdays ?? [],
     isActive: body.is_active ?? true,
+    showOnCafePage: body.show_on_cafe_page ?? true,
     createdBy: viewer.userId,
   });
 
@@ -158,6 +160,7 @@ export async function updatePromotion(
     if (body.is_active) await assertUniqueActiveCode(cafeId, promotion.code, promotion.id);
     promotion.isActive = body.is_active;
   }
+  if (body.show_on_cafe_page !== undefined) promotion.showOnCafePage = body.show_on_cafe_page;
 
   return AppDataSource.getRepository(Promotion).save(promotion);
 }
@@ -307,6 +310,44 @@ function calculateDiscount(promotion: Promotion, subtotal: number): number {
   }
 
   return Math.min(discountAmount, subtotal);
+}
+
+/** Returns promotions currently active and visible to customers (public, no auth). */
+export async function listActivePublicPromotions(cafeId: string): Promise<
+  Array<{
+    code: string;
+    description: string | null;
+    discount_type: DiscountType;
+    discount_value: number;
+    max_discount_amount: number | null;
+    min_order_amount: number | null;
+    applicable_to: PromoApplicableTo;
+    expires_at: Date | null;
+  }>
+> {
+  const now = new Date();
+  const promos = await AppDataSource.getRepository(Promotion).find({
+    where: { cafeId, isActive: true, showOnCafePage: true },
+    order: { createdAt: 'DESC' },
+  });
+
+  return promos
+    .filter((p) => {
+      if (p.startsAt > now) return false;
+      if (p.expiresAt && p.expiresAt < now) return false;
+      if (p.maxUses !== null && p.usesCount >= p.maxUses) return false;
+      return true;
+    })
+    .map((p) => ({
+      code: p.code,
+      description: p.description,
+      discount_type: p.discountType,
+      discount_value: Number(p.discountValue),
+      max_discount_amount: p.maxDiscountAmount ? Number(p.maxDiscountAmount) : null,
+      min_order_amount: p.minOrderAmount ? Number(p.minOrderAmount) : null,
+      applicable_to: p.applicableTo,
+      expires_at: p.expiresAt,
+    }));
 }
 
 /** Increments usesCount for the promotion linked to a booking. Called after PAYMENT_CONFIRMED. */

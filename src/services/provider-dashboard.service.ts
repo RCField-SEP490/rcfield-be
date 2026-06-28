@@ -465,12 +465,14 @@ export async function getProviderTopStats(
       b.customer_id AS "customerId",
       u.full_name AS "customerName",
       u.email AS "customerEmail",
-      COUNT(b.id)::int AS "bookingCount",
+      COUNT(DISTINCT b.id)::int AS "bookingCount",
       COALESCE(SUM(pc.amount), 0)::float AS "totalSpent"
     FROM bookings b
     JOIN users u ON u.id = b.customer_id
     JOIN cafes c ON c.id = b.cafe_id
-    LEFT JOIN payment_components pc ON pc.booking_id = b.id AND pc.status IN ('HELD', 'DISBURSED')
+    LEFT JOIN payment_components pc ON pc.booking_id = b.id
+      AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.type != 'SECURITY_DEPOSIT'
     WHERE c.provider_id = $1
       AND b.status != 'CANCELLED'
       AND b.slot_start >= $2::timestamptz
