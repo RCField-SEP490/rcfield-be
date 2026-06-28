@@ -18,7 +18,8 @@ export interface RevenueTrendItem {
   slotFee: number;
   rentalFee: number;
   fnbPreorder: number;
-  securityDeposit: number;
+  extensionFee: number;
+  damageCharge: number;
   total: number;
 }
 
@@ -66,6 +67,7 @@ export async function getProviderKpi(
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
       AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.type != 'SECURITY_DEPOSIT'
       AND b.slot_start >= $2::timestamptz
       AND b.slot_start <= $3::timestamptz
       AND ($4::uuid IS NULL OR b.cafe_id = $4)`,
@@ -184,7 +186,8 @@ export async function getProviderRevenueTrend(
       COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN pc.amount END), 0)::float AS "slotFee",
       COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN pc.amount END), 0)::float AS "rentalFee",
       COALESCE(SUM(CASE WHEN pc.type = 'FNB_PREORDER' THEN pc.amount END), 0)::float AS "fnbPreorder",
-      COALESCE(SUM(CASE WHEN pc.type = 'SECURITY_DEPOSIT' THEN pc.amount END), 0)::float AS "securityDeposit",
+      COALESCE(SUM(CASE WHEN pc.type = 'EXTENSION_FEE' THEN pc.amount END), 0)::float AS "extensionFee",
+      COALESCE(SUM(CASE WHEN pc.type = 'DAMAGE_CHARGE' THEN pc.amount END), 0)::float AS "damageCharge",
       COALESCE(SUM(pc.amount), 0)::float AS "total",
       DATE_TRUNC($2, b.slot_start) as "trunc_date"
     FROM bookings b
@@ -192,6 +195,7 @@ export async function getProviderRevenueTrend(
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $3
       AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.type != 'SECURITY_DEPOSIT'
       AND b.slot_start >= $4::timestamptz
       AND b.slot_start <= $5::timestamptz
       AND ($6::uuid IS NULL OR b.cafe_id = $6)
@@ -205,7 +209,8 @@ export async function getProviderRevenueTrend(
       slotFee: number;
       rentalFee: number;
       fnbPreorder: number;
-      securityDeposit: number;
+      extensionFee: number;
+      damageCharge: number;
       total: number;
     }[]
   >(query, [groupFormat, truncUnit, providerId, fromDate, toDate, cafeId || null]);
@@ -215,7 +220,8 @@ export async function getProviderRevenueTrend(
     slotFee: Number(row.slotFee),
     rentalFee: Number(row.rentalFee),
     fnbPreorder: Number(row.fnbPreorder),
-    securityDeposit: Number(row.securityDeposit),
+    extensionFee: Number(row.extensionFee),
+    damageCharge: Number(row.damageCharge),
     total: Number(row.total),
   }));
 }
@@ -235,8 +241,9 @@ export async function getProviderRevenueBreakdown(
       CASE
         WHEN pc.type = 'SLOT_FEE' THEN 'Phí sân'
         WHEN pc.type = 'RENTAL_FEE' THEN 'Thuê xe'
-        WHEN pc.type = 'SECURITY_DEPOSIT' THEN 'Đặt cọc'
         WHEN pc.type = 'FNB_PREORDER' THEN 'F&B'
+        WHEN pc.type = 'EXTENSION_FEE' THEN 'Phí gia hạn'
+        WHEN pc.type = 'DAMAGE_CHARGE' THEN 'Phí bồi thường'
         ELSE pc.type::text
       END AS "label",
       COALESCE(SUM(pc.amount), 0)::float AS "amount"
@@ -245,6 +252,7 @@ export async function getProviderRevenueBreakdown(
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
       AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.type != 'SECURITY_DEPOSIT'
       AND b.slot_start >= $2::timestamptz
       AND b.slot_start <= $3::timestamptz
       AND ($4::uuid IS NULL OR b.cafe_id = $4)
@@ -356,4 +364,198 @@ export async function getProviderRecentBookings(
     status: row.status,
     totalCharged: Number(row.totalCharged),
   }));
+}
+
+export interface TopFnbItem {
+  menuItemId: string;
+  itemName: string;
+  cafeName: string;
+  totalQuantity: number;
+  totalRevenue: number;
+}
+
+export interface TopTrackItem {
+  trackTypeId: string;
+  trackTypeName: string;
+  trackTypeCode: string;
+  cafeName: string;
+  bookingCount: number;
+}
+
+export interface TopCustomerItem {
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  bookingCount: number;
+  totalSpent: number;
+}
+
+export interface TopVehicleItem {
+  catalogId: string;
+  catalogName: string;
+  catalogTier: string;
+  cafeName: string;
+  bookingCount: number;
+  rentalRevenue: number;
+}
+
+export interface ProviderTopStats {
+  topFnb: TopFnbItem[];
+  topTracks: TopTrackItem[];
+  topCustomers: TopCustomerItem[];
+  topVehicles: TopVehicleItem[];
+}
+
+export async function getProviderTopStats(
+  providerId: string,
+  from?: string,
+  to?: string,
+  cafeId?: string,
+): Promise<ProviderTopStats> {
+  const fromDate = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const toDate = to || new Date().toISOString();
+
+  // 1. Top 5 món F&B được mua nhiều nhất
+  const fnbQuery = `
+    SELECT 
+      foi.menu_item_id AS "menuItemId",
+      COALESCE(foi.item_name_snapshot, mi.name, 'Món đã xóa') AS "itemName",
+      c.name AS "cafeName",
+      SUM(foi.quantity)::int AS "totalQuantity",
+      SUM(COALESCE(foi.subtotal, foi.quantity * foi.unit_price))::float AS "totalRevenue"
+    FROM fnb_order_items foi
+    JOIN fnb_orders fo ON fo.id = foi.fnb_order_id
+    LEFT JOIN menu_items mi ON mi.id = foi.menu_item_id
+    JOIN bookings b ON b.id = fo.booking_id
+    JOIN cafes c ON c.id = b.cafe_id
+    WHERE c.provider_id = $1
+      AND fo.status != 'CANCELLED'
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)
+    GROUP BY foi.menu_item_id, foi.item_name_snapshot, mi.name, c.name
+    ORDER BY "totalQuantity" DESC
+    LIMIT 5
+  `;
+
+  // 2. Top 5 loại sân được book nhiều nhất
+  const tracksQuery = `
+    SELECT 
+      b.track_type_id AS "trackTypeId",
+      tt.name AS "trackTypeName",
+      tt.code AS "trackTypeCode",
+      c.name AS "cafeName",
+      COUNT(b.id)::int AS "bookingCount"
+    FROM bookings b
+    JOIN track_types tt ON tt.id = b.track_type_id
+    JOIN cafes c ON c.id = b.cafe_id
+    WHERE c.provider_id = $1
+      AND b.status != 'CANCELLED'
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)
+    GROUP BY b.track_type_id, tt.name, tt.code, c.name
+    ORDER BY "bookingCount" DESC
+    LIMIT 5
+  `;
+
+  // 3. Top 5 khách hàng đặt sân nhiều nhất
+  const customersQuery = `
+    SELECT 
+      b.customer_id AS "customerId",
+      u.full_name AS "customerName",
+      u.email AS "customerEmail",
+      COUNT(b.id)::int AS "bookingCount",
+      COALESCE(SUM(pc.amount), 0)::float AS "totalSpent"
+    FROM bookings b
+    JOIN users u ON u.id = b.customer_id
+    JOIN cafes c ON c.id = b.cafe_id
+    LEFT JOIN payment_components pc ON pc.booking_id = b.id AND pc.status IN ('HELD', 'DISBURSED')
+    WHERE c.provider_id = $1
+      AND b.status != 'CANCELLED'
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)
+    GROUP BY b.customer_id, u.full_name, u.email
+    ORDER BY "bookingCount" DESC
+    LIMIT 5
+  `;
+
+  // 4. Top 5 loại xe được book nhiều nhất
+  const vehiclesQuery = `
+    SELECT 
+      vc.id AS "catalogId",
+      vc.name AS "catalogName",
+      vc.tier AS "catalogTier",
+      c.name AS "cafeName",
+      COUNT(bv.id)::int AS "bookingCount",
+      COALESCE(SUM(bv.rental_fee_snapshot), 0)::float AS "rentalRevenue"
+    FROM booking_vehicles bv
+    JOIN vehicles v ON v.id = bv.vehicle_id
+    JOIN vehicle_catalogs vc ON vc.id = v.catalog_id
+    JOIN bookings b ON b.id = bv.booking_id
+    JOIN cafes c ON c.id = b.cafe_id
+    WHERE c.provider_id = $1
+      AND b.status != 'CANCELLED'
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)
+    GROUP BY vc.id, vc.name, vc.tier, c.name
+    ORDER BY "bookingCount" DESC
+    LIMIT 5
+  `;
+
+  const [topFnb, topTracks, topCustomers, topVehicles] = await Promise.all([
+    AppDataSource.query<TopFnbItem[]>(fnbQuery, [providerId, fromDate, toDate, cafeId || null]),
+    AppDataSource.query<TopTrackItem[]>(tracksQuery, [
+      providerId,
+      fromDate,
+      toDate,
+      cafeId || null,
+    ]),
+    AppDataSource.query<TopCustomerItem[]>(customersQuery, [
+      providerId,
+      fromDate,
+      toDate,
+      cafeId || null,
+    ]),
+    AppDataSource.query<TopVehicleItem[]>(vehiclesQuery, [
+      providerId,
+      fromDate,
+      toDate,
+      cafeId || null,
+    ]),
+  ]);
+
+  return {
+    topFnb: topFnb.map((item) => ({
+      menuItemId: item.menuItemId,
+      itemName: item.itemName,
+      cafeName: item.cafeName,
+      totalQuantity: Number(item.totalQuantity),
+      totalRevenue: Number(item.totalRevenue),
+    })),
+    topTracks: topTracks.map((item) => ({
+      trackTypeId: item.trackTypeId,
+      trackTypeName: item.trackTypeName,
+      trackTypeCode: item.trackTypeCode,
+      cafeName: item.cafeName,
+      bookingCount: Number(item.bookingCount),
+    })),
+    topCustomers: topCustomers.map((item) => ({
+      customerId: item.customerId,
+      customerName: item.customerName,
+      customerEmail: item.customerEmail,
+      bookingCount: Number(item.bookingCount),
+      totalSpent: Number(item.totalSpent),
+    })),
+    topVehicles: topVehicles.map((item) => ({
+      catalogId: item.catalogId,
+      catalogName: item.catalogName,
+      catalogTier: item.catalogTier,
+      cafeName: item.cafeName,
+      bookingCount: Number(item.bookingCount),
+      rentalRevenue: Number(item.rentalRevenue),
+    })),
+  };
 }

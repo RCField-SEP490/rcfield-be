@@ -146,3 +146,8 @@ providerSubscriptionRouter.get(
   requireActiveProvider,
   providerDashboardController.getRecentBookings,
 );
+providerSubscriptionRouter.get(
+  '/dashboard/top-stats',
+  requireActiveProvider,
+  providerDashboardController.getTopStats,
+);
