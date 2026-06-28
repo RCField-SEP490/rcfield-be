@@ -22,6 +22,7 @@ import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { activateCustomerPackage, deductSlots } from './customer-package.service';
+import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 
@@ -205,7 +206,9 @@ export async function createCheckoutUrl(
   const packageUsed = (booking.snapshot as unknown as BookingSnapshot | null)?.package_used;
   const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
 
-  const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const grossTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const discountAmount = Number(booking.discountAmount) || 0;
+  const totalCharged = Math.max(0, grossTotal - discountAmount);
 
   logger.info('PaymentService', 'checkout totals', {
     bookingId,
@@ -213,6 +216,7 @@ export async function createCheckoutUrl(
     rentalFeeTotal,
     depositTotal,
     fnbTotal,
+    discountAmount,
     totalCharged,
     playerCount,
     slotCount,
@@ -226,7 +230,7 @@ export async function createCheckoutUrl(
       security_deposit: Number(v.securityDepositSnapshot),
     })),
     fnb_total: fnbTotal,
-    discount_amount: Number(booking.discountAmount),
+    discount_amount: discountAmount,
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
@@ -236,7 +240,7 @@ export async function createCheckoutUrl(
   await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
 
   // Zero-total bypass: skip VNPay, confirm inline (D3 from research.md)
-  if (totalCharged === 0 && booking.customerPackageId) {
+  if (totalCharged === 0 && (booking.customerPackageId || booking.promotionId)) {
     const txnRef = `pkg_${bookingId.replace(/-/g, '').substring(0, 28)}`;
     const txRepo = AppDataSource.getRepository(PaymentTransaction);
     const existingTx = await txRepo.findOne({ where: { txnRef } });
@@ -257,6 +261,7 @@ export async function createCheckoutUrl(
 
     await transition(bookingId, 'PAYMENT_CONFIRMED');
     await createPaymentComponents(booking, snapshot, bookingVehicles);
+    await incrementPromoUsesCount(bookingId).catch(() => {}); // best-effort
 
     let slotsRemainingAfter = 0;
     if (snapshot.package_used) {
@@ -532,6 +537,7 @@ export async function processConfirmation(
 
   // Transition booking to CONFIRMED
   const booking = await transition(confirmedBookingId, 'PAYMENT_CONFIRMED');
+  await incrementPromoUsesCount(confirmedBookingId).catch(() => {}); // best-effort
 
   // Create payment components
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
@@ -671,6 +677,7 @@ export async function processMockConfirmation(
   const mockBookingId = tx.bookingId;
 
   const booking = await transition(mockBookingId, 'PAYMENT_CONFIRMED');
+  await incrementPromoUsesCount(mockBookingId).catch(() => {}); // best-effort
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
   const bookingVehicles = await bvRepo.find({ where: { bookingId: mockBookingId } });
   const snapshot = booking.snapshot as unknown as BookingSnapshot | null;
@@ -753,7 +760,9 @@ export async function mockConfirmPayment(
   const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
   const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
   const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier);
-  const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const grossMockTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const mockDiscountAmount = Number(booking.discountAmount) || 0;
+  const totalCharged = Math.max(0, grossMockTotal - mockDiscountAmount);
 
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
@@ -762,7 +771,7 @@ export async function mockConfirmPayment(
       security_deposit: Number(v.securityDepositSnapshot),
     })),
     fnb_total: fnbTotal,
-    discount_amount: Number(booking.discountAmount),
+    discount_amount: mockDiscountAmount,
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
@@ -785,6 +794,7 @@ export async function mockConfirmPayment(
   await txRepo.save(tx);
 
   await transition(bookingId, 'PAYMENT_CONFIRMED');
+  await incrementPromoUsesCount(bookingId).catch(() => {}); // best-effort
   await createPaymentComponents(booking, snapshot, bookingVehicles);
 
   logger.info('PaymentService', `mock payment confirmed bookingId=${bookingId}`);

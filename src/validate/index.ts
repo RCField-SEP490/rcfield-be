@@ -376,6 +376,17 @@ export const PromotionIdParamsSchema = z.object({
   promotionId: z.string().uuid(),
 });
 
+export const PreviewPromoSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .max(50)
+    .transform((v) => v.trim().toUpperCase()),
+  play_mode: z.enum(['RENTAL', 'BYOC']),
+  slot_start: z.string().datetime({ offset: true }),
+  subtotal: z.coerce.number().nonnegative(),
+});
+
 const PackageBaseSchema = z.object({
   code: z
     .string()

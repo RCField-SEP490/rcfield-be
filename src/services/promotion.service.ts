@@ -1,8 +1,10 @@
-import { Not } from 'typeorm';
+import { In, Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Promotion } from '../models/promotion.entity';
+import { Booking } from '../models/booking.entity';
 import {
   AppError,
+  BookingStatus,
   DiscountType,
   PromoApplicableTo,
   PromotionScheduleMode,
@@ -176,4 +178,144 @@ export async function deletePromotion(
   }
 
   await AppDataSource.getRepository(Promotion).delete(promotion.id);
+}
+
+// ── Customer-facing validation ─────────────────────────────────────────────────
+
+export interface ValidatePromoResult {
+  promotion: Promotion;
+  discountAmount: number;
+}
+
+/** Validates a promo code for use in a booking. Throws AppError on any violation. */
+export async function validatePromoCode(params: {
+  cafeId: string;
+  code: string;
+  customerId: string;
+  subtotal: number; // slot_fee + rental_fee — discount base
+  playMode: string;
+  slotStart: Date;
+}): Promise<ValidatePromoResult> {
+  const repo = AppDataSource.getRepository(Promotion);
+  const promotion = await repo.findOne({
+    where: { cafeId: params.cafeId, code: params.code.toUpperCase(), isActive: true },
+  });
+
+  if (!promotion) {
+    throw new AppError(
+      'Mã ưu đãi không hợp lệ hoặc không áp dụng cho cơ sở này',
+      404,
+      'PROMOTION_NOT_FOUND',
+    );
+  }
+
+  const now = new Date();
+
+  if (promotion.startsAt > now) {
+    throw new AppError('Mã ưu đãi chưa có hiệu lực', 400, 'PROMOTION_NOT_STARTED');
+  }
+
+  if (promotion.expiresAt && promotion.expiresAt < now) {
+    throw new AppError('Mã ưu đãi đã hết hạn', 400, 'PROMOTION_EXPIRED');
+  }
+
+  if (
+    promotion.applicableTo !== PromoApplicableTo.ALL &&
+    promotion.applicableTo !== params.playMode
+  ) {
+    throw new AppError(
+      'Mã ưu đãi không áp dụng cho hình thức chơi này',
+      400,
+      'PROMOTION_PLAY_MODE_MISMATCH',
+    );
+  }
+
+  validateSchedule(promotion, params.slotStart);
+
+  if (promotion.maxUses !== null && promotion.usesCount >= promotion.maxUses) {
+    throw new AppError('Mã ưu đãi đã hết lượt sử dụng', 400, 'PROMOTION_EXHAUSTED');
+  }
+
+  const userUsageCount = await AppDataSource.getRepository(Booking).count({
+    where: {
+      promotionId: promotion.id,
+      customerId: params.customerId,
+      status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+    },
+  });
+
+  if (userUsageCount >= promotion.maxUsesPerUser) {
+    throw new AppError(
+      'Bạn đã đạt giới hạn sử dụng mã ưu đãi này',
+      400,
+      'PROMOTION_USER_LIMIT_REACHED',
+    );
+  }
+
+  const minOrderAmount = promotion.minOrderAmount ? Number(promotion.minOrderAmount) : 0;
+  if (params.subtotal < minOrderAmount) {
+    throw new AppError(
+      `Giá trị đơn tối thiểu để áp dụng mã là ${minOrderAmount.toLocaleString('vi-VN')}đ`,
+      400,
+      'PROMOTION_MIN_ORDER_NOT_MET',
+    );
+  }
+
+  const discountAmount = calculateDiscount(promotion, params.subtotal);
+  return { promotion, discountAmount };
+}
+
+function validateSchedule(promotion: Promotion, slotStart: Date): void {
+  if (promotion.scheduleMode === PromotionScheduleMode.ONCE) return;
+
+  if (promotion.scheduleStartTime && promotion.scheduleEndTime) {
+    const hh = String(slotStart.getHours()).padStart(2, '0');
+    const mm = String(slotStart.getMinutes()).padStart(2, '0');
+    const slotTime = `${hh}:${mm}`;
+    if (slotTime < promotion.scheduleStartTime || slotTime >= promotion.scheduleEndTime) {
+      throw new AppError(
+        'Mã ưu đãi không áp dụng cho khung giờ này',
+        400,
+        'PROMOTION_SCHEDULE_MISMATCH',
+      );
+    }
+  }
+
+  if (promotion.scheduleMode === PromotionScheduleMode.WEEKLY) {
+    const DAY_MAP = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+    const dayKey = DAY_MAP[slotStart.getDay()];
+    if (!promotion.scheduleWeekdays.includes(dayKey)) {
+      throw new AppError(
+        'Mã ưu đãi không áp dụng cho ngày này trong tuần',
+        400,
+        'PROMOTION_SCHEDULE_MISMATCH',
+      );
+    }
+  }
+}
+
+function calculateDiscount(promotion: Promotion, subtotal: number): number {
+  const discountValue = Number(promotion.discountValue);
+  let discountAmount: number;
+
+  if (promotion.discountType === DiscountType.PERCENT) {
+    discountAmount = Math.round(subtotal * (discountValue / 100));
+    const cap = promotion.maxDiscountAmount ? Number(promotion.maxDiscountAmount) : Infinity;
+    discountAmount = Math.min(discountAmount, cap);
+  } else {
+    discountAmount = discountValue;
+  }
+
+  return Math.min(discountAmount, subtotal);
+}
+
+/** Increments usesCount for the promotion linked to a booking. Called after PAYMENT_CONFIRMED. */
+export async function incrementPromoUsesCount(bookingId: string): Promise<void> {
+  const booking = await AppDataSource.getRepository(Booking).findOne({ where: { id: bookingId } });
+  if (!booking?.promotionId) return;
+  await AppDataSource.getRepository(Promotion).increment(
+    { id: booking.promotionId },
+    'usesCount',
+    1,
+  );
 }

@@ -1,6 +1,11 @@
 import type { Response, NextFunction } from 'express';
 import { AuthRequest, AppError, UserRole } from '../types';
-import { CreatePromotionSchema, PromotionIdParamsSchema, UpdatePromotionSchema } from '../validate';
+import {
+  CreatePromotionSchema,
+  PreviewPromoSchema,
+  PromotionIdParamsSchema,
+  UpdatePromotionSchema,
+} from '../validate';
 import * as promotionService from '../services/promotion.service';
 
 function providerViewer(req: AuthRequest) {
@@ -56,6 +61,33 @@ export const promotionController = {
       const { promotionId } = PromotionIdParamsSchema.parse(req.params);
       await promotionService.deletePromotion(req.params.cafeId, promotionId, providerViewer(req));
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/cafes/:cafeId/promotions/preview  [auth]
+  async preview(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const body = PreviewPromoSchema.parse(req.body);
+      const result = await promotionService.validatePromoCode({
+        cafeId: req.params.cafeId,
+        code: body.code,
+        customerId: req.user.userId,
+        subtotal: body.subtotal,
+        playMode: body.play_mode,
+        slotStart: new Date(body.slot_start),
+      });
+      res.json({
+        success: true,
+        data: {
+          code: result.promotion.code,
+          discount_amount: result.discountAmount,
+          discount_type: result.promotion.discountType,
+          description: result.promotion.description,
+        },
+      });
     } catch (err) {
       next(err);
     }
