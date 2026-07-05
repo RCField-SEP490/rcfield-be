@@ -33,11 +33,13 @@ async function pushBookingNew(booking: Booking): Promise<void> {
       select: ['providerId', 'name'],
     });
     if (!cafe) return;
-    wsService.pushToUser(cafe.providerId, 'booking.new', {
+    const payload = {
       bookingId: booking.id,
       cafeName: cafe.name,
       slotStart: booking.slotStart,
-    });
+    };
+    wsService.pushToUser(cafe.providerId, 'booking.new', payload);
+    wsService.pushToCafe(booking.cafeId, 'NEW_BOOKING', payload);
   } catch (err) {
     logger.error('PaymentService', 'pushBookingNew failed', err);
   }

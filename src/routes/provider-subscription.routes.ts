@@ -5,6 +5,7 @@ import { paymentRequestController } from '../controllers/payment-request.control
 import { providerOnboardingController } from '../controllers/provider-onboarding.controller';
 import { staffController } from '../controllers/staff.controller';
 import { providerDashboardController } from '../controllers/provider-dashboard.controller';
+import { aiRevenueAnalyticsController } from '../controllers/ai-revenue-analytics.controller';
 
 export const providerSubscriptionRouter = Router();
 
@@ -86,4 +87,9 @@ providerSubscriptionRouter.get(
   '/dashboard/top-stats',
   requireActiveProvider,
   providerDashboardController.getTopStats,
+);
+providerSubscriptionRouter.post(
+  '/dashboard/ai-insights',
+  requireActiveProvider,
+  aiRevenueAnalyticsController.generateInsights,
 );

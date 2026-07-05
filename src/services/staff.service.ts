@@ -543,7 +543,7 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
           c.status === PaymentComponentStatus.DISBURSED),
     );
 
-    const depositAmount = depositComp ? Number(depositComp.amount) : 150000;
+    const depositAmount = depositComp ? Number(depositComp.amount) : 0;
     const slotFee = slotComp ? Number(slotComp.amount) : 120000;
     const rentalFee =
       rentalComps.length > 0
