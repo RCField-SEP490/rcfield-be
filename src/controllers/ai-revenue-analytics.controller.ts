@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AuthRequest } from '../types';
+import { AppDataSource } from '../config/database';
 import * as aiAnalyticsService from '../services/ai-revenue-analytics.service';
 
 const QuerySchema = z.object({
@@ -30,6 +31,27 @@ export const aiRevenueAnalyticsController = {
       }
 
       res.json({ success: true, type: 'SUCCESS', data: result.data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/dashboard/feature-flags [auth]
+  async getProviderFeatureFlags(
+    _req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const rows = await AppDataSource.query<{ feature_key: string; is_enabled: boolean }[]>(
+        `SELECT feature_key, is_enabled FROM feature_flags
+         WHERE entity_type = 'GLOBAL' AND feature_key IN ('AI_REVENUE_ANALYTICS')`,
+      );
+      const flags: Record<string, boolean> = {};
+      for (const row of rows) {
+        flags[row.feature_key] = row.is_enabled;
+      }
+      res.json({ success: true, data: flags });
     } catch (err) {
       next(err);
     }

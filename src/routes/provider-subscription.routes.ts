@@ -93,3 +93,7 @@ providerSubscriptionRouter.post(
   requireActiveProvider,
   aiRevenueAnalyticsController.generateInsights,
 );
+providerSubscriptionRouter.get(
+  '/dashboard/feature-flags',
+  aiRevenueAnalyticsController.getProviderFeatureFlags,
+);

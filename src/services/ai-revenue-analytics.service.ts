@@ -142,6 +142,9 @@ function buildPrompt(data: RevenueData, metrics: DerivedMetrics, from: string, t
   const topCustomers = data.topStats.topCustomers?.slice(0, 3) ?? [];
   const topVehicles = data.topStats.topVehicles?.slice(0, 3) ?? [];
 
+  const utilizationPct = (data.kpi.vehicleUtilizationRate * 100).toFixed(1);
+  const cancellationPct = (data.kpi.cancellationRate * 100).toFixed(1);
+
   return `Bạn là chuyên gia phân tích kinh doanh RC Cafe (sân chơi xe điều khiển từ xa) tại Việt Nam.
 Phân tích dữ liệu kinh doanh sau và trả về JSON theo cấu trúc yêu cầu. Chỉ dùng tiếng Việt.
 
@@ -158,14 +161,41 @@ Tỉ lệ booking hoàn thành: ${metrics.completionRate.toFixed(1)}%
 Doanh thu trung bình/booking: ${metrics.revenuePerBooking.toFixed(0)} VNĐ
 Xu hướng doanh thu: ${metrics.trendDirection} (độ dốc=${metrics.slope.toFixed(2)})
 Nguồn doanh thu lớn nhất: ${JSON.stringify(metrics.topSource)}
-Tỉ lệ hủy booking: ${(data.kpi.cancellationRate * 100).toFixed(1)}%
-Tỉ lệ sử dụng xe: ${(data.kpi.vehicleUtilizationRate * 100).toFixed(1)}%
+Tỉ lệ hủy booking: ${cancellationPct}%
+Tỉ lệ sử dụng xe: ${utilizationPct}%
 
-== QUY TẮC NGHIỆP VỤ CẦN BIẾT ==
-- Extension fee > 20% tổng counter-bill = tín hiệu khách muốn chơi lâu hơn → nên tăng slot mặc định
-- Vehicle utilization < 40% = đội xe thừa → xem xét giảm quy mô hoặc điều chỉnh giá
-- 1 khách chiếm > 30% doanh thu = rủi ro tập trung khách hàng
-- 3+ tuần liên tiếp giảm doanh thu = xu hướng đáng lo ngại
+== QUY TẮC GÁN TYPE VÀ SEVERITY (TUÂN THỦ NGHIÊM NGẶT) ==
+
+TYPE "fleet" — bắt buộc xuất hiện nếu tỉ lệ sử dụng xe đáng chú ý:
+  - Utilization < 25% → severity "critical" (đội xe dư thừa nghiêm trọng)
+  - Utilization 25–40% → severity "warning" (đội xe hơi dư, cần điều chỉnh)
+  - Utilization >= 70% → severity "positive" (đội xe được khai thác tốt)
+
+TYPE "trend" — bắt buộc xuất hiện, phản ánh đúng hướng của slope:
+  - slope < -0.05 và dữ liệu có 3+ điểm giảm liên tiếp → severity "critical"
+  - slope < -0.05 nhưng không liên tiếp → severity "warning"
+  - slope > 0.05 → severity "positive"
+  - -0.05 ≤ slope ≤ 0.05 → severity "neutral"
+
+TYPE "retention" — xuất hiện nếu có dữ liệu top khách hàng:
+  - 1 khách chiếm > 30% tổng doanh thu → severity "warning"
+  - Top 3 khách chiếm > 60% tổng doanh thu → severity "critical"
+  - Khách hàng đa dạng → severity "positive"
+
+TYPE "revenue_mix" — xuất hiện khi có sự chênh lệch nguồn doanh thu:
+  - F&B chiếm > 30% → severity "positive"
+  - RENTAL chiếm > 80% → severity "neutral"
+  - Extension fee > 20% counter-bill → severity "warning" (khách muốn chơi lâu hơn mà không đặt trước)
+
+TYPE "branch" — xuất hiện nếu có nhiều chi nhánh và có chênh lệch đáng kể:
+  - 1 chi nhánh doanh thu < 50% trung bình các chi nhánh → severity "warning"
+  - 1 chi nhánh vượt trội rõ rệt → severity "positive"
+
+LUẬT BẮT BUỘC:
+- "type" PHẢI là một trong: trend, revenue_mix, fleet, retention, branch
+- "severity" PHẢI là một trong: positive, neutral, warning, critical
+- Không được bịa đặt dữ liệu không có trong input
+- Tối thiểu 3 insights; ưu tiên những tín hiệu có severity warning/critical trước
 
 == CẤU TRÚC ĐẦU RA (JSON hợp lệ, không markdown, không text thừa) ==
 {
@@ -174,12 +204,12 @@ Tỉ lệ sử dụng xe: ${(data.kpi.vehicleUtilizationRate * 100).toFixed(1)}%
     {
       "type": "trend|revenue_mix|fleet|retention|branch",
       "title": "Tiêu đề ngắn gọn",
-      "body": "Mô tả chi tiết tín hiệu và lý do quan trọng trong bối cảnh RC Cafe",
+      "body": "Mô tả chi tiết tín hiệu, con số cụ thể, và lý do quan trọng trong bối cảnh RC Cafe",
       "severity": "positive|neutral|warning|critical"
     }
   ],
-  "topOpportunity": "1 đề xuất hành động quan trọng nhất và cụ thể nhất cho kỳ tới",
-  "watchouts": ["Cảnh báo 1", "Cảnh báo 2"]
+  "topOpportunity": "1 đề xuất hành động quan trọng nhất và cụ thể nhất cho kỳ tới, kèm con số mục tiêu nếu có",
+  "watchouts": ["Cảnh báo ngắn gọn 1", "Cảnh báo ngắn gọn 2"]
 }
 Yêu cầu tối thiểu: 3 insights, 1 topOpportunity, 1-2 watchouts.`.trim();
 }

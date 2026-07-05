@@ -1147,7 +1147,41 @@ export async function submitInspection(
     }
   }
 
-  if (inspection.type === InspectionType.CHECK_OUT) {
+  if (inspection.type === InspectionType.CHECK_IN) {
+    // Auto-confirm CHECK_IN — staff and customer are co-located, no async confirmation needed
+    inspection.customerConfirmed = true;
+    inspection.customerConfirmedAt = new Date();
+    await AppDataSource.getRepository(Inspection).save(inspection);
+
+    session.status = SessionStatus.ACTIVE;
+    session.actualStartAt = new Date();
+    await AppDataSource.getRepository(Session).save(session);
+
+    for (const sv of activeSVs) {
+      sv.status = SessionVehicleStatus.IN_USE;
+      await svRepo.save(sv);
+      if (sv.vehicleId) {
+        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+          status: VehicleStatus.IN_USE,
+        });
+      }
+    }
+
+    if (session.checkedInBy) {
+      await createNotification(
+        session.checkedInBy,
+        NotificationType.CUSTOMER_CHECKIN_CONFIRMED,
+        'Xe đã được bàn giao',
+        `Biên bản bàn giao xe phiên chơi ${session.id.substring(0, 8)} đã được xác nhận.`,
+      );
+      wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKIN_CONFIRMED', {
+        sessionId,
+        inspectionId: inspection.id,
+        sessionStatus: session.status,
+      });
+    }
+  } else {
+    // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
     session.status = SessionStatus.CHECKING_OUT;
     await AppDataSource.getRepository(Session).save(session);
 
@@ -1157,33 +1191,25 @@ export async function submitInspection(
         await svRepo.save(sv);
       }
     }
-  }
 
-  // Notify customer via WebSocket and save in DB
-  const booking = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
-  if (booking?.customerId) {
-    const eventType =
-      inspection.type === InspectionType.CHECK_IN
-        ? 'SESSION_CHECKIN_INSPECTION'
-        : 'SESSION_CHECKOUT_INSPECTION';
-    await createNotification(
-      booking.customerId,
-      eventType as any,
-      inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
-      inspection.type === InspectionType.CHECK_IN
-        ? 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.'
-        : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
-    );
-
-    wsService.pushToUser(booking.customerId, eventType, {
-      sessionId,
-      inspectionId: inspection.id,
-      type: inspection.type,
-      route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
-      damageFlagged: !!damageFlagged,
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: session.bookingId },
     });
+    if (booking?.customerId) {
+      await createNotification(
+        booking.customerId,
+        'SESSION_CHECKOUT_INSPECTION' as any,
+        'Biên bản trả xe',
+        'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
+      );
+      wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_INSPECTION', {
+        sessionId,
+        inspectionId: inspection.id,
+        type: inspection.type,
+        route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+        damageFlagged: !!damageFlagged,
+      });
+    }
   }
 
   return inspection;
@@ -1560,6 +1586,15 @@ export async function customerConfirmInspection(
   if (!inspection)
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
 
+  // CHECK_IN is auto-confirmed by staff submission — customer action not needed
+  if (inspection.type === InspectionType.CHECK_IN) {
+    throw new AppError(
+      'Biên bản bàn giao xe đã được xác nhận tự động khi nhân viên gửi',
+      400,
+      'ALREADY_CONFIRMED',
+    );
+  }
+
   inspection.customerConfirmed = agreed;
   inspection.customerConfirmedAt = new Date();
   if (!agreed && disagreementNote) {
@@ -1569,99 +1604,54 @@ export async function customerConfirmInspection(
   await inspRepo.save(inspection);
 
   if (agreed) {
-    if (inspection.type === InspectionType.CHECK_IN) {
-      // Start session
-      session.status = SessionStatus.ACTIVE;
-      session.actualStartAt = new Date();
-      await AppDataSource.getRepository(Session).save(session);
-
-      // Mark vehicles as IN_USE
-      const svRepo = AppDataSource.getRepository(SessionVehicle);
-      const svs = await svRepo.find({ where: { sessionId } });
-      for (const sv of svs) {
-        sv.status = SessionVehicleStatus.IN_USE;
-        await svRepo.save(sv);
-        if (sv.vehicleId) {
-          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-            status: VehicleStatus.IN_USE,
-          });
-        }
-      }
-
-      // Notify staff via WS
-      if (session.checkedInBy) {
-        await createNotification(
-          session.checkedInBy,
-          NotificationType.CUSTOMER_CHECKIN_CONFIRMED,
-          'Khách hàng đã nhận xe',
-          `Khách hàng vừa xác nhận biên bản bàn giao xe của phiên chơi ${session.id.substring(0, 8)}.`,
-        );
-
-        wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKIN_CONFIRMED', {
-          sessionId,
-          inspectionId,
-          sessionStatus: session.status,
-        });
-      }
-    } else if (inspection.type === InspectionType.CHECK_OUT) {
-      session.status = SessionStatus.COMPLETED;
-      session.actualEndAt = new Date();
-      await AppDataSource.getRepository(Session).save(session);
-
-      // Mark vehicles as AVAILABLE or MAINTENANCE depending on damage
-      const svRepo = AppDataSource.getRepository(SessionVehicle);
-      const svs = await svRepo.find({ where: { sessionId } });
-      for (const sv of svs) {
-        const newVehicleStatus = inspection.damageNoted
-          ? VehicleStatus.MAINTENANCE
-          : VehicleStatus.AVAILABLE;
-        if (sv.vehicleId) {
-          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-            status: newVehicleStatus,
-          });
-        }
-      }
-
-      // Settle invoice at checkout
-      await settleSessionCheckoutBilling(sessionId, inspection);
-
-      // Mark booking completed if all sessions done
-      const allSessions = await AppDataSource.getRepository(Session).find({
-        where: { bookingId: session.bookingId },
-      });
-      const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
-      if (allDone) {
-        await AppDataSource.getRepository(Booking).update(session.bookingId, {
-          status: BookingStatus.COMPLETED,
-        });
-      }
-
-      // Notify staff
-      if (session.checkedInBy) {
-        await createNotification(
-          session.checkedInBy,
-          NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
-          'Khách hàng đã trả xe',
-          `Khách hàng vừa xác nhận biên bản trả xe của phiên chơi ${session.id.substring(0, 8)}.`,
-        );
-
-        wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKOUT_CONFIRMED', {
-          sessionId,
-          inspectionId,
-          sessionStatus: session.status,
-        });
-      }
-    }
-  } else {
-    // Customer disputed — reset session status to let staff re-inspect
-    if (inspection.type === InspectionType.CHECK_IN) {
-      session.status = SessionStatus.CHECKED_IN;
-    } else {
-      session.status = SessionStatus.ACTIVE;
-    }
+    session.status = SessionStatus.COMPLETED;
+    session.actualEndAt = new Date();
     await AppDataSource.getRepository(Session).save(session);
 
-    // Notify staff of dispute
+    const svRepo = AppDataSource.getRepository(SessionVehicle);
+    const svs = await svRepo.find({ where: { sessionId } });
+    for (const sv of svs) {
+      const newVehicleStatus = inspection.damageNoted
+        ? VehicleStatus.MAINTENANCE
+        : VehicleStatus.AVAILABLE;
+      if (sv.vehicleId) {
+        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+          status: newVehicleStatus,
+        });
+      }
+    }
+
+    await settleSessionCheckoutBilling(sessionId, inspection);
+
+    const allSessions = await AppDataSource.getRepository(Session).find({
+      where: { bookingId: session.bookingId },
+    });
+    const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
+    if (allDone) {
+      await AppDataSource.getRepository(Booking).update(session.bookingId, {
+        status: BookingStatus.COMPLETED,
+      });
+    }
+
+    if (session.checkedInBy) {
+      await createNotification(
+        session.checkedInBy,
+        NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
+        'Khách hàng đã trả xe',
+        `Khách hàng vừa xác nhận biên bản trả xe của phiên chơi ${session.id.substring(0, 8)}.`,
+      );
+
+      wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKOUT_CONFIRMED', {
+        sessionId,
+        inspectionId,
+        sessionStatus: session.status,
+      });
+    }
+  } else {
+    // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
+    session.status = SessionStatus.ACTIVE;
+    await AppDataSource.getRepository(Session).save(session);
+
     if (session.checkedInBy) {
       await createNotification(
         session.checkedInBy,
