@@ -426,7 +426,7 @@ export const MenuListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
-  category: z.nativeEnum(FnbCategory).optional().openapi({ example: 'DRINK' }),
+  category: z.nativeEnum(FnbCategory).optional().openapi({ example: FnbCategory.DRINK }),
   available: z
     .enum(['true', 'false'])
     .optional()
@@ -444,7 +444,7 @@ export const CreateMenuItemSchema = z.object({
     .optional()
     .openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
   price: z.coerce.number().nonnegative().openapi({ example: 55000 }),
-  category: z.nativeEnum(FnbCategory).nullable().optional().openapi({ example: 'DRINK' }),
+  category: z.nativeEnum(FnbCategory).nullable().optional().openapi({ example: FnbCategory.DRINK }),
   image_url: z
     .string()
     .trim()

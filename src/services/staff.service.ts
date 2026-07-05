@@ -1472,10 +1472,9 @@ export async function simulateClientCheckOutResponse(sessionId: string): Promise
     await AppDataSource.getRepository(Booking).save(booking);
   }
 
-  // Settle invoice at checkout
-  if (checkOutInspection) {
-    await settleSessionCheckoutBilling(sessionId, checkOutInspection);
-  }
+  // Settle invoice at checkout — called unconditionally so BYOC sessions
+  // (no checkOutInspection) still get extension fees and on-site F&B billed
+  await settleSessionCheckoutBilling(sessionId, checkOutInspection ?? null);
 
   return session;
 }
@@ -1773,7 +1772,7 @@ export async function customerRespondExtension(
 
 export async function settleSessionCheckoutBilling(
   sessionId: string,
-  inspection: Inspection,
+  inspection: Inspection | null,
 ): Promise<void> {
   const sessionRepo = AppDataSource.getRepository(Session);
   const session = await sessionRepo.findOne({ where: { id: sessionId } });

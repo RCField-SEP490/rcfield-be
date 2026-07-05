@@ -37,7 +37,6 @@ beforeEach(async () => {
       cafe_images,
       kb_chunks,
       kb_documents,
-      cafe_widget_configs,
       feature_flags,
       cafes,
       password_reset_tokens,

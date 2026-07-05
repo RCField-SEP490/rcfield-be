@@ -341,6 +341,20 @@ export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
 
+// ── Widget Config ─────────────────────────────────────────────────────────────
+
+export interface WidgetConfigData {
+  greetingMessage: string;
+  welcomeMessage: string;
+  position: string;
+  primaryColor: string;
+  avatarUrl: string | null;
+  quickReplies: string[];
+  systemPrompt: string | null;
+  isEnabled: boolean;
+  fullPageEnabled: boolean;
+}
+
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
 export enum KbDocumentStatus {
