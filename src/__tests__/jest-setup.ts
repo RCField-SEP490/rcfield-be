@@ -34,7 +34,6 @@ beforeEach(async () => {
       vehicles,
       staff_cafe_assignments,
       cafe_announcements,
-      cafe_closures,
       cafe_images,
       kb_chunks,
       kb_documents,

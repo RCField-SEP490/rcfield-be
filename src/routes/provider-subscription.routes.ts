@@ -4,7 +4,6 @@ import { UserRole } from '../types';
 import { paymentRequestController } from '../controllers/payment-request.controller';
 import { providerOnboardingController } from '../controllers/provider-onboarding.controller';
 import { staffController } from '../controllers/staff.controller';
-import { shiftController } from '../controllers/shift.controller';
 import { providerDashboardController } from '../controllers/provider-dashboard.controller';
 
 export const providerSubscriptionRouter = Router();
@@ -15,69 +14,6 @@ providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe
 
 providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
 providerSubscriptionRouter.get('/staff', requireActiveProvider, staffController.listStaff);
-providerSubscriptionRouter.post(
-  '/positions',
-  requireActiveProvider,
-  shiftController.createPosition,
-);
-providerSubscriptionRouter.patch(
-  '/positions/:positionId',
-  requireActiveProvider,
-  shiftController.updatePosition,
-);
-providerSubscriptionRouter.delete(
-  '/positions/:positionId',
-  requireActiveProvider,
-  shiftController.deletePosition,
-);
-providerSubscriptionRouter.get(
-  '/shift-time-presets',
-  requireActiveProvider,
-  shiftController.listShiftTimePresets,
-);
-providerSubscriptionRouter.post(
-  '/shift-time-presets',
-  requireActiveProvider,
-  shiftController.createShiftTimePreset,
-);
-providerSubscriptionRouter.patch(
-  '/shift-time-presets/:presetId',
-  requireActiveProvider,
-  shiftController.updateShiftTimePreset,
-);
-providerSubscriptionRouter.delete(
-  '/shift-time-presets/:presetId',
-  requireActiveProvider,
-  shiftController.deleteShiftTimePreset,
-);
-providerSubscriptionRouter.get('/shifts/week', requireActiveProvider, shiftController.getWeek);
-providerSubscriptionRouter.post(
-  '/shifts/assign',
-  requireActiveProvider,
-  shiftController.assignShift,
-);
-providerSubscriptionRouter.put(
-  '/shifts/update-time',
-  requireActiveProvider,
-  shiftController.updateShiftTime,
-);
-providerSubscriptionRouter.put('/shifts/move', requireActiveProvider, shiftController.moveShift);
-providerSubscriptionRouter.post('/shifts/clone', requireActiveProvider, shiftController.cloneShift);
-providerSubscriptionRouter.post(
-  '/shifts/bulk-clone',
-  requireActiveProvider,
-  shiftController.bulkCloneShifts,
-);
-providerSubscriptionRouter.delete(
-  '/shifts/bulk',
-  requireActiveProvider,
-  shiftController.bulkDeleteShifts,
-);
-providerSubscriptionRouter.delete(
-  '/shifts/clear-employee-week',
-  requireActiveProvider,
-  shiftController.clearEmployeeWeek,
-);
 providerSubscriptionRouter.patch(
   '/staff/:staffId/deactivate',
   requireActiveProvider,

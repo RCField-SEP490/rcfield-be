@@ -232,6 +232,15 @@ export enum DisputeStatus {
 
 // ── F&B ───────────────────────────────────────────────────────────────────────
 
+export enum FnbCategory {
+  FOOD = 'FOOD',
+  DRINK = 'DRINK',
+  SNACK = 'SNACK',
+  DESSERT = 'DESSERT',
+  COMBO = 'COMBO',
+  OTHER = 'OTHER',
+}
+
 export enum FnbOrderType {
   PRE_ORDER = 'PRE_ORDER',
   ON_SITE = 'ON_SITE',

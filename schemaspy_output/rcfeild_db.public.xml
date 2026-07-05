@@ -17,7 +17,7 @@
             <column ascending="true" name="id"/>
          </index>
       </table>
-      <table name="booking_participants" numRows="3" remarks="" schema="public" type="TABLE">
+      <table name="booking_participants" numRows="1" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="assigned_to_participant_id" foreignKey="booking_vehicles_assigned_to_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_vehicles"/>
             <child column="booking_participant_id" foreignKey="session_participants_booking_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_participants"/>
@@ -79,7 +79,7 @@
             <column ascending="true" name="booking_id"/>
          </index>
       </table>
-      <table name="bookings" numRows="1" remarks="" schema="public" type="TABLE">
+      <table name="bookings" numRows="6" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="booking_id" foreignKey="booking_participants_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="booking_participants"/>
             <child column="booking_id" foreignKey="booking_vehicles_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="booking_vehicles"/>
@@ -683,19 +683,16 @@
       </table>
       <table name="fnb_order_items" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="order_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="fnb_order_items_order_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="menu_item_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="menu_item_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="fnb_order_items_menu_item_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="menu_items"/>
          </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="quantity" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
-         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="unit_price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="item_name_snapshot" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="fnb_order_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="2" id="8" name="subtotal" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="quantity" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="unit_price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="item_name_snapshot" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="fnb_order_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="7" name="subtotal" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="fnb_order_items_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -703,43 +700,34 @@
          <index name="IDX_fnb_order_items_fnb_order_id" unique="false">
             <column ascending="true" name="fnb_order_id"/>
          </index>
-         <index name="idx_fnb_order_items_order_id" unique="false">
-            <column ascending="true" name="order_id"/>
-         </index>
          <checkConstraint constraint="((quantity &gt; 0))" name="fnb_order_items_quantity_check"/>
       </table>
       <table name="fnb_orders" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <child column="order_id" foreignKey="fnb_order_items_order_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_order_items"/>
-         </column>
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="fnb_orders_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
          </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="2147483647" type="fnb_order_type_enum" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="'PENDING'::fnb_order_status_enum" digits="0" id="3" name="status" nullable="false" remarks="" size="2147483647" type="fnb_order_status_enum" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="0" digits="2" id="4" name="total_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="created_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+         <column autoUpdated="false" defaultValue="'PENDING'::fnb_order_status_enum" digits="0" id="2" name="status" nullable="false" remarks="" size="2147483647" type="fnb_order_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="3" name="total_amount" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="created_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="fnb_orders_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
          </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="confirmed_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="confirmed_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="fnb_orders_confirmed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
          </column>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="confirmed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="confirmed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="fnb_orders_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
          </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="order_type" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="order_type" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="fnb_orders_pkey" unique="true">
             <column ascending="true" name="id"/>
          </index>
          <index name="idx_fnb_orders_booking_id" unique="false">
-            <column ascending="true" name="booking_id"/>
-         </index>
-         <index name="idx_fnb_orders_preorder" unique="true">
             <column ascending="true" name="booking_id"/>
          </index>
          <index name="idx_fnb_orders_session_id" unique="false">
@@ -1009,7 +997,7 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="notifications_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
          </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="2147483647" type="notification_type_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="type" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="title" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="message" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="read_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
@@ -1154,7 +1142,7 @@
             <column ascending="true" name="id"/>
          </index>
       </table>
-      <table name="payment_transactions" numRows="18" remarks="" schema="public" type="TABLE">
+      <table name="payment_transactions" numRows="7" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="payment_transactions_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
@@ -1253,6 +1241,7 @@
          <column autoUpdated="false" defaultValue="null" digits="6" id="19" name="schedule_start_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
          <column autoUpdated="false" defaultValue="null" digits="6" id="20" name="schedule_end_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
          <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="21" name="schedule_weekdays" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="22" name="show_on_cafe_page" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="promotions_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -1290,7 +1279,7 @@
             <column ascending="true" name="user_id"/>
          </index>
       </table>
-      <table name="provider_subscriptions" remarks="" schema="public" type="TABLE">
+      <table name="provider_subscriptions" numRows="2" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="provider_subscriptions_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
@@ -1320,7 +1309,7 @@
             <column ascending="true" name="status"/>
          </index>
       </table>
-      <table name="refresh_tokens" numRows="101" remarks="" schema="public" type="TABLE">
+      <table name="refresh_tokens" numRows="161" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="refresh_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>

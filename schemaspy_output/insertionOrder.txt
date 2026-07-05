@@ -22,11 +22,11 @@ menu_items
 shift_positions
 contests
 kb_documents
-fnb_orders
 cafe_images
 cafe_pricing_rules
 cafe_widget_configs
 feature_flags
+fnb_order_items
 inspection_checklists
 notifications
 package_usages
@@ -39,7 +39,6 @@ vehicle_catalog_images
 cafe_announcements
 cafe_closures
 cafe_holiday_overrides
-fnb_order_items
 inspection_photos
 kb_chunks
 provider_subscriptions
@@ -55,6 +54,7 @@ reviews
 staff_cafe_assignments
 vehicle_maintenance_logs
 contest_registrations
+fnb_orders
 staff_shifts
 trust_score_logs
 amenity_catalog
