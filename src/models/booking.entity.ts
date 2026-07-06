@@ -79,6 +79,12 @@ export class Booking {
   @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true })
   cancelledAt: Date | null;
 
+  @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
+  completedAt: Date | null;
+
+  @Column({ name: 'review_dismissed_at', type: 'timestamptz', nullable: true })
+  reviewDismissedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

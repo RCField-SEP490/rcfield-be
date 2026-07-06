@@ -311,6 +311,14 @@ export enum NotificationType {
   CUSTOMER_EXTENSION_APPROVED = 'CUSTOMER_EXTENSION_APPROVED',
   CUSTOMER_EXTENSION_REJECTED = 'CUSTOMER_EXTENSION_REJECTED',
   CUSTOMER_PAYMENT_CONFIRMED = 'CUSTOMER_PAYMENT_CONFIRMED',
+  BOOKING_REVIEW_REQUEST = 'BOOKING_REVIEW_REQUEST',
+}
+
+// ── Review ────────────────────────────────────────────────────────────────────
+
+export enum ReviewStatus {
+  VISIBLE = 'VISIBLE',
+  HIDDEN = 'HIDDEN',
 }
 
 // ── Pricing ───────────────────────────────────────────────────────────────────

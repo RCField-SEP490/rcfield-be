@@ -26,6 +26,8 @@ import { bookingController } from '../controllers/booking.controller';
 import { customerPackageRouter } from './customer-package.routes';
 import { pricingRouter } from './pricing.routes';
 import { sessionRouter } from './session.routes';
+import { reviewRouter } from './review.routes';
+import { providerReviewRouter } from './provider-review.routes';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -124,6 +126,8 @@ router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
 router.use('/bookings', bookingRouter);
 router.use('/sessions', sessionRouter);
+router.use('/customer/reviews', reviewRouter);
+router.use('/provider/reviews', providerReviewRouter);
 router.use('/', customerPackageRouter);
 router.use('/', pricingRouter);
 router.get(

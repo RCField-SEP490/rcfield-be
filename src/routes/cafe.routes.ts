@@ -16,6 +16,7 @@ import { promotionController } from '../controllers/promotion.controller';
 import { packageController } from '../controllers/package.controller';
 import { customerPackageController } from '../controllers/customer-package.controller';
 import { UserRole } from '../types';
+import { getCafeReviews } from '../controllers/review.controller';
 
 export const cafeRouter = Router();
 
@@ -147,6 +148,8 @@ cafeRouter.post(
   upload.array('files', 20),
   cafeTrackConfigController.uploadImages,
 );
+
+cafeRouter.get('/:cafeId/reviews', getCafeReviews);
 
 cafeRouter.get('/:cafeId/widget-config', cafeController.getWidgetConfig);
 cafeRouter.put(

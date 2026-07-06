@@ -13,6 +13,7 @@ import {
   PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
+  ReviewStatus,
   VehicleStatus,
 } from '../types';
 
@@ -836,4 +837,19 @@ export const UpdateHolidaySchema = z.object({
 
 export const ListHolidaysQuerySchema = z.object({
   year: z.coerce.number().int().min(2024).max(2099).optional(),
+});
+
+// ── reviews ───────────────────────────────────────────────────────────────────
+
+export const CreateReviewSchema = z.object({
+  booking_id: z.string().uuid(),
+  overall_score: z.number().int().min(1).max(5),
+  vehicle_score: z.number().int().min(1).max(5).nullable().optional(),
+  staff_score: z.number().int().min(1).max(5).nullable().optional(),
+  facility_score: z.number().int().min(1).max(5).nullable().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+
+export const UpdateReviewVisibilitySchema = z.object({
+  status: z.nativeEnum(ReviewStatus),
 });

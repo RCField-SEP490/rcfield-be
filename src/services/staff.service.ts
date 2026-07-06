@@ -7,6 +7,7 @@ import { logger } from '../config/logger';
 import {
   AppError,
   AuthProvider,
+  BookingSource,
   BookingStatus,
   UserRole,
   SessionStatus,
@@ -1494,8 +1495,20 @@ export async function simulateClientCheckOutResponse(sessionId: string): Promise
     where: { id: session.bookingId },
   });
   if (booking) {
-    booking.status = 'COMPLETED' as any;
+    booking.status = BookingStatus.COMPLETED;
+    booking.completedAt = new Date();
     await AppDataSource.getRepository(Booking).save(booking);
+    if (booking.source !== BookingSource.STAFF_MANUAL) {
+      await createNotification(
+        booking.customerId,
+        NotificationType.BOOKING_REVIEW_REQUEST,
+        'Đánh giá trải nghiệm của bạn',
+        'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+      );
+      wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
+        bookingId: booking.id,
+      });
+    }
   }
 
   // Settle invoice at checkout — called unconditionally so BYOC sessions
@@ -1628,9 +1641,22 @@ export async function customerConfirmInspection(
     });
     const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
     if (allDone) {
+      const completedAt = new Date();
       await AppDataSource.getRepository(Booking).update(session.bookingId, {
         status: BookingStatus.COMPLETED,
+        completedAt,
       });
+      if (booking.source !== BookingSource.STAFF_MANUAL) {
+        await createNotification(
+          booking.customerId,
+          NotificationType.BOOKING_REVIEW_REQUEST,
+          'Đánh giá trải nghiệm của bạn',
+          'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+        );
+        wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
+          bookingId: booking.id,
+        });
+      }
     }
 
     if (session.checkedInBy) {
