@@ -64,7 +64,7 @@ export const bookingController = {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
       }
 
-      const result = await createCheckoutUrl(bookingId, ipAddr);
+      const result = await createCheckoutUrl(bookingId, ipAddr, req.body?.return_url);
       res.status(201).json({ success: true, data: result });
     } catch (err) {
       next(err);
@@ -262,10 +262,25 @@ export const bookingController = {
   async listMyBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const query = ListMyBookingsSchema.parse(req.query);
-      let qb = AppDataSource.createQueryBuilder(Booking, 'b')
+      let qb = AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .leftJoin(Cafe, 'c', 'c.id = b.cafeId')
+        .select([
+          'b.id',
+          'b.customerId',
+          'b.cafeId',
+          'b.playMode',
+          'b.status',
+          'b.slotStart',
+          'b.slotEnd',
+          'b.paymentExpiresAt',
+          'b.snapshot',
+          'b.createdAt',
+          'b.updatedAt',
+        ])
+        .addSelect('c.name', 'cafeName')
         .where('b.customer_id = :customerId', { customerId: req.user!.userId })
-        .andWhere('b.deleted_at IS NULL')
-        .orderBy('b.slot_start', 'DESC')
+        .orderBy('b.slotStart', 'DESC')
         .skip((query.page - 1) * query.limit)
         .take(query.limit);
 
@@ -273,7 +288,21 @@ export const bookingController = {
         qb = qb.andWhere('b.status = :status', { status: query.status });
       }
 
-      const [bookings, total] = await Promise.all([qb.getMany(), qb.getCount()]);
+      // Tạo câu query đếm tổng số lượng phù hợp với filter status
+      let countQb = AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .where('b.customer_id = :customerId', { customerId: req.user!.userId });
+      if (query.status) {
+        countQb = countQb.andWhere('b.status = :status', { status: query.status });
+      }
+
+      const [rawAndEntities, total] = await Promise.all([
+        qb.getRawAndEntities(),
+        countQb.getCount(),
+      ]);
+
+      const bookings = rawAndEntities.entities;
+      const rawResults = rawAndEntities.raw;
 
       // Batch-fetch active sessions for these bookings
       const bookingIds = bookings.map((b) => b.id);
@@ -289,10 +318,12 @@ export const bookingController = {
           : [];
 
       const sessionByBookingId = new Map(activeSessions.map((s) => [s.bookingId, s]));
-      const data = bookings.map((b) => {
+      const data = bookings.map((b, idx) => {
         const sess = sessionByBookingId.get(b.id);
+        const raw = rawResults[idx];
         return {
           ...b,
+          cafe: raw?.cafeName ? { name: raw.cafeName } : null,
           session: sess
             ? {
                 id: sess.id,

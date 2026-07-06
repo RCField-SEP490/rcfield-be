@@ -34,6 +34,7 @@ export interface UserProfile {
   avatarUrl: string | null;
   role: UserRole;
   assignedCafeId?: string | null;
+  trustScore?: number;
 }
 
 export interface RegisterInput {
@@ -73,6 +74,7 @@ class AuthService {
       phone: user.phone,
       avatarUrl: user.avatar_url,
       role: user.role,
+      trustScore: Number(user.trust_score),
     };
   }
 

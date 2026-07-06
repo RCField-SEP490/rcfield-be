@@ -147,6 +147,7 @@ export interface CheckoutResult {
 export async function createCheckoutUrl(
   bookingId: string,
   ipAddr: string,
+  customReturnUrl?: string,
 ): Promise<CheckoutResult> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
@@ -327,6 +328,7 @@ export async function createCheckoutUrl(
     txnRef,
     orderInfo: `RCField booking ${bookingId.substring(0, 8)}`,
     ipAddr,
+    returnUrl: customReturnUrl,
     bankCode: 'VNBANK',
   });
 
