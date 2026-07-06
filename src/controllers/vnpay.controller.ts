@@ -52,7 +52,12 @@ export async function handleVnpayReturn(
 ): Promise<void> {
   try {
     const result = await processConfirmation(req.query as Record<string, unknown>);
-    const target = new URL('/payment/result', env.frontendUrl);
+    let target: URL;
+    try {
+      target = new URL('/payment/result', env.frontendUrl);
+    } catch {
+      target = new URL('/payment/result', 'http://localhost:5173');
+    }
 
     if (result.rspCode === '00') {
       // Extract bookingId from txnRef (reverse: pad to 32 chars hex → UUID format)
@@ -73,7 +78,12 @@ export async function handleVnpayReturn(
     res.redirect(target.toString());
   } catch (err) {
     if (err instanceof AppError) {
-      const target = new URL('/payment/result', env.frontendUrl);
+      let target: URL;
+      try {
+        target = new URL('/payment/result', env.frontendUrl);
+      } catch {
+        target = new URL('/payment/result', 'http://localhost:5173');
+      }
       target.searchParams.set('status', 'failed');
       target.searchParams.set('reason', err.code ?? 'unknown');
       res.redirect(target.toString());
