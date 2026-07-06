@@ -30,6 +30,7 @@ import { User } from '../models/user.entity';
 import { MenuItem } from '../models/menu-item.entity';
 import { TrackType } from '../models/track-type.entity';
 import { Session } from '../models/session.entity';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
 
 export const bookingController = {
   // POST /api/v1/bookings  [auth CUSTOMER]
@@ -116,14 +117,19 @@ export const bookingController = {
       }
 
       // Load related records
-      const [rawParticipants, vehicles, components, fnbOrders, cafe, session] = await Promise.all([
-        AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
-        AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
-        AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
-        AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
-        AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
-        AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
-      ]);
+      const [rawParticipants, vehicles, components, fnbOrders, cafe, session, transactions] =
+        await Promise.all([
+          AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
+          AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
+          AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
+          AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
+          AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
+          AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
+          AppDataSource.getRepository(PaymentTransaction).find({
+            where: { bookingId },
+            order: { createdAt: 'ASC' },
+          }),
+        ]);
 
       // Enrich participants: resolve name/phone for registered users
       const userIds = rawParticipants.map((p) => p.userId).filter(Boolean) as string[];
@@ -225,6 +231,14 @@ export const bookingController = {
           participants,
           vehicles: enrichedVehicles,
           payment_components: components,
+          payment_transactions: transactions.map((t) => ({
+            id: t.id,
+            type: t.type,
+            gateway: t.gateway,
+            amount: Number(t.amount),
+            status: t.status,
+            createdAt: t.createdAt,
+          })),
           fnb_order: mergedFnbOrder,
           cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
           track_type_name: trackTypeName,

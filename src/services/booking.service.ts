@@ -28,6 +28,8 @@ import {
 import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
 import { getEffectiveMultiplier } from './pricing.service';
+import { validatePromoCode } from './promotion.service';
+import type { Promotion } from '../models/promotion.entity';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
@@ -495,6 +497,25 @@ export async function createBooking(
   }
 
   const totalAmount = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+
+  // Promo code validation — discount applies to slot_fee + rental_fee only
+  let discountAmount = 0;
+  let appliedPromotion: Promotion | undefined;
+  if (body.promotion_code) {
+    const promoSubtotal = slotFee + rentalFeeTotal;
+    const promoResult = await validatePromoCode({
+      cafeId: body.cafe_id,
+      code: body.promotion_code,
+      customerId,
+      subtotal: promoSubtotal,
+      playMode: body.play_mode,
+      slotStart,
+    });
+    discountAmount = promoResult.discountAmount;
+    appliedPromotion = promoResult.promotion;
+  }
+  const discountedTotal = Math.max(0, totalAmount - discountAmount);
+
   const paymentExpiresAt = new Date(Date.now() + env.platform.paymentWindowMinutes * 60 * 1000);
 
   // Acquire Redis slot locks for RENTAL vehicles
@@ -547,6 +568,15 @@ export async function createBooking(
       snapshot.slot_fee_multiplier = slotMultiplier;
       snapshot.pricing_rule_label = pricingLabel;
 
+      if (appliedPromotion) {
+        snapshot.promotion_applied = {
+          promotion_id: appliedPromotion.id,
+          code: appliedPromotion.code,
+          discount_amount: discountAmount,
+          discount_type: appliedPromotion.discountType,
+        };
+      }
+
       const newBooking = em.create(Booking, {
         customerId,
         cafeId: body.cafe_id,
@@ -558,7 +588,8 @@ export async function createBooking(
         slotStart,
         slotEnd,
         paymentExpiresAt,
-        discountAmount: 0,
+        discountAmount,
+        promotionId: appliedPromotion?.id ?? null,
         customerPackageId: customerPackage?.id ?? null,
         snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
       });
@@ -643,7 +674,7 @@ export async function createBooking(
       booking_id: booking.id,
       status: BookingStatus.PENDING,
       payment_expires_at: paymentExpiresAt,
-      total_amount: totalAmount,
+      total_amount: discountedTotal,
       breakdown: {
         slot_fee: slotFee,
         slot_fee_base: Number(cafe.slotFeeRate) * slotCount * playerCount,
@@ -652,8 +683,8 @@ export async function createBooking(
         rental_fee: rentalFeeTotal,
         security_deposit: depositTotal,
         fnb_total: fnbTotal,
-        discount: 0,
-        total: totalAmount,
+        discount: discountAmount,
+        total: discountedTotal,
       },
     };
   } catch (err) {

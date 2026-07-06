@@ -8,10 +8,12 @@ import {
   CafeStatus,
   CustomerPackageStatus,
   DiscountType,
+  FnbCategory,
   FnbOrderStatus,
   PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
+  ReviewStatus,
   VehicleStatus,
 } from '../types';
 
@@ -82,80 +84,6 @@ export const ActivateStaffSchema = z.object({
 export const TransferStaffSchema = z.object({
   cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
 });
-
-// ── ai-chat ───────────────────────────────────────────────────────────────────
-
-export const CreateShiftPositionSchema = z.object({
-  name: z.string().trim().min(2, 'Ten vi tri toi thieu 2 ky tu').max(120),
-});
-
-export const UpdateShiftPositionSchema = z.object({
-  name: z.string().trim().min(2, 'Ten vi tri toi thieu 2 ky tu').max(120),
-});
-
-export const WeekShiftQuerySchema = z.object({
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'start_date phai co dinh dang YYYY-MM-DD'),
-  cafe_id: z.string().uuid('cafe_id phai la UUID hop le'),
-});
-
-export const AssignShiftSchema = z.object({
-  cafe_id: z.string().uuid('cafe_id phai la UUID hop le'),
-  position_id: z.string().uuid('position_id phai la UUID hop le'),
-  staff_id: z.string().uuid('staff_id phai la UUID hop le'),
-  shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const UpdateShiftTimeSchema = z.object({
-  shift_id: z.string().uuid('shift_id phai la UUID hop le'),
-  shift_label: z.string().trim().min(1).max(120),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/, 'start_time phai co dinh dang HH:mm'),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/, 'end_time phai co dinh dang HH:mm'),
-});
-
-export const MoveShiftSchema = z.object({
-  shift_id: z.string().uuid('shift_id phai la UUID hop le'),
-  new_position_id: z.string().uuid('new_position_id phai la UUID hop le'),
-  new_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'new_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const CloneShiftSchema = z.object({
-  source_shift_id: z.string().uuid('source_shift_id phai la UUID hop le'),
-  position_id: z.string().uuid('position_id phai la UUID hop le'),
-  shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const BulkCloneShiftSchema = z.object({
-  source_shift_ids: z.array(z.string().uuid('source_shift_id phai la UUID hop le')).min(1),
-  target_cells: z
-    .array(
-      z.object({
-        position_id: z.string().uuid('position_id phai la UUID hop le'),
-        shift_date: z
-          .string()
-          .regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
-      }),
-    )
-    .min(1),
-});
-
-export const BulkDeleteShiftSchema = z.object({
-  shift_ids: z.array(z.string().uuid('shift_id phai la UUID hop le')).min(1),
-});
-
-export const ClearEmployeeWeekShiftSchema = z.object({
-  employee_id: z.string().uuid('employee_id phai la UUID hop le'),
-  week_start_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'week_start_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const CreateShiftTimePresetSchema = z.object({
-  label: z.string().trim().min(1).max(120),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/, 'start_time phai co dinh dang HH:mm'),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/, 'end_time phai co dinh dang HH:mm'),
-});
-
-export const UpdateShiftTimePresetSchema = CreateShiftTimePresetSchema;
 
 export const ForgotPasswordSchema = z.object({
   email: z.string().email('Email không hợp lệ').max(255),
@@ -329,6 +257,7 @@ const PromotionBaseSchema = z.object({
     .optional()
     .default([]),
   is_active: z.boolean().optional().default(true),
+  show_on_cafe_page: z.boolean().optional().default(true),
 });
 
 export const CreatePromotionSchema = PromotionBaseSchema.refine(
@@ -374,6 +303,17 @@ export const UpdatePromotionSchema = PromotionBaseSchema.partial()
 
 export const PromotionIdParamsSchema = z.object({
   promotionId: z.string().uuid(),
+});
+
+export const PreviewPromoSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .max(50)
+    .transform((v) => v.trim().toUpperCase()),
+  play_mode: z.enum(['RENTAL', 'BYOC']),
+  slot_start: z.string().datetime({ offset: true }),
+  subtotal: z.coerce.number().nonnegative(),
 });
 
 const PackageBaseSchema = z.object({
@@ -487,7 +427,7 @@ export const MenuListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
-  category: z.string().min(1).max(100).optional().openapi({ example: 'Do uong' }),
+  category: z.nativeEnum(FnbCategory).optional().openapi({ example: FnbCategory.DRINK }),
   available: z
     .enum(['true', 'false'])
     .optional()
@@ -505,7 +445,7 @@ export const CreateMenuItemSchema = z.object({
     .optional()
     .openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
   price: z.coerce.number().nonnegative().openapi({ example: 55000 }),
-  category: z.string().trim().max(100).nullable().optional().openapi({ example: 'Do uong' }),
+  category: z.nativeEnum(FnbCategory).nullable().optional().openapi({ example: FnbCategory.DRINK }),
   image_url: z
     .string()
     .trim()
@@ -517,6 +457,27 @@ export const CreateMenuItemSchema = z.object({
 });
 
 export const UpdateMenuItemSchema = CreateMenuItemSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const CreateComboSchema = z.object({
+  name: z.string().trim().min(2).max(255),
+  description: z.string().trim().max(2000).nullable().optional(),
+  price: z.coerce.number().nonnegative(),
+  image_url: z.string().trim().url().nullable().optional(),
+  is_available: z.boolean().optional().default(true),
+  components: z
+    .array(
+      z.object({
+        item_id: z.string().uuid(),
+        quantity: z.number().int().positive().max(99),
+      }),
+    )
+    .min(2, 'Combo phải có ít nhất 2 món'),
+});
+
+export const UpdateComboSchema = CreateComboSchema.partial().refine(
   (value) => Object.keys(value).length > 0,
   'Cần ít nhất một trường để cập nhật',
 );
@@ -539,20 +500,6 @@ export const MenuItemResponseSchema = z.object({
   updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   deletedAt: z.string().datetime().nullable().openapi({ example: null }),
 });
-
-const TimeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'Thời gian phải có định dạng HH:mm');
-
-export const CafeClosureCreateSchema = z.object({
-  closed_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải có định dạng YYYY-MM-DD'),
-  start_time: TimeSchema,
-  end_time: TimeSchema,
-  reason: z.string().min(1).max(255),
-});
-
-export const CafeClosureUpdateSchema = CafeClosureCreateSchema.partial().refine(
-  (value) => Object.keys(value).length > 0,
-  'Cần ít nhất một trường để cập nhật',
-);
 
 // ── fb-channel ────────────────────────────────────────────────────────────────
 
@@ -890,4 +837,19 @@ export const UpdateHolidaySchema = z.object({
 
 export const ListHolidaysQuerySchema = z.object({
   year: z.coerce.number().int().min(2024).max(2099).optional(),
+});
+
+// ── reviews ───────────────────────────────────────────────────────────────────
+
+export const CreateReviewSchema = z.object({
+  booking_id: z.string().uuid(),
+  overall_score: z.number().int().min(1).max(5),
+  vehicle_score: z.number().int().min(1).max(5).nullable().optional(),
+  staff_score: z.number().int().min(1).max(5).nullable().optional(),
+  facility_score: z.number().int().min(1).max(5).nullable().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+
+export const UpdateReviewVisibilitySchema = z.object({
+  status: z.nativeEnum(ReviewStatus),
 });

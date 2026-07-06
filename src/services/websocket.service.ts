@@ -8,6 +8,7 @@ import { AuthPayload } from '../types';
 export class WebSocketService {
   private wss!: WebSocketServer;
   private clients = new Map<string, Set<WebSocket>>();
+  private clientsByCafe = new Map<string, Set<WebSocket>>();
 
   init(server: Server): void {
     this.wss = new WebSocketServer({ server, path: '/ws' });
@@ -24,10 +25,22 @@ export class WebSocketService {
     try {
       const payload = jwt.verify(token, env.jwt.secret) as AuthPayload;
       const userId = payload.userId;
+      const cafeId = payload.cafeId;
+
       if (!this.clients.has(userId)) this.clients.set(userId, new Set());
       this.clients.get(userId)!.add(ws);
-      ws.on('close', () => this.clients.get(userId)?.delete(ws));
-      logger.info('WebSocket', 'client connected', { userId });
+
+      if (cafeId) {
+        if (!this.clientsByCafe.has(cafeId)) this.clientsByCafe.set(cafeId, new Set());
+        this.clientsByCafe.get(cafeId)!.add(ws);
+      }
+
+      ws.on('close', () => {
+        this.clients.get(userId)?.delete(ws);
+        if (cafeId) this.clientsByCafe.get(cafeId)?.delete(ws);
+      });
+
+      logger.info('WebSocket', 'client connected', { userId, cafeId });
     } catch {
       ws.close(4001, 'Invalid token');
     }
@@ -35,6 +48,15 @@ export class WebSocketService {
 
   pushToUser(userId: string, event: string, data: unknown): void {
     const sockets = this.clients.get(userId);
+    if (!sockets?.size) return;
+    const payload = JSON.stringify({ event, data });
+    sockets.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+    });
+  }
+
+  pushToCafe(cafeId: string, event: string, data: unknown): void {
+    const sockets = this.clientsByCafe.get(cafeId);
     if (!sockets?.size) return;
     const payload = JSON.stringify({ event, data });
     sockets.forEach((ws) => {

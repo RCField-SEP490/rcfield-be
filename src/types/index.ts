@@ -232,6 +232,15 @@ export enum DisputeStatus {
 
 // ── F&B ───────────────────────────────────────────────────────────────────────
 
+export enum FnbCategory {
+  FOOD = 'FOOD',
+  DRINK = 'DRINK',
+  SNACK = 'SNACK',
+  DESSERT = 'DESSERT',
+  COMBO = 'COMBO',
+  OTHER = 'OTHER',
+}
+
 export enum FnbOrderType {
   PRE_ORDER = 'PRE_ORDER',
   ON_SITE = 'ON_SITE',
@@ -302,6 +311,14 @@ export enum NotificationType {
   CUSTOMER_EXTENSION_APPROVED = 'CUSTOMER_EXTENSION_APPROVED',
   CUSTOMER_EXTENSION_REJECTED = 'CUSTOMER_EXTENSION_REJECTED',
   CUSTOMER_PAYMENT_CONFIRMED = 'CUSTOMER_PAYMENT_CONFIRMED',
+  BOOKING_REVIEW_REQUEST = 'BOOKING_REVIEW_REQUEST',
+}
+
+// ── Review ────────────────────────────────────────────────────────────────────
+
+export enum ReviewStatus {
+  VISIBLE = 'VISIBLE',
+  HIDDEN = 'HIDDEN',
 }
 
 // ── Pricing ───────────────────────────────────────────────────────────────────
@@ -330,6 +347,20 @@ export interface AuthPayload {
 
 export interface AuthRequest extends Request {
   user?: AuthPayload;
+}
+
+// ── Widget Config ─────────────────────────────────────────────────────────────
+
+export interface WidgetConfigData {
+  greetingMessage: string;
+  welcomeMessage: string;
+  position: string;
+  primaryColor: string;
+  avatarUrl: string | null;
+  quickReplies: string[];
+  systemPrompt: string | null;
+  isEnabled: boolean;
+  fullPageEnabled: boolean;
 }
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────

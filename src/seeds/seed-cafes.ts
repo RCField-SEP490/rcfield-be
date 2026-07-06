@@ -713,26 +713,23 @@ async function seedWidgetConfig(
     quick_replies: string[];
   },
 ) {
-  const [existing] = await AppDataSource.query<{ id: string }[]>(
-    `SELECT id FROM cafe_widget_configs WHERE cafe_id = $1`,
-    [cafeId],
-  );
-  if (existing) {
-    logger.warn('Seed', `Skip widget config — already exists for ${cafeId.slice(0, 8)}...`);
-    return;
-  }
   await AppDataSource.query(
-    `INSERT INTO cafe_widget_configs (cafe_id, greeting_message, position, primary_color, quick_replies, is_enabled)
-     VALUES ($1,$2,$3,$4,$5,true)`,
+    `UPDATE cafes
+     SET widget_config = widget_config || $1::jsonb
+     WHERE id = $2`,
     [
+      JSON.stringify({
+        greetingMessage: cfg.greeting_message,
+        welcomeMessage: cfg.greeting_message,
+        position: cfg.position,
+        primaryColor: cfg.primary_color,
+        quickReplies: cfg.quick_replies,
+        isEnabled: true,
+      }),
       cafeId,
-      cfg.greeting_message,
-      cfg.position,
-      cfg.primary_color,
-      JSON.stringify(cfg.quick_replies),
     ],
   );
-  logger.info('Seed', `  Widget config created for ${cafeId.slice(0, 8)}...`);
+  logger.info('Seed', `  Widget config updated for ${cafeId.slice(0, 8)}...`);
 }
 
 seed().catch((err) => {
