@@ -1251,7 +1251,7 @@ export async function proposeExtension(
     throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
   }
 
-  const { extraMinutes, additionalFee } = data;
+  const { extraMinutes, additionalFee, direct } = data;
 
   // Check whether the extended slot conflicts with an existing booking at the same cafe
   const booking = await AppDataSource.getRepository(Booking).findOne({
@@ -1282,6 +1282,36 @@ export async function proposeExtension(
   proposal.proposedBy = staffUserId;
   proposal.durationMinutes = extraMinutes;
   proposal.feeAmount = additionalFee;
+
+  if (direct) {
+    // Staff directly approves — customer physically present and agreed at the counter
+    proposal.status = ExtensionProposalStatus.APPROVED;
+    proposal.respondedBy = staffUserId;
+    proposal.respondedAt = new Date();
+    await AppDataSource.getRepository(ExtensionProposal).save(proposal);
+
+    session.plannedEndAt = new Date(session.plannedEndAt.getTime() + extraMinutes * 60000);
+    session.actualTotalAmount = Number(session.actualTotalAmount) + Number(additionalFee);
+    session.status = SessionStatus.ACTIVE;
+    await AppDataSource.getRepository(Session).save(session);
+
+    if (booking) {
+      booking.slotCount = Number(booking.slotCount) + Math.ceil(extraMinutes / 30);
+      await AppDataSource.getRepository(Booking).save(booking);
+
+      if (booking.customerId) {
+        await createNotification(
+          booking.customerId,
+          'SESSION_EXTENSION_PROPOSED' as any,
+          'Ca chơi đã được gia hạn',
+          `Ca chơi của bạn đã được gia hạn thêm ${extraMinutes} phút bởi nhân viên.`,
+        );
+      }
+    }
+
+    return proposal;
+  }
+
   proposal.status = ExtensionProposalStatus.PENDING;
   await AppDataSource.getRepository(ExtensionProposal).save(proposal);
   const expiresAt = new Date((proposal.createdAt ?? new Date()).getTime() + 10 * 60000);
@@ -1290,18 +1320,15 @@ export async function proposeExtension(
   await AppDataSource.getRepository(Session).save(session);
 
   // Notify customer via WebSocket and save in DB
-  const booking2 = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
-  if (booking2?.customerId) {
+  if (booking?.customerId) {
     await createNotification(
-      booking2.customerId,
+      booking.customerId,
       'SESSION_EXTENSION_PROPOSED' as any,
       'Yêu cầu xác nhận gia hạn',
       `Nhân viên trực ca đề xuất gia hạn thêm ${proposal.durationMinutes} phút. Vui lòng bấm vào để xem và phản hồi.`,
     );
 
-    wsService.pushToUser(booking2.customerId, 'SESSION_EXTENSION_PROPOSED', {
+    wsService.pushToUser(booking.customerId, 'SESSION_EXTENSION_PROPOSED', {
       sessionId,
       proposalId: proposal.id,
       extraMinutes: proposal.durationMinutes,
