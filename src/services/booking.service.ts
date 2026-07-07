@@ -36,6 +36,7 @@ import type { Promotion } from '../models/promotion.entity';
 const VALID_TRANSITIONS: Record<BookingStatus, string[]> = {
   [BookingStatus.PENDING]: ['PAYMENT_CONFIRMED', 'PAYMENT_TIMEOUT'],
   [BookingStatus.CONFIRMED]: ['CUSTOMER_CANCEL', 'PROVIDER_CANCEL', 'NO_SHOW', 'COMPLETE'],
+  [BookingStatus.AWAITING_PAYMENT]: ['PAYMENT_SETTLED'],
   [BookingStatus.CANCELLED]: [],
   [BookingStatus.NO_SHOW]: [],
   [BookingStatus.COMPLETED]: [],
@@ -56,6 +57,7 @@ function eventToStatus(event: string): BookingStatus {
       return BookingStatus.CANCELLED;
     case 'NO_SHOW':
       return BookingStatus.NO_SHOW;
+    case 'PAYMENT_SETTLED':
     case 'COMPLETE':
       return BookingStatus.COMPLETED;
     default:
@@ -164,6 +166,21 @@ export async function transition(bookingId: string, event: string): Promise<Book
     }
     await cancelPendingFnbOrders(bookingId);
     logger.info('BookingService', `transition → CANCELLED bookingId=${bookingId}`);
+  }
+
+  if (newStatus === BookingStatus.COMPLETED) {
+    if (booking.playMode === BookingMode.BYOC) {
+      const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
+        where: { bookingId },
+      });
+      await releaseByocSlot(
+        booking.cafeId,
+        booking.slotStart,
+        participantCount || 1,
+        booking.trackConfigId,
+      );
+    }
+    logger.info('BookingService', `transition → COMPLETED bookingId=${bookingId}`);
   }
 
   if (newStatus === BookingStatus.NO_SHOW) {

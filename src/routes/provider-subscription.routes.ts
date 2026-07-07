@@ -6,12 +6,28 @@ import { providerOnboardingController } from '../controllers/provider-onboarding
 import { staffController } from '../controllers/staff.controller';
 import { providerDashboardController } from '../controllers/provider-dashboard.controller';
 import { aiRevenueAnalyticsController } from '../controllers/ai-revenue-analytics.controller';
+import { kycUpload } from '../config/multer.config';
 
 export const providerSubscriptionRouter = Router();
 
 providerSubscriptionRouter.use(authenticate, authorize(UserRole.PROVIDER));
 
 providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe);
+
+// KYC routes — no requireActiveProvider (used by REJECTED/PENDING providers)
+const kycFields = kycUpload.fields([
+  { name: 'cccd_front', maxCount: 1 },
+  { name: 'cccd_back', maxCount: 1 },
+  { name: 'gpkd', maxCount: 1 },
+  { name: 'representative_id', maxCount: 1 },
+  { name: 'venue_photo', maxCount: 1 },
+]);
+providerSubscriptionRouter.post(
+  '/kyc/resubmit',
+  kycFields,
+  providerOnboardingController.resubmitKyc,
+);
+providerSubscriptionRouter.get('/kyc/status', providerOnboardingController.getKycStatus);
 
 providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
 providerSubscriptionRouter.get('/staff', requireActiveProvider, staffController.listStaff);

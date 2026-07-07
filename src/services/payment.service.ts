@@ -10,6 +10,7 @@ import { PaymentComponent } from '../models/payment-component.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
 import {
   AppError,
+  BookingStatus,
   FnbOrderType,
   PaymentComponentStatus,
   PaymentComponentType,
@@ -522,6 +523,10 @@ export async function processConfirmation(
             totalCounterBill: tx.amount,
           });
         }
+
+        if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+          await transition(booking.id, 'PAYMENT_SETTLED');
+        }
       }
     } catch (err) {
       logger.error('PaymentService', 'Failed to notify on checkout payment confirmation', err);
@@ -666,6 +671,10 @@ export async function processMockConfirmation(
             bookingId: tx.bookingId,
             totalCounterBill: tx.amount,
           });
+        }
+
+        if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+          await transition(booking.id, 'PAYMENT_SETTLED');
         }
       }
     } catch (err) {

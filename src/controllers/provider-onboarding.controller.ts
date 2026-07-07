@@ -1,7 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { IsNull } from 'typeorm';
-import { AppError, AuthPayload, AuthRequest, ProviderStatus, UserRole } from '../types';
+import {
+  AppError,
+  AuthPayload,
+  AuthRequest,
+  KycBusinessType,
+  ProviderStatus,
+  UserRole,
+} from '../types';
 import { RegisterProviderSchema, AdminRejectSchema, AdminProviderQuerySchema } from '../validate';
 import * as providerOnboardingService from '../services/provider-onboarding.service';
 import { AppDataSource } from '../config/database';
@@ -12,9 +19,40 @@ export const providerOnboardingController = {
   // POST /api/v1/auth/register-provider
   async registerProvider(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      // multer populates req.body as strings (multipart), parse after multer runs
       const body = RegisterProviderSchema.parse(req.body);
-      const user = await providerOnboardingService.register(body);
+      const files = (req.files as Record<string, Express.Multer.File[]>) ?? {};
+      const user = await providerOnboardingService.register(
+        { ...body, business_type: body.business_type as KycBusinessType },
+        files,
+      );
       res.status(201).json({ success: true, data: { id: user.id, email: user.email } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/provider/kyc/resubmit  [auth]
+  async resubmitKyc(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const providerId = req.user!.userId;
+      const businessType = req.body.business_type as KycBusinessType;
+      if (!businessType || !['INDIVIDUAL', 'BUSINESS'].includes(businessType)) {
+        return next(new AppError('business_type không hợp lệ', 400, 'VALIDATION_ERROR'));
+      }
+      const files = (req.files as Record<string, Express.Multer.File[]>) ?? {};
+      const result = await providerOnboardingService.resubmit(providerId, businessType, files);
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/kyc/status  [auth]
+  async getKycStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const data = await providerOnboardingService.getKycStatus(req.user!.userId);
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }

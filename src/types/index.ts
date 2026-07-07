@@ -76,6 +76,7 @@ export enum BookingStatus {
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',
   NO_SHOW = 'NO_SHOW',
+  AWAITING_PAYMENT = 'AWAITING_PAYMENT',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
 }
@@ -259,6 +260,28 @@ export enum NotificationChannel {
   PUSH = 'PUSH',
   SMS = 'SMS',
   EMAIL = 'EMAIL',
+}
+
+// ── Provider KYC ─────────────────────────────────────────────────────────────
+
+export enum KycBusinessType {
+  INDIVIDUAL = 'INDIVIDUAL',
+  BUSINESS = 'BUSINESS',
+}
+
+export enum KycDocumentType {
+  CCCD_FRONT = 'CCCD_FRONT',
+  CCCD_BACK = 'CCCD_BACK',
+  GPKD = 'GPKD',
+  REPRESENTATIVE_ID = 'REPRESENTATIVE_ID',
+  VENUE_PHOTO = 'VENUE_PHOTO',
+}
+
+export interface KycDocumentItem {
+  documentType: KycDocumentType;
+  cloudinaryUrl: string;
+  cloudinaryPublicId: string;
+  originalFilename: string | null;
 }
 
 // ── Provider Onboarding & Subscription ───────────────────────────────────────

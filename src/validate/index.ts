@@ -526,6 +526,9 @@ export const RegisterProviderSchema = z.object({
   phone: z.string().min(9).max(20).optional(),
   business_name: z.string().min(2).max(255),
   business_description: z.string().max(1000).optional(),
+  business_type: z.enum(['INDIVIDUAL', 'BUSINESS'], {
+    errorMap: () => ({ message: 'business_type phải là INDIVIDUAL hoặc BUSINESS' }),
+  }),
 });
 
 export const SubmitPaymentRequestSchema = z.object({

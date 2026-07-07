@@ -116,6 +116,7 @@ export async function transition(
       [NotificationType.CUSTOMER_EXTENSION_APPROVED]: ['', ''],
       [NotificationType.CUSTOMER_EXTENSION_REJECTED]: ['', ''],
       [NotificationType.CUSTOMER_PAYMENT_CONFIRMED]: ['', ''],
+      [NotificationType.BOOKING_REVIEW_REQUEST]: ['', ''],
     };
     const [title, message] = messages[notifType];
     if (title) await createNotification(sub.providerId, notifType, title, message);
