@@ -4,10 +4,13 @@ export class FixFnbOrderItemsDropLegacyOrderIdColumn1751000000001 implements Mig
   name = 'FixFnbOrderItemsDropLegacyOrderIdColumn1751000000001';
 
   async up(queryRunner: QueryRunner): Promise<void> {
-    // Backfill fnb_order_id from order_id for any rows that slipped through
-    await queryRunner.query(`
-      UPDATE fnb_order_items SET fnb_order_id = order_id WHERE fnb_order_id IS NULL AND order_id IS NOT NULL;
-    `);
+    // Backfill fnb_order_id from order_id for any rows that slipped through if column exists
+    const hasOrderIdColumn = await queryRunner.hasColumn('fnb_order_items', 'order_id');
+    if (hasOrderIdColumn) {
+      await queryRunner.query(`
+        UPDATE fnb_order_items SET fnb_order_id = order_id WHERE fnb_order_id IS NULL AND order_id IS NOT NULL;
+      `);
+    }
 
     // Make fnb_order_id NOT NULL now that all rows are backfilled
     await queryRunner.query(`

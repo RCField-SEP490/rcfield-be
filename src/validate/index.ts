@@ -856,3 +856,41 @@ export const CreateReviewSchema = z.object({
 export const UpdateReviewVisibilitySchema = z.object({
   status: z.nativeEnum(ReviewStatus),
 });
+
+export const CreateWalkInBookingSchema = z
+  .object({
+    play_mode: z.nativeEnum(BookingMode),
+    track_type_id: z.string().uuid(),
+    slot_start: z.string().datetime({ offset: true }),
+    slot_end: z.string().datetime({ offset: true }),
+    payment_method: z.enum(['CASH', 'BANK_TRANSFER']),
+    vehicle_ids: z.array(z.string().uuid()).default([]),
+    participants: z
+      .array(
+        z.object({
+          guest_name: z.string().trim().min(1, 'Tên người chơi không được để trống'),
+          guest_phone: z
+            .string()
+            .trim()
+            .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ'),
+          participant_type: z.literal(BookingParticipantType.WALK_IN_GUEST),
+        }),
+      )
+      .min(1, 'Phải có ít nhất 1 người chơi tham gia'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.play_mode === BookingMode.RENTAL && data.vehicle_ids.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicle_ids'],
+        message: 'Chế độ chơi RENTAL yêu cầu chọn ít nhất 1 xe thuê',
+      });
+    }
+    if (data.play_mode === BookingMode.BYOC && data.vehicle_ids.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicle_ids'],
+        message: 'Chế độ chơi BYOC không được chọn xe của cửa hàng',
+      });
+    }
+  });
