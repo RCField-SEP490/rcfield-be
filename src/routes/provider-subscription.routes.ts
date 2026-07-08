@@ -31,6 +31,21 @@ providerSubscriptionRouter.get('/kyc/status', providerOnboardingController.getKy
 
 providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
 providerSubscriptionRouter.get('/staff', requireActiveProvider, staffController.listStaff);
+providerSubscriptionRouter.get(
+  '/staff/:staffId',
+  requireActiveProvider,
+  staffController.getStaffDetail,
+);
+providerSubscriptionRouter.get(
+  '/staff/:staffId/kpi',
+  requireActiveProvider,
+  staffController.getStaffKpi,
+);
+providerSubscriptionRouter.get(
+  '/staff/:staffId/activity',
+  requireActiveProvider,
+  staffController.getStaffActivity,
+);
 providerSubscriptionRouter.patch(
   '/staff/:staffId/deactivate',
   requireActiveProvider,

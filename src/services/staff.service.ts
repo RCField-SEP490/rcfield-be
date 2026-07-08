@@ -753,6 +753,266 @@ export async function transferStaff(
   logger.info('Staff', 'staff transferred', { providerId, staffId, newCafeId });
 }
 
+export interface StaffDetailProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string | null;
+  cafeName: string;
+  cafeId: string;
+  status: 'PENDING' | 'ACTIVE' | 'DISABLED';
+  createdAt: string;
+  activatedAt: string | null;
+  lastActiveAt: string | null;
+}
+
+export interface StaffKpiSummary {
+  staffId: string;
+  period: '7d' | '30d' | '90d';
+  totalCheckIns: number;
+  totalFnbOrdersHandled: number;
+  totalExtensionsApproved: number;
+  onTimeCheckInRate: number | null;
+  activeDaysCount: number;
+}
+
+export interface StaffActivityEvent {
+  id: string;
+  type: 'CHECK_IN' | 'CHECK_OUT' | 'FNB_ORDER' | 'EXTENSION_APPROVED';
+  eventTime: string;
+  label: string;
+  bookingId: string;
+  bookingSource: 'APP' | 'STAFF_MANUAL';
+}
+
+export interface StaffActivityPage {
+  events: StaffActivityEvent[];
+  total: number;
+  hasMore: boolean;
+}
+
+export async function getStaffDetail(
+  providerId: string,
+  staffId: string,
+): Promise<StaffDetailProfile> {
+  const [row] = await AppDataSource.query<
+    {
+      id: string;
+      full_name: string;
+      email: string;
+      phone: string | null;
+      cafe_id: string;
+      cafe_name: string;
+      is_active: boolean;
+      created_at: Date;
+      activated_at: Date | null;
+      invite_expires_at: Date | null;
+      has_active_token: boolean;
+      last_active_at: Date | null;
+    }[]
+  >(
+    `SELECT
+       u.id, u.full_name, u.email, u.phone, u.is_active, u.created_at, u.last_active_at,
+       u.updated_at AS activated_at,
+       c.id AS cafe_id, c.name AS cafe_name,
+       EXISTS(
+         SELECT 1 FROM staff_invite_tokens t
+         WHERE t.user_id = u.id AND t.used_at IS NULL AND t.expires_at > NOW()
+       ) AS has_active_token,
+       (
+         SELECT t.expires_at FROM staff_invite_tokens t
+         WHERE t.user_id = u.id AND t.used_at IS NULL
+         ORDER BY t.created_at DESC LIMIT 1
+       ) AS invite_expires_at
+     FROM users u
+     JOIN staff_cafe_assignments a ON a.staff_id = u.id
+     JOIN cafes c ON c.id = a.cafe_id
+     WHERE u.id = $1 AND c.provider_id = $2 AND u.deleted_at IS NULL`,
+    [staffId, providerId],
+  );
+
+  if (!row) {
+    throw new AppError(
+      'Nhân viên không tồn tại hoặc không thuộc Provider này',
+      404,
+      'STAFF_NOT_FOUND',
+    );
+  }
+
+  let status: 'PENDING' | 'ACTIVE' | 'DISABLED';
+  if (row.is_active) {
+    status = 'ACTIVE';
+  } else if (row.has_active_token) {
+    status = 'PENDING';
+  } else {
+    status = 'DISABLED';
+  }
+
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email,
+    phone: row.phone,
+    cafeName: row.cafe_name,
+    cafeId: row.cafe_id,
+    status,
+    createdAt: row.created_at.toISOString(),
+    activatedAt: status === 'ACTIVE' && row.activated_at ? row.activated_at.toISOString() : null,
+    lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
+  };
+}
+
+export async function getStaffKpi(
+  providerId: string,
+  staffId: string,
+  period: '7d' | '30d' | '90d',
+): Promise<StaffKpiSummary> {
+  await getStaffOwnedByProvider(providerId, staffId);
+
+  const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
+
+  const [checkInsRow, fnbRow, extensionsRow, onTimeRow, activeDaysRow] = await Promise.all([
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM sessions
+       WHERE checked_in_by = $1 AND created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM fnb_orders
+       WHERE created_by = $1 AND status = 'DELIVERED'
+       AND created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM extension_proposals
+       WHERE proposed_by = $1 AND status = 'APPROVED'
+       AND created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ rate: string | null }]>(
+      `SELECT
+         COUNT(*) FILTER (
+           WHERE s.created_at BETWEEN b.slot_start - INTERVAL '15 minutes'
+                                  AND b.slot_start + INTERVAL '15 minutes'
+         )::float / NULLIF(COUNT(*), 0) * 100 AS rate
+       FROM sessions s
+       JOIN bookings b ON b.id = s.booking_id
+       WHERE s.checked_in_by = $1
+       AND s.created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(DISTINCT DATE(event_time))::int AS count FROM (
+         SELECT created_at AS event_time FROM sessions WHERE checked_in_by = $1
+           AND created_at >= NOW() - INTERVAL '${days} days'
+         UNION ALL
+         SELECT created_at FROM fnb_orders WHERE created_by = $1
+           AND created_at >= NOW() - INTERVAL '${days} days'
+         UNION ALL
+         SELECT created_at FROM extension_proposals WHERE proposed_by = $1
+           AND created_at >= NOW() - INTERVAL '${days} days'
+       ) sub`,
+      [staffId],
+    ),
+  ]);
+
+  const rate = onTimeRow[0]?.rate;
+
+  return {
+    staffId,
+    period,
+    totalCheckIns: Number(checkInsRow[0]?.count ?? 0),
+    totalFnbOrdersHandled: Number(fnbRow[0]?.count ?? 0),
+    totalExtensionsApproved: Number(extensionsRow[0]?.count ?? 0),
+    onTimeCheckInRate: rate != null ? Math.round(Number(rate) * 10) / 10 : null,
+    activeDaysCount: Number(activeDaysRow[0]?.count ?? 0),
+  };
+}
+
+export async function getStaffActivity(
+  providerId: string,
+  staffId: string,
+  limit: number,
+  offset: number,
+): Promise<StaffActivityPage> {
+  await getStaffOwnedByProvider(providerId, staffId);
+
+  const [events, totalRow] = await Promise.all([
+    AppDataSource.query<
+      {
+        id: string;
+        type: string;
+        event_time: Date;
+        label: string;
+        booking_id: string;
+        booking_source: string;
+      }[]
+    >(
+      `SELECT type, ref_id AS id, event_time, label, booking_id, booking_source FROM (
+         SELECT 'CHECK_IN' AS type, s.id AS ref_id, s.created_at AS event_time,
+                'Check-in' AS label,
+                s.booking_id,
+                b.source AS booking_source
+         FROM sessions s JOIN bookings b ON b.id = s.booking_id
+         WHERE s.checked_in_by = $1
+         UNION ALL
+         SELECT 'FNB_ORDER', fo.id, fo.created_at,
+                'Order #' || UPPER(SUBSTRING(fo.id::text, 1, 4)),
+                fo.booking_id,
+                b.source
+         FROM fnb_orders fo JOIN bookings b ON b.id = fo.booking_id
+         WHERE fo.created_by = $1
+         UNION ALL
+         SELECT 'EXTENSION_APPROVED', ep.id, ep.created_at,
+                'Gia hạn +' || ep.duration_minutes || ' phút',
+                s.booking_id,
+                b.source
+         FROM extension_proposals ep
+         JOIN sessions s ON s.id = ep.session_id
+         JOIN bookings b ON b.id = s.booking_id
+         WHERE ep.proposed_by = $1 AND ep.status = 'APPROVED'
+         UNION ALL
+         SELECT 'CHECK_OUT', s.id, s.actual_end_at,
+                'Check-out',
+                s.booking_id,
+                b.source
+         FROM sessions s JOIN bookings b ON b.id = s.booking_id
+         WHERE s.checked_out_by = $1 AND s.actual_end_at IS NOT NULL
+       ) events
+       ORDER BY event_time DESC
+       LIMIT $2 OFFSET $3`,
+      [staffId, limit, offset],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM (
+         SELECT id FROM sessions WHERE checked_in_by = $1
+         UNION ALL
+         SELECT id FROM fnb_orders WHERE created_by = $1
+         UNION ALL
+         SELECT id FROM extension_proposals WHERE proposed_by = $1 AND status = 'APPROVED'
+         UNION ALL
+         SELECT id FROM sessions WHERE checked_out_by = $1 AND actual_end_at IS NOT NULL
+       ) sub`,
+      [staffId],
+    ),
+  ]);
+
+  const total = Number(totalRow[0]?.count ?? 0);
+
+  return {
+    events: events.map((e) => ({
+      id: e.id,
+      type: e.type as StaffActivityEvent['type'],
+      eventTime: e.event_time.toISOString(),
+      label: e.label,
+      bookingId: e.booking_id,
+      bookingSource: e.booking_source as StaffActivityEvent['bookingSource'],
+    })),
+    total,
+    hasMore: offset + events.length < total,
+  };
+}
+
 async function getStaffOwnedByProvider(providerId: string, staffId: string): Promise<User> {
   const [row] = await AppDataSource.query<{ id: string }[]>(
     `SELECT u.id
@@ -1213,6 +1473,7 @@ export async function submitInspection(
   } else {
     // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
     session.status = SessionStatus.CHECKING_OUT;
+    session.checkedOutBy = staffUserId;
     await AppDataSource.getRepository(Session).save(session);
 
     if (activeSVs.length > 0) {
