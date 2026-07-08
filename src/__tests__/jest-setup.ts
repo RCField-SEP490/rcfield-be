@@ -2,6 +2,19 @@ import 'reflect-metadata';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 
+jest.mock('bullmq', () => {
+  return {
+    Queue: jest.fn().mockImplementation(() => ({
+      add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
+      close: jest.fn(),
+    })),
+    Worker: jest.fn().mockImplementation(() => ({
+      close: jest.fn(),
+      on: jest.fn(),
+    })),
+  };
+});
+
 // Kết nối DB trước khi test file chạy
 beforeAll(async () => {
   if (!AppDataSource.isInitialized) {

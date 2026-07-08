@@ -168,19 +168,45 @@ class AuthService {
       throw new AppError('Email đã được sử dụng', 409, 'EMAIL_ALREADY_EXISTS');
     }
 
+    // Check if there is an existing guest user with the same phone number
+    let guestUser: User | null = null;
+    if (input.phone) {
+      const trimmedPhone = input.phone.trim();
+      guestUser = await this.userRepo.findOne({
+        where: {
+          phone: trimmedPhone,
+          email: `${trimmedPhone}@guest.rcfield.local`,
+          password_hash: IsNull(),
+        },
+      });
+    }
+
     const password_hash = await bcrypt.hash(input.password, 10);
     const user = await AppDataSource.transaction(async (manager) => {
-      const saved = await manager.save(
-        manager.create(User, {
-          email,
-          full_name: input.full_name.trim(),
-          phone: input.phone ?? null,
-          password_hash,
-          role: input.role,
-          auth_provider: AuthProvider.LOCAL,
-          is_active: true,
-        }),
-      );
+      let saved: User;
+      if (guestUser) {
+        // Upgrade the existing guest user
+        guestUser.email = email;
+        guestUser.full_name = input.full_name.trim();
+        guestUser.password_hash = password_hash;
+        guestUser.role = input.role;
+        guestUser.auth_provider = AuthProvider.LOCAL;
+        guestUser.is_active = true;
+        saved = await manager.save(User, guestUser);
+      } else {
+        saved = await manager.save(
+          manager.create(User, {
+            email,
+            full_name: input.full_name.trim(),
+            phone: input.phone ?? null,
+            password_hash,
+            role: input.role,
+            auth_provider: AuthProvider.LOCAL,
+            is_active: true,
+          }),
+        );
+      }
+
       if (input.role === UserRole.PROVIDER) {
         await manager.save(
           manager.create(ProviderProfile, {

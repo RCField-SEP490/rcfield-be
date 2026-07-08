@@ -1,7 +1,12 @@
 import type { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { logger } from '../config/logger';
-import { CreateStaffSchema, TransferStaffSchema, UpdateFnbOrderStatusSchema } from '../validate';
+import {
+  CreateStaffSchema,
+  TransferStaffSchema,
+  UpdateFnbOrderStatusSchema,
+  CreateWalkInBookingSchema,
+} from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
 import { confirmRefund } from '../services/payment.service';
@@ -188,6 +193,20 @@ export const staffController = {
         throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
       const data = await staffService.getTodayBookings(req.user.cafeId);
       res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/bookings  [auth]
+  async createWalkInBooking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const body = CreateWalkInBookingSchema.parse(req.body);
+      const data = await staffService.createWalkInBooking(req.user.userId, req.user.cafeId, body);
+      res.status(201).json({ success: true, data });
     } catch (err) {
       next(err);
     }

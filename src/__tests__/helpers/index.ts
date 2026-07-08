@@ -62,7 +62,7 @@ export async function createTestCafe(options: CreateCafeOptions = {}) {
 
   const provider_id = options.provider_id ?? (await createTestUser({ role: UserRole.PROVIDER })).id;
 
-  const slug = `test-cafe-${Date.now()}`;
+  const slug = `test-cafe-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
 
   const dbTrackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
   const trackTypeMap = new Map<string, string>(

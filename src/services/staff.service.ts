@@ -53,6 +53,7 @@ import { transition } from './booking.service';
 import { env } from '../config/env';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
+import { createWalkInBooking as createWalkInBookingService } from './booking.service';
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -1400,17 +1401,33 @@ export async function submitInspection(
     sessionVehicleId = activeSVs[0].id;
   }
 
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: session.bookingId },
+  });
+
   const inspection = new Inspection();
   inspection.sessionId = sessionId;
   inspection.sessionVehicleId = sessionVehicleId;
   inspection.type = type === 'CHECK_IN' ? InspectionType.CHECK_IN : InspectionType.CHECK_OUT;
-  inspection.subjectType = InspectionSubjectType.RENTAL_VEHICLE;
+  const isByoc =
+    booking?.playMode === 'BYOC' ||
+    (activeSVs.length > 0 && activeSVs[0].vehicleSource === VehicleSource.BYOC);
+  inspection.subjectType = isByoc
+    ? InspectionSubjectType.BYOC_VEHICLE
+    : InspectionSubjectType.RENTAL_VEHICLE;
   inspection.performedBy = staffUserId;
   inspection.preExistingFlag = type === 'CHECK_IN' ? false : true;
   inspection.damageNoted = !!damageFlagged;
   inspection.damageDescription = staffNotes || (damageDetails ? damageDetails.description : null);
   inspection.damageCostEstimate = damageDetails ? damageDetails.estimatedCost : null;
-  inspection.customerConfirmed = false;
+
+  if (booking && booking.source === BookingSource.STAFF_MANUAL) {
+    inspection.customerConfirmed = true;
+    inspection.customerConfirmedAt = new Date();
+  } else {
+    inspection.customerConfirmed = false;
+  }
+
   await AppDataSource.getRepository(Inspection).save(inspection);
 
   if (photos && Array.isArray(photos)) {
@@ -1482,25 +1499,30 @@ export async function submitInspection(
         await svRepo.save(sv);
       }
     }
+  }
 
-    const booking = await AppDataSource.getRepository(Booking).findOne({
-      where: { id: session.bookingId },
+  // Notify customer via WebSocket and save in DB
+  if (booking?.customerId) {
+    const eventType =
+      inspection.type === InspectionType.CHECK_IN
+        ? 'SESSION_CHECKIN_INSPECTION'
+        : 'SESSION_CHECKOUT_INSPECTION';
+    await createNotification(
+      booking.customerId,
+      eventType as any,
+      inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
+      inspection.type === InspectionType.CHECK_IN
+        ? 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.'
+        : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
+    );
+
+    wsService.pushToUser(booking.customerId, eventType, {
+      sessionId,
+      inspectionId: inspection.id,
+      type: inspection.type,
+      route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+      damageFlagged: !!damageFlagged,
     });
-    if (booking?.customerId) {
-      await createNotification(
-        booking.customerId,
-        'SESSION_CHECKOUT_INSPECTION' as any,
-        'Biên bản trả xe',
-        'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
-      );
-      wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_INSPECTION', {
-        sessionId,
-        inspectionId: inspection.id,
-        type: inspection.type,
-        route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
-        damageFlagged: !!damageFlagged,
-      });
-    }
   }
 
   return inspection;
@@ -2424,4 +2446,12 @@ export async function settlePendingPayments(bookingId: string): Promise<any> {
     netCounterAmount,
     settledComponents: pendingComponents.length,
   };
+}
+
+export async function createWalkInBooking(
+  staffId: string,
+  cafeId: string,
+  body: any,
+): Promise<any> {
+  return createWalkInBookingService(staffId, cafeId, body);
 }

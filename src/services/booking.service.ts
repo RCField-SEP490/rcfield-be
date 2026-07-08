@@ -13,6 +13,9 @@ import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { MenuItem } from '../models/menu-item.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { TrackType } from '../models/track-type.entity';
+import { User } from '../models/user.entity';
+import { PaymentComponent } from '../models/payment-component.entity';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
 import {
   AppError,
   BookingMode,
@@ -24,6 +27,11 @@ import {
   FnbOrderType,
   UserRole,
   VehicleStatus,
+  PaymentComponentType,
+  PaymentComponentStatus,
+  PaymentTransactionType,
+  PaymentTransactionStatus,
+  AuthProvider,
 } from '../types';
 import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
@@ -862,4 +870,364 @@ async function cancelPendingFnbOrders(bookingId: string): Promise<void> {
        AND status IN ('PENDING', 'CONFIRMED')`,
     [bookingId],
   );
+}
+
+export interface WalkInParticipantInput {
+  guest_name: string;
+  guest_phone: string;
+  participant_type: BookingParticipantType.WALK_IN_GUEST;
+}
+
+export interface CreateWalkInBookingBody {
+  play_mode: BookingMode;
+  track_type_id: string;
+  slot_start: string;
+  slot_end: string;
+  payment_method: 'CASH' | 'BANK_TRANSFER';
+  vehicle_ids: string[];
+  participants: WalkInParticipantInput[];
+}
+
+export interface CreateWalkInBookingResult {
+  bookingId: string;
+  bookingCode: string;
+  status: string;
+  source: string;
+  paymentStatus: string;
+  totalAmount: number;
+}
+
+export async function createWalkInBooking(
+  staffId: string,
+  cafeId: string,
+  body: CreateWalkInBookingBody,
+): Promise<CreateWalkInBookingResult> {
+  const slotStart = new Date(body.slot_start);
+  const slotEnd = new Date(body.slot_end);
+
+  if (slotStart >= slotEnd) {
+    throw new AppError('slot_start must be before slot_end', 400, 'INVALID_SLOT');
+  }
+
+  if (slotStart <= new Date()) {
+    throw new AppError('Cannot book a slot in the past', 400, 'SLOT_IN_PAST');
+  }
+
+  // Find or create primary guest account based on the first participant's phone number
+  const primaryGuest = body.participants[0];
+  if (!primaryGuest) {
+    throw new AppError('Phải có ít nhất 1 người chơi tham gia', 400, 'PARTICIPANTS_REQUIRED');
+  }
+
+  const userRepo = AppDataSource.getRepository(User);
+  let customer = await userRepo.findOne({ where: { phone: primaryGuest.guest_phone } });
+  if (!customer) {
+    customer = await userRepo.save(
+      userRepo.create({
+        email: `${primaryGuest.guest_phone}@guest.rcfield.local`,
+        full_name: primaryGuest.guest_name,
+        phone: primaryGuest.guest_phone,
+        password_hash: null,
+        role: UserRole.CUSTOMER,
+        is_active: true,
+        auth_provider: AuthProvider.LOCAL,
+      }),
+    );
+  }
+
+  const cafeRepo = AppDataSource.getRepository(Cafe);
+  const cafe = await cafeRepo.findOne({ where: { id: cafeId } });
+  if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
+
+  const slotDuration = cafe.slotDurationMinutes;
+  const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;
+
+  if (slotMinutes % slotDuration !== 0) {
+    throw new AppError(
+      `Slot range must be a multiple of ${slotDuration} minutes`,
+      400,
+      'INVALID_SLOT_RANGE',
+    );
+  }
+  if (slotMinutes > slotDuration * 8) {
+    throw new AppError(
+      `Maximum booking duration is ${slotDuration * 8} minutes`,
+      400,
+      'SLOT_RANGE_TOO_LONG',
+    );
+  }
+  const slotCount = slotMinutes / cafe.slotDurationMinutes;
+  const playerCount = body.participants.length;
+
+  const trackConfigRepo = AppDataSource.getRepository(CafeTrackConfig);
+  const trackConfig = await trackConfigRepo.findOne({
+    where: { cafeId, trackTypeId: body.track_type_id, isActive: true },
+  });
+  if (!trackConfig || trackConfig.deletedAt) {
+    throw new AppError(
+      'Track type not found or inactive for this cafe',
+      400,
+      'TRACK_CONFIG_NOT_FOUND',
+    );
+  }
+
+  const trackTypeRepo = AppDataSource.getRepository(TrackType);
+  const trackType = await trackTypeRepo.findOne({ where: { id: trackConfig.trackTypeId } });
+
+  // Dynamic pricing lookup
+  const { multiplier: slotMultiplier, label: pricingLabel } = await getEffectiveMultiplier(
+    cafeId,
+    slotStart,
+  );
+
+  const baseSlotFeeRate = Number(cafe.slotFeeRate) * slotMultiplier;
+  const slotFee = baseSlotFeeRate * slotCount * playerCount;
+
+  let rentalFeeTotal = 0;
+  let depositTotal = 0;
+  const vehiclePricings: Array<{
+    vehicleId: string;
+    hourlyRate: number;
+    rentalFee: number;
+    securityDeposit: number;
+    damageMultiplier: number;
+  }> = [];
+
+  if (body.play_mode === BookingMode.RENTAL) {
+    if (!body.vehicle_ids.length) {
+      throw new AppError('vehicle_ids required for RENTAL mode', 400, 'VEHICLE_REQUIRED');
+    }
+
+    const vehicleRepo = AppDataSource.getRepository(Vehicle);
+    const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+
+    for (const vehicleId of body.vehicle_ids) {
+      let vehicle = await vehicleRepo.findOne({ where: { id: vehicleId, cafeId } });
+      const catalog = vehicle
+        ? await catalogRepo.findOne({ where: { id: vehicle.catalogId } })
+        : await catalogRepo.findOne({ where: { id: vehicleId, cafeId } });
+
+      if (!vehicle) {
+        if (!catalog)
+          throw new AppError(`Vehicle ${vehicleId} not found`, 404, 'VEHICLE_NOT_FOUND');
+        vehicle = await vehicleRepo.findOne({
+          where: { catalogId: catalog.id, cafeId, status: VehicleStatus.AVAILABLE },
+        });
+        if (!vehicle)
+          throw new AppError(
+            `No available unit for catalog ${catalog.id}`,
+            400,
+            'VEHICLE_UNAVAILABLE',
+          );
+      } else if (vehicle.status !== VehicleStatus.AVAILABLE) {
+        throw new AppError(`Vehicle ${vehicleId} is not available`, 400, 'VEHICLE_UNAVAILABLE');
+      }
+
+      if (!catalog) throw new AppError('Vehicle catalog not found', 500, 'CATALOG_NOT_FOUND');
+
+      // Check catalog track type compatibility
+      if (
+        catalog.compatibleTrackTypes.length > 0 &&
+        !catalog.compatibleTrackTypes.includes(trackConfig.trackTypeId)
+      ) {
+        throw new AppError(
+          `Vehicle ${vehicleId} is not compatible with this track type`,
+          400,
+          'VEHICLE_TRACK_INCOMPATIBLE',
+        );
+      }
+
+      const hourlyRate = Number(catalog.hourlyRate);
+      const rentalFee = hourlyRate * (slotMinutes / 60);
+      rentalFeeTotal += rentalFee;
+      depositTotal += Number(catalog.securityDeposit);
+      vehiclePricings.push({
+        vehicleId: vehicle.id,
+        hourlyRate,
+        rentalFee,
+        securityDeposit: Number(catalog.securityDeposit),
+        damageMultiplier: Number(catalog.damageMultiplier),
+      });
+    }
+  }
+
+  if (body.play_mode === BookingMode.BYOC) {
+    const locked = await acquireByocSlot(cafeId, slotStart, trackConfig.byocCapacity, playerCount);
+    if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+  }
+
+  const totalAmount = slotFee + rentalFeeTotal + depositTotal;
+
+  // Acquire Redis slot locks for RENTAL vehicles
+  const lockedVehicleIds: string[] = [];
+  if (body.play_mode === BookingMode.RENTAL) {
+    for (const { vehicleId } of vehiclePricings) {
+      const locked = await acquireVehicleLock(vehicleId, slotStart, 'pending');
+      if (!locked) {
+        await releaseVehicleLocks(lockedVehicleIds, slotStart);
+        throw new AppError(
+          `Vehicle ${vehicleId} is already locked for this slot`,
+          409,
+          'SLOT_LOCKED',
+        );
+      }
+      lockedVehicleIds.push(vehicleId);
+    }
+  }
+
+  try {
+    const booking = await AppDataSource.transaction(async (em) => {
+      const snapshot: Record<string, unknown> = {
+        track_config_id: trackConfig.id,
+        track_type_id: trackConfig.trackTypeId,
+        track_type_code: trackType?.code ?? null,
+        track_type_name: trackType?.name ?? null,
+        byoc_capacity_at_booking: trackConfig.byocCapacity,
+        slot_fee_multiplier: slotMultiplier,
+        pricing_rule_label: pricingLabel,
+        created_by_staff_id: staffId,
+        payment_method: body.payment_method,
+        slot_fee_total: slotFee,
+      };
+
+      const newBooking = em.create(Booking, {
+        customerId: customer.id,
+        cafeId,
+        trackTypeId: trackConfig.trackTypeId,
+        trackConfigId: trackConfig.id,
+        playMode: body.play_mode,
+        source: BookingSource.STAFF_MANUAL,
+        status: BookingStatus.CONFIRMED, // Walk-in is instantly CONFIRMED
+        slotStart,
+        slotEnd,
+        paymentExpiresAt: new Date(),
+        discountAmount: 0,
+        snapshot,
+      });
+      await em.save(newBooking);
+
+      // Primary participant (BOOKER) - mapping to customer
+      const primaryParticipant = em.create(BookingParticipant, {
+        bookingId: newBooking.id,
+        userId: customer.id,
+        participantType: BookingParticipantType.BOOKER,
+        isPrimaryResponsible: true,
+      });
+      await em.save(primaryParticipant);
+
+      // Save additional participants (exclude primary participant since it's already BOOKER)
+      for (let i = 1; i < body.participants.length; i++) {
+        const p = body.participants[i];
+        const participant = em.create(BookingParticipant, {
+          bookingId: newBooking.id,
+          userId: null,
+          participantType: p.participant_type,
+          isPrimaryResponsible: false,
+          guestName: p.guest_name,
+          guestPhone: p.guest_phone,
+        });
+        await em.save(participant);
+      }
+
+      // Booking vehicles
+      const savedVehicles: BookingVehicle[] = [];
+      for (const vp of vehiclePricings) {
+        const bv = em.create(BookingVehicle, {
+          bookingId: newBooking.id,
+          vehicleId: vp.vehicleId,
+          hourlyRateSnapshot: vp.hourlyRate,
+          rentalFeeSnapshot: vp.rentalFee,
+          securityDepositSnapshot: vp.securityDeposit,
+          damageMultiplierSnapshot: vp.damageMultiplier,
+        });
+        await em.save(bv);
+        savedVehicles.push(bv);
+      }
+
+      // Create Payment Components immediately as DISBURSED (Cash/card received at counter)
+      const slotFeeComponent = em.create(PaymentComponent, {
+        bookingId: newBooking.id,
+        bookingVehicleId: null,
+        type: PaymentComponentType.SLOT_FEE,
+        amount: slotFee,
+        status: PaymentComponentStatus.DISBURSED,
+      });
+      await em.save(slotFeeComponent);
+
+      for (const bv of savedVehicles) {
+        const rfComponent = em.create(PaymentComponent, {
+          bookingId: newBooking.id,
+          bookingVehicleId: bv.id,
+          type: PaymentComponentType.RENTAL_FEE,
+          amount: Number(bv.rentalFeeSnapshot),
+          status: PaymentComponentStatus.DISBURSED,
+        });
+        await em.save(rfComponent);
+
+        const sdComponent = em.create(PaymentComponent, {
+          bookingId: newBooking.id,
+          bookingVehicleId: bv.id,
+          type: PaymentComponentType.SECURITY_DEPOSIT,
+          amount: Number(bv.securityDepositSnapshot),
+          status: PaymentComponentStatus.DISBURSED,
+        });
+        await em.save(sdComponent);
+      }
+
+      // Create Payment Transaction as SUCCESS
+      const transaction = em.create(PaymentTransaction, {
+        bookingId: newBooking.id,
+        type: PaymentTransactionType.PAYMENT,
+        gateway: `COUNTER_${body.payment_method}`,
+        txnRef: `WALK_IN_${newBooking.id.substring(0, 8).toUpperCase()}_${Date.now()}`,
+        amount: totalAmount,
+        status: PaymentTransactionStatus.SUCCESS,
+        rawRequest: { created_by_staff_id: staffId, payment_method: body.payment_method },
+        rawResponse: {
+          processedAt: new Date().toISOString(),
+          processedByStaffId: staffId,
+          paymentMethod: body.payment_method,
+          status: 'SUCCESS',
+          amount: totalAmount,
+        },
+      });
+      await em.save(transaction);
+
+      return newBooking;
+    });
+
+    // Update slot locks in redis with actual booking ID
+    if (body.play_mode === BookingMode.RENTAL) {
+      for (const vehicleId of lockedVehicleIds) {
+        await redis.set(
+          vehicleLockKey(vehicleId, slotStart),
+          booking.id,
+          'EX',
+          env.platform.slotLockTtlSeconds,
+        );
+      }
+    }
+
+    logger.info(
+      'BookingService',
+      `walk-in booking created bookingId=${booking.id} mode=${body.play_mode}`,
+    );
+
+    return {
+      bookingId: booking.id,
+      bookingCode: `RCF-${booking.id.substring(0, 4).toUpperCase()}`,
+      status: booking.status,
+      source: booking.source,
+      paymentStatus: 'CAPTURED',
+      totalAmount,
+    };
+  } catch (err) {
+    // Release locks on transaction failure
+    await releaseVehicleLocks(lockedVehicleIds, slotStart);
+    if (body.play_mode === BookingMode.BYOC) {
+      await releaseByocSlot(cafeId, slotStart, playerCount);
+    }
+    throw err;
+  }
 }

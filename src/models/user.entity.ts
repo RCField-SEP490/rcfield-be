@@ -46,6 +46,9 @@ export class User {
   @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
   last_active_at: Date | null;
 
+  @Column({ name: 'favorite_cafe_ids', type: 'uuid', array: true, default: [] })
+  favorite_cafe_ids: string[];
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
 

@@ -8,6 +8,7 @@ export const staffRouter = Router();
 staffRouter.use(authenticate, authorize(UserRole.STAFF));
 
 staffRouter.get('/today-bookings', staffController.todayBookings);
+staffRouter.post('/bookings', staffController.createWalkInBooking);
 staffRouter.get('/fnb-orders', staffController.getFnbOrders);
 staffRouter.patch('/fnb-orders/:orderId', staffController.updateFnbOrder);
 

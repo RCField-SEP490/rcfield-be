@@ -54,6 +54,22 @@ jest.mock('../../services/kb.service', () => ({
   },
 }));
 
+const mockGetWidgetConfigForCafe = jest.fn();
+jest.mock('../../services/chat.service', () => {
+  const original = jest.requireActual('../../services/chat.service');
+  return {
+    ...original,
+    getWidgetConfigForCafe: (cafeId: string) => mockGetWidgetConfigForCafe(cafeId),
+  };
+});
+
+beforeEach(() => {
+  const original = jest.requireActual('../../services/chat.service');
+  mockGetWidgetConfigForCafe.mockImplementation((id: string) =>
+    original.getWidgetConfigForCafe(id),
+  );
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function enableAiChat(cafeId: string) {
@@ -188,6 +204,7 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
 
 describe('GET /api/v1/cafes/:cafeId/chat/config', () => {
   it('chưa có config → 200 default config', async () => {
+    mockGetWidgetConfigForCafe.mockResolvedValueOnce(null);
     const cafe = await createTestCafe();
     const res = await request(app).get(`/api/v1/cafes/${cafe.id}/chat/config`);
 
