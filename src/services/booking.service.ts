@@ -805,22 +805,24 @@ export interface ListCafeBookingsQuery {
 export async function listCafeBookings(
   cafeId: string,
   query: ListCafeBookingsQuery,
-): Promise<{ data: object[]; total: number; page: number; limit: number }> {
+): Promise<{ data: CafeBookingListItem[]; total: number; page: number; limit: number }> {
   const dayStart = new Date(`${query.date}T00:00:00+07:00`);
   const dayEnd = new Date(`${query.date}T23:59:59+07:00`);
 
   let qb = AppDataSource.createQueryBuilder(Booking, 'b')
     .innerJoin('users', 'u', 'u.id = b.customer_id')
     .select([
-      'b.id',
-      'u.full_name AS customer_name',
-      'u.phone AS customer_phone',
-      'b.play_mode',
-      'b.status',
-      'b.slot_start',
-      'b.slot_end',
-      'b.discount_amount',
-      'b.created_at',
+      'b.id AS id',
+      'b.status AS status',
+      'b.play_mode AS "playMode"',
+      'b.slot_start AS "slotStart"',
+      'b.slot_end AS "slotEnd"',
+      'b.created_at AS "createdAt"',
+      'b.payment_expires_at AS "paymentExpiresAt"',
+      'b.cancelled_by AS "cancelledBy"',
+      'b.cancellation_reason AS "cancellationReason"',
+      'u.full_name AS "customerName"',
+      'u.phone AS "customerPhone"',
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.slot_start >= :dayStart', { dayStart })
@@ -834,8 +836,22 @@ export async function listCafeBookings(
     qb = qb.andWhere('b.status = :status', { status: query.status });
   }
 
-  const [raw, total] = await Promise.all([qb.getRawMany(), qb.getCount()]);
+  const [raw, total] = await Promise.all([qb.getRawMany<CafeBookingListItem>(), qb.getCount()]);
   return { data: raw, total, page: query.page, limit: query.limit };
+}
+
+export interface CafeBookingListItem {
+  id: string;
+  status: BookingStatus;
+  playMode: string;
+  slotStart: string;
+  slotEnd: string;
+  createdAt: string;
+  paymentExpiresAt: string | null;
+  cancelledBy: string | null;
+  cancellationReason: string | null;
+  customerName: string;
+  customerPhone: string | null;
 }
 
 async function cancelPendingFnbOrders(bookingId: string): Promise<void> {

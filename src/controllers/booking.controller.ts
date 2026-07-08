@@ -373,7 +373,7 @@ export const bookingController = {
       const cafeId = req.params.cafeId;
       const query = ListCafeBookingsSchema.parse(req.query) as bookingService.ListCafeBookingsQuery;
       const result = await bookingService.listCafeBookings(cafeId, query);
-      res.json({ success: true, ...result });
+      res.json({ success: true, data: result });
     } catch (err) {
       next(err);
     }
