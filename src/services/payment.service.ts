@@ -310,6 +310,14 @@ export async function createCheckoutUrl(
       }
     }
 
+    Promise.all([
+      emailService.sendBookingConfirmation(bookingId),
+      emailService.sendBookingInvoice(bookingId),
+      pushBookingNew(booking),
+    ]).catch((err) => {
+      logger.error('PaymentService', 'post-payment email failed (zero-total)', err);
+    });
+
     logger.info('PaymentService', `zero-total confirmed bookingId=${bookingId}`);
     return {
       payment_url: null,
@@ -837,6 +845,14 @@ export async function mockConfirmPayment(
   await transition(bookingId, 'PAYMENT_CONFIRMED');
   await incrementPromoUsesCount(bookingId).catch(() => {}); // best-effort
   await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+  Promise.all([
+    emailService.sendBookingConfirmation(bookingId),
+    emailService.sendBookingInvoice(bookingId),
+    pushBookingNew(booking),
+  ]).catch((err) => {
+    logger.error('PaymentService', 'post-payment email failed (mock-checkout)', err);
+  });
 
   logger.info('PaymentService', `mock payment confirmed bookingId=${bookingId}`);
 

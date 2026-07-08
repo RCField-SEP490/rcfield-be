@@ -96,6 +96,7 @@ export const env = {
   },
 
   frontendUrl: getSafeFrontendUrl(),
+  apiBaseUrl: (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
 
   facebook: {
     appId: process.env.FB_APP_ID ?? '',

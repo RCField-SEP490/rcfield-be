@@ -1,4 +1,4 @@
-import type { Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { In, Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { AppError, AuthRequest, UserRole, SessionStatus } from '../types';
@@ -374,6 +374,29 @@ export const bookingController = {
       const query = ListCafeBookingsSchema.parse(req.query) as bookingService.ListCafeBookingsQuery;
       const result = await bookingService.listCafeBookings(cafeId, query);
       res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings/:id/qr  [public]
+  async getBookingQr(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(id)) {
+        return next(new AppError('Invalid booking ID format', 400, 'VALIDATION_ERROR'));
+      }
+      const QRCode = await import('qrcode');
+      const buffer = await QRCode.toBuffer(id, {
+        errorCorrectionLevel: 'M',
+        width: 256,
+        margin: 2,
+      });
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.send(buffer);
     } catch (err) {
       next(err);
     }

@@ -168,6 +168,8 @@ export async function getWidgetConfig(
       return;
     }
 
+    // isEnabled = false means provider has never explicitly configured the widget
+    const isDefault = !config.isEnabled;
     res.json({
       greeting_message: config.greetingMessage,
       position: config.position.toLowerCase().replace('_', '-'),
@@ -175,7 +177,7 @@ export async function getWidgetConfig(
       avatar_url: config.avatarUrl,
       quick_replies: config.quickReplies,
       system_prompt: config.systemPrompt,
-      is_default: false,
+      is_default: isDefault,
     });
   } catch (err) {
     next(err);

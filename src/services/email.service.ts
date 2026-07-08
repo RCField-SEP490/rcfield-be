@@ -86,6 +86,19 @@ class EmailService {
     const slotStart = new Date(r.slot_start);
     const slotEnd = new Date(r.slot_end);
 
+    const QRCode = await import('qrcode');
+    const qrBuffer = await QRCode.toBuffer(bookingId, {
+      errorCorrectionLevel: 'M',
+      width: 220,
+      margin: 2,
+    });
+    const { uploadImage } = await import('./cloudinary.service');
+    const { url: qrImageUrl } = await uploadImage({
+      buffer: qrBuffer,
+      folder: 'qr-checkin',
+      publicIdPrefix: `qr-${bookingId.substring(0, 8)}`,
+    });
+
     const slotLabel = slotStart.toLocaleString('vi-VN', {
       weekday: 'long',
       day: '2-digit',
@@ -115,12 +128,6 @@ class EmailService {
             <h2 style="margin:0 0 8px">Đặt sân thành công</h2>
             <p style="color:#6b7280;margin:0 0 24px">Cảm ơn bạn đã đặt sân tại <strong>${r.cafe_name}</strong>.</p>
 
-            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:20px;margin-bottom:24px">
-              <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#059669;letter-spacing:0.05em">MÃ ĐẶT SÂN</p>
-              <p style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.15em;color:#111827">#${shortRef}</p>
-              <p style="margin:4px 0 0;font-size:12px;color:#6b7280">Xuất trình mã này khi check-in tại quán</p>
-            </div>
-
             <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
               <tr>
                 <td style="padding:8px 0;color:#6b7280;font-size:13px;width:130px">Chi nhánh</td>
@@ -140,8 +147,17 @@ class EmailService {
               </tr>
             </table>
 
+            <div style="text-align:center;border:1px solid #e5e7eb;border-radius:12px;padding:24px;margin-bottom:24px">
+              <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#111827">Mã check-in của bạn</p>
+              <p style="margin:0 0 16px;font-size:12px;color:#6b7280">Xuất trình mã này khi đến quán để nhân viên kích hoạt phiên chơi</p>
+              <img src="${qrImageUrl}" width="180" height="180"
+                   alt="QR Check-in #${shortRef}"
+                   style="display:block;margin:0 auto 12px;border:6px solid #fff;box-shadow:0 0 0 1px #e5e7eb;border-radius:8px" />
+              <p style="margin:0;font-size:20px;font-weight:700;letter-spacing:0.15em;color:#111827">#${shortRef}</p>
+            </div>
+
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
-              Hóa đơn chi tiết đã được gửi kèm trong email riêng. Mọi thắc mắc vui lòng liên hệ chi nhánh trực tiếp.
+              Hóa đơn chi tiết đã được gửi kèm trong email riêng. Nếu ảnh QR không hiển thị, dùng mã <strong>#${shortRef}</strong> để nhân viên tra cứu thủ công.
             </p>
           </div>
         </div>
