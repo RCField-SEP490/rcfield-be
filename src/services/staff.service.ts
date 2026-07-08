@@ -83,6 +83,7 @@ export interface StaffListItem {
   createdAt: string;
   activatedAt: string | null;
   inviteExpiresAt: string | null;
+  lastActiveAt: string | null;
 }
 
 export interface TodayBookingItem {
@@ -237,6 +238,7 @@ export async function listStaffForProvider(
       activated_at: Date | null;
       has_active_token: boolean;
       invite_expires_at: Date | null;
+      last_active_at: Date | null;
     }[]
   >(
     `SELECT
@@ -249,6 +251,7 @@ export async function listStaffForProvider(
        u.is_active,
        u.created_at,
        u.updated_at AS activated_at,
+       u.last_active_at,
        EXISTS(
          SELECT 1 FROM staff_invite_tokens t
          WHERE t.user_id = u.id
@@ -294,6 +297,7 @@ export async function listStaffForProvider(
       activatedAt: status === 'ACTIVE' && row.activated_at ? row.activated_at.toISOString() : null,
       inviteExpiresAt:
         status === 'PENDING' && row.invite_expires_at ? row.invite_expires_at.toISOString() : null,
+      lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
     };
   });
 }

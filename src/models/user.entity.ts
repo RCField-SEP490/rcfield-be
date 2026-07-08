@@ -43,6 +43,9 @@ export class User {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
+  last_active_at: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
 
