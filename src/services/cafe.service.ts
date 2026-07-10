@@ -1,9 +1,17 @@
-import { FindOptionsWhere, In } from 'typeorm';
+import { Brackets, FindOptionsWhere, In, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Cafe } from '../models/cafe.entity';
 import { AmenityCatalog } from '../models/amenity-catalog.entity';
 import { TrackType } from '../models/track-type.entity';
-import { AppError, CafeOperatingHours, CafeStatus, UserRole } from '../types';
+import {
+  AppError,
+  CafeOperatingHours,
+  CafeStatus,
+  DiscountType,
+  PromoApplicableTo,
+  ReviewStatus,
+  UserRole,
+} from '../types';
 import { checkBranchQuota } from './subscription.service';
 
 export interface Viewer {
@@ -15,13 +23,45 @@ interface ListOptions {
   page: number;
   limit: number;
   scope?: 'managed';
+  query?: string;
   slug?: string;
   district?: string;
   city?: string;
   track_type?: string;
+  price_min?: number;
+  price_max?: number;
+  amenities?: string[];
+  vehicle_type?: string;
+  sort_by?: 'popularity' | 'price_asc' | 'price_desc' | 'rating';
+  popular_filters?: string[];
   status?: CafeStatus;
   viewer?: Viewer;
 }
+
+type ActivePromotionSummary = {
+  code: string;
+  description: string | null;
+  discount_type: DiscountType;
+  discount_value: number;
+  max_discount_amount: number | null;
+  min_order_amount: number | null;
+  applicable_to: PromoApplicableTo;
+  expires_at: Date | null;
+};
+
+type CafeBrowseMetrics = {
+  rating: number;
+  reviewsCount: number;
+};
+
+type CafeBrowseItem = Omit<Cafe, 'trackTypes'> & {
+  trackTypes: TrackType[];
+  amenities: AmenityCatalog[];
+  rating: number;
+  reviewsCount: number;
+  minPrice: number;
+  activePromotions: ActivePromotionSummary[];
+};
 
 export interface CreateCafeBody {
   name: string;
@@ -77,6 +117,318 @@ function assertCafeOwner(cafe: Cafe, providerId: string): void {
   }
 }
 
+function normalizeSearchTerm(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeFilterValues(values?: string[]): string[] {
+  if (!values) return [];
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function loadCafeBrowseMetrics(cafeIds: string[]): Promise<Map<string, CafeBrowseMetrics>> {
+  if (cafeIds.length === 0) return new Map();
+
+  const rows = (await AppDataSource.query(
+    `SELECT
+       r.cafe_id AS "cafeId",
+       ROUND(AVG(r.rating)::numeric, 1) AS rating,
+       COUNT(r.id)::text AS "reviewsCount"
+     FROM reviews r
+     WHERE r.status = $2
+       AND r.cafe_id = ANY($1::uuid[])
+     GROUP BY r.cafe_id`,
+    [cafeIds, ReviewStatus.VISIBLE],
+  )) as Array<{ cafeId: string; rating: string | null; reviewsCount: string | null }>;
+
+  return new Map(
+    rows.map((row) => [
+      row.cafeId,
+      {
+        rating: toNumber(row.rating),
+        reviewsCount: toNumber(row.reviewsCount),
+      },
+    ]),
+  );
+}
+
+async function loadCafeTrackTypes(cafes: Cafe[]): Promise<Map<string, TrackType[]>> {
+  const allTrackTypeIds = Array.from(new Set(cafes.flatMap((cafe) => cafe.trackTypes || [])));
+  const trackTypes =
+    allTrackTypeIds.length > 0
+      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(allTrackTypeIds) })
+      : [];
+  const trackTypeMap = new Map(trackTypes.map((t) => [t.id, t]));
+
+  return new Map(
+    cafes.map((cafe) => [
+      cafe.id,
+      (cafe.trackTypes || [])
+        .map((id) => trackTypeMap.get(id))
+        .filter((trackType): trackType is TrackType => !!trackType)
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+    ]),
+  );
+}
+
+async function loadCafeAmenities(cafes: Cafe[]): Promise<Map<string, AmenityCatalog[]>> {
+  const allAmenityIds = Array.from(new Set(cafes.flatMap((cafe) => cafe.amenityIds || [])));
+  const amenities =
+    allAmenityIds.length > 0
+      ? await AppDataSource.getRepository(AmenityCatalog).findBy({ id: In(allAmenityIds) })
+      : [];
+  const amenityMap = new Map(amenities.map((amenity) => [amenity.id, amenity]));
+
+  return new Map(
+    cafes.map((cafe) => [
+      cafe.id,
+      (cafe.amenityIds || [])
+        .map((id) => amenityMap.get(id))
+        .filter((amenity): amenity is AmenityCatalog => !!amenity)
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+    ]),
+  );
+}
+
+async function loadCafeActivePromotions(
+  cafeIds: string[],
+): Promise<Map<string, ActivePromotionSummary[]>> {
+  if (cafeIds.length === 0) return new Map();
+
+  const rows = await AppDataSource.query<
+    Array<{
+      cafeId: string;
+      code: string;
+      description: string | null;
+      discountType: DiscountType;
+      discountValue: string;
+      maxDiscountAmount: string | null;
+      minOrderAmount: string | null;
+      applicableTo: PromoApplicableTo;
+      expiresAt: Date | null;
+      startsAt: Date;
+      usesCount: number;
+      maxUses: number | null;
+      isActive: boolean;
+      showOnCafePage: boolean;
+    }>
+  >(
+    `SELECT
+       p.cafe_id AS "cafeId",
+       p.code,
+       p.description,
+       p.discount_type AS "discountType",
+       p.discount_value AS "discountValue",
+       p.max_discount_amount AS "maxDiscountAmount",
+       p.min_order_amount AS "minOrderAmount",
+       p.applicable_to AS "applicableTo",
+       p.expires_at AS "expiresAt",
+       p.starts_at AS "startsAt",
+       p.uses_count AS "usesCount",
+       p.max_uses AS "maxUses",
+       p.is_active AS "isActive",
+       p.show_on_cafe_page AS "showOnCafePage"
+     FROM promotions p
+     WHERE p.cafe_id = ANY($1::uuid[])
+       AND p.is_active = TRUE
+       AND p.show_on_cafe_page = TRUE
+       AND p.starts_at <= NOW()
+       AND (p.expires_at IS NULL OR p.expires_at > NOW())
+       AND (p.max_uses IS NULL OR p.uses_count < p.max_uses)
+     ORDER BY p.created_at DESC`,
+    [cafeIds],
+  );
+
+  const grouped = new Map<string, ActivePromotionSummary[]>();
+  for (const row of rows) {
+    if (!grouped.has(row.cafeId)) grouped.set(row.cafeId, []);
+    grouped.get(row.cafeId)!.push({
+      code: row.code,
+      description: row.description,
+      discount_type: row.discountType,
+      discount_value: toNumber(row.discountValue),
+      max_discount_amount: row.maxDiscountAmount ? toNumber(row.maxDiscountAmount) : null,
+      min_order_amount: row.minOrderAmount ? toNumber(row.minOrderAmount) : null,
+      applicable_to: row.applicableTo,
+      expires_at: row.expiresAt,
+    });
+  }
+
+  return grouped;
+}
+
+async function hydrateCafeBrowsePayload(
+  cafes: Cafe[],
+  metricsMap?: Map<string, CafeBrowseMetrics>,
+): Promise<CafeBrowseItem[]> {
+  if (cafes.length === 0) return [];
+
+  const [trackTypeMap, amenityMap, promoMap, fallbackMetrics] = await Promise.all([
+    loadCafeTrackTypes(cafes),
+    loadCafeAmenities(cafes),
+    loadCafeActivePromotions(cafes.map((cafe) => cafe.id)),
+    metricsMap ? Promise.resolve(metricsMap) : loadCafeBrowseMetrics(cafes.map((cafe) => cafe.id)),
+  ]);
+
+  return cafes.map((cafe) => {
+    const metrics = fallbackMetrics.get(cafe.id) ?? { rating: 0, reviewsCount: 0 };
+    return {
+      ...cafe,
+      trackTypes: trackTypeMap.get(cafe.id) ?? [],
+      amenities: amenityMap.get(cafe.id) ?? [],
+      rating: metrics.rating,
+      reviewsCount: metrics.reviewsCount,
+      minPrice: toNumber(cafe.slotFeeRate),
+      activePromotions: promoMap.get(cafe.id) ?? [],
+    };
+  });
+}
+
+function applyBrowseFilters(qb: SelectQueryBuilder<Cafe>, options: ListOptions) {
+  const {
+    query,
+    slug,
+    district,
+    city,
+    track_type,
+    price_min,
+    price_max,
+    amenities,
+    vehicle_type,
+    popular_filters,
+  } = options;
+
+  const normalizedQuery = normalizeSearchTerm(query);
+  if (normalizedQuery) {
+    qb.andWhere(
+      `(cafe.name ILIKE :search OR cafe.address ILIKE :search OR cafe.district ILIKE :search OR cafe.city ILIKE :search OR cafe.description ILIKE :search)`,
+      { search: `%${normalizedQuery}%` },
+    );
+  }
+
+  if (slug) qb.andWhere('cafe.slug = :slug', { slug });
+  if (district) qb.andWhere('cafe.district = :district', { district });
+  if (city) qb.andWhere('cafe.city = :city', { city });
+  if (track_type) qb.andWhere(':trackType = ANY(cafe.track_types)', { trackType: track_type });
+  if (price_min !== undefined)
+    qb.andWhere('cafe.slot_fee_rate >= :priceMin', { priceMin: price_min });
+  if (price_max !== undefined)
+    qb.andWhere('cafe.slot_fee_rate <= :priceMax', { priceMax: price_max });
+
+  const normalizedAmenities = normalizeFilterValues(amenities);
+  normalizedAmenities.forEach((amenity, index) => {
+    const like = `%${amenity}%`;
+    qb.andWhere(
+      new Brackets((br) => {
+        br.where(
+          `EXISTS (
+             SELECT 1
+             FROM unnest(cafe.amenity_ids) AS amenity_id
+             JOIN amenity_catalog a ON a.id = amenity_id
+             WHERE a.id::text = :amenityExact${index}
+                OR a.title ILIKE :amenityLike${index}
+           )`,
+          {
+            [`amenityExact${index}`]: amenity,
+            [`amenityLike${index}`]: like,
+          },
+        );
+      }),
+    );
+  });
+
+  if (vehicle_type) {
+    qb.andWhere(
+      `EXISTS (
+         SELECT 1
+         FROM vehicle_catalogs vc
+         LEFT JOIN track_types tt ON tt.id = ANY(vc.compatible_track_types)
+         WHERE vc.cafe_id = cafe.id
+           AND vc.deleted_at IS NULL
+           AND (
+             vc.name ILIKE :vehicleType
+             OR tt.name ILIKE :vehicleType
+             OR tt.code ILIKE :vehicleType
+           )
+       )`,
+      { vehicleType: `%${vehicle_type}%` },
+    );
+  }
+
+  const normalizedPopularFilters = normalizeFilterValues(popular_filters);
+  normalizedPopularFilters.forEach((filter, index) => {
+    const filterValue = `%${filter}%`;
+    qb.andWhere(
+      new Brackets((br) => {
+        br.where(
+          `EXISTS (
+             SELECT 1
+             FROM unnest(cafe.track_types) AS track_type_id
+             JOIN track_types tt ON tt.id = track_type_id
+             WHERE tt.id::text = :popularFilterExact${index}
+                OR tt.code ILIKE :popularFilterLike${index}
+                OR tt.name ILIKE :popularFilterLike${index}
+           )`,
+          {
+            [`popularFilterExact${index}`]: filter,
+            [`popularFilterLike${index}`]: filterValue,
+          },
+        ).orWhere(
+          `EXISTS (
+             SELECT 1
+             FROM unnest(cafe.amenity_ids) AS amenity_id
+             JOIN amenity_catalog a ON a.id = amenity_id
+             WHERE a.id::text = :popularFilterExact${index}
+                OR a.title ILIKE :popularFilterLike${index}
+           )`,
+          {
+            [`popularFilterExact${index}`]: filter,
+            [`popularFilterLike${index}`]: filterValue,
+          },
+        );
+      }),
+    );
+  });
+}
+
+function sortBrowseItems(
+  items: CafeBrowseItem[],
+  sortBy: ListOptions['sort_by'],
+): CafeBrowseItem[] {
+  const sorted = [...items];
+  switch (sortBy) {
+    case 'price_asc':
+      return sorted.sort(
+        (a, b) => a.minPrice - b.minPrice || b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+    case 'price_desc':
+      return sorted.sort(
+        (a, b) => b.minPrice - a.minPrice || b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+    case 'rating':
+      return sorted.sort(
+        (a, b) =>
+          b.rating - a.rating ||
+          b.reviewsCount - a.reviewsCount ||
+          b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+    case 'popularity':
+    default:
+      return sorted.sort(
+        (a, b) =>
+          b.reviewsCount - a.reviewsCount ||
+          b.rating - a.rating ||
+          b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+  }
+}
+
 export async function getCafeOrThrow(id: string): Promise<Cafe> {
   const cafe = await AppDataSource.getRepository(Cafe).findOne({
     where: { id } as FindOptionsWhere<Cafe>,
@@ -105,7 +457,7 @@ export async function getManagedCafeOrThrow(id: string, viewer: Viewer): Promise
 export async function createCafe(
   providerId: string,
   body: CreateCafeBody,
-): Promise<Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[]; amenities: AmenityCatalog[] }> {
+): Promise<CafeBrowseItem> {
   await checkBranchQuota(providerId);
 
   const repo = AppDataSource.getRepository(Cafe);
@@ -138,58 +490,34 @@ export async function createCafe(
 
 export async function listCafes(
   options: ListOptions,
-): Promise<{ data: (Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[] })[]; total: number }> {
-  const { page, limit, scope, slug, district, city, track_type, status, viewer } = options;
-  const qb = AppDataSource.getRepository(Cafe)
-    .createQueryBuilder('cafe')
-    .where('cafe.deleted_at IS NULL');
+): Promise<{ data: CafeBrowseItem[]; total: number }> {
+  const { page, limit, scope, status, viewer } = options;
+  const repo = AppDataSource.getRepository(Cafe);
+
+  const qb = repo.createQueryBuilder('cafe').where('cafe.deleted_at IS NULL');
 
   if (scope === 'managed' && viewer?.role === UserRole.PROVIDER) {
     qb.andWhere('cafe.provider_id = :providerId', { providerId: viewer.userId });
   } else {
-    // Public browse (explore page): only ACTIVE cafes, regardless of viewer role
     qb.andWhere('cafe.status = :active', { active: CafeStatus.ACTIVE });
   }
 
-  if (status && viewer?.role === UserRole.ADMIN) {
-    qb.andWhere('cafe.status = :status', { status });
-  } else if (status && viewer?.role === UserRole.PROVIDER) {
+  if (status && (viewer?.role === UserRole.ADMIN || viewer?.role === UserRole.PROVIDER)) {
     qb.andWhere('cafe.status = :status', { status });
   }
-  if (slug) qb.andWhere('cafe.slug = :slug', { slug });
-  if (district) qb.andWhere('cafe.district = :district', { district });
-  if (city) qb.andWhere('cafe.city = :city', { city });
-  if (track_type) qb.andWhere(':trackType = ANY(cafe.track_types)', { trackType: track_type });
 
-  const [data, total] = await qb
-    .orderBy('cafe.created_at', 'DESC')
-    .skip((page - 1) * limit)
-    .take(limit)
-    .getManyAndCount();
+  applyBrowseFilters(qb, options);
+  const [data, total] = await Promise.all([qb.clone().getMany(), qb.clone().getCount()]);
 
-  // Batch load all referenced track types to avoid N+1 queries
-  const allTrackTypeIds = Array.from(new Set(data.flatMap((c) => c.trackTypes || [])));
-  const trackTypes =
-    allTrackTypeIds.length > 0
-      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(allTrackTypeIds) })
-      : [];
-  const trackTypeMap = new Map(trackTypes.map((t) => [t.id, t]));
+  const hydrated = await hydrateCafeBrowsePayload(data);
+  const sortedHydrated = sortBrowseItems(hydrated, options.sort_by);
+  const start = (page - 1) * limit;
+  const end = start + limit;
 
-  const mappedData = data.map((c) => ({
-    ...c,
-    trackTypes: (c.trackTypes || [])
-      .map((id) => trackTypeMap.get(id))
-      .filter((t): t is TrackType => !!t)
-      .sort((a, b) => a.sortOrder - b.sortOrder),
-  }));
-
-  return { data: mappedData, total };
+  return { data: sortedHydrated.slice(start, end), total };
 }
 
-export async function getCafeDetail(
-  id: string,
-  viewer?: Viewer,
-): Promise<Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[]; amenities: AmenityCatalog[] }> {
+export async function getCafeDetail(id: string, viewer?: Viewer): Promise<CafeBrowseItem> {
   const cafe = await getCafeOrThrow(id);
   const canViewInactive =
     viewer?.role === UserRole.ADMIN ||
@@ -198,35 +526,15 @@ export async function getCafeDetail(
   if (cafe.status !== CafeStatus.ACTIVE && !canViewInactive) {
     throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
   }
-
-  const amenities =
-    cafe.amenityIds.length > 0
-      ? await AppDataSource.getRepository(AmenityCatalog).findBy({ id: In(cafe.amenityIds) })
-      : [];
-  amenities.sort((a, b) => a.sortOrder - b.sortOrder);
-
-  // Load track type objects dynamically without filtering by isActive to preserve historical references
-  const trackTypes =
-    cafe.trackTypes.length > 0
-      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(cafe.trackTypes) })
-      : [];
-  const trackTypesSorted = (cafe.trackTypes || [])
-    .map((uuid) => trackTypes.find((t) => t.id === uuid))
-    .filter((t): t is TrackType => !!t)
-    .sort((a, b) => a.sortOrder - b.sortOrder);
-
-  return {
-    ...cafe,
-    trackTypes: trackTypesSorted,
-    amenities,
-  };
+  const result = await hydrateCafeBrowsePayload([cafe]);
+  return result[0]!;
 }
 
 export async function updateCafe(
   id: string,
   providerId: string,
   body: UpdateCafeBody,
-): Promise<Omit<Cafe, 'trackTypes'> & { trackTypes: TrackType[]; amenities: AmenityCatalog[] }> {
+): Promise<CafeBrowseItem> {
   const cafe = await getCafeOrThrow(id);
   assertCafeOwner(cafe, providerId);
 

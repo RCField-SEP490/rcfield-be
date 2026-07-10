@@ -163,6 +163,7 @@ export const CafeListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
+  query: z.string().trim().min(1).max(200).optional().openapi({ example: 'Ho Chi Minh' }),
   scope: z.enum(['managed']).optional().openapi({ example: 'managed' }),
   slug: z.string().min(1).max(120).optional().openapi({ example: 'rc-arena-sai-gon' }),
   district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
@@ -170,10 +171,52 @@ export const CafeListQuerySchema = z.object({
   track_type: TrackTypeSchema.optional().openapi({
     example: '550e8400-e29b-41d4-a716-446655440000',
   }),
+  price_min: z.coerce.number().nonnegative().optional().openapi({ example: 50000 }),
+  price_max: z.coerce.number().nonnegative().optional().openapi({ example: 200000 }),
+  amenities: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return Array.isArray(value)
+        ? value.flatMap((item) =>
+            item
+              .split(',')
+              .map((part) => part.trim())
+              .filter(Boolean),
+          )
+        : value
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean);
+    })
+    .openapi({ example: ['Serious Inspection', 'Mát lạnh Điều hòa'] }),
+  vehicle_type: z.string().min(1).max(120).optional().openapi({ example: 'Drift' }),
+  sort_by: z
+    .enum(['popularity', 'price_asc', 'price_desc', 'rating'])
+    .optional()
+    .openapi({ example: 'popularity' }),
+  popular_filters: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return Array.isArray(value)
+        ? value.flatMap((item) =>
+            item
+              .split(',')
+              .map((part) => part.trim())
+              .filter(Boolean),
+          )
+        : value
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean);
+    }),
   status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
 });
 
-export const CreateCafeSchema = z.object({
+const CafeUpsertBaseSchema = z.object({
   name: z.string().min(2).max(255).openapi({ example: 'RC Arena Sai Gon' }),
   description: z
     .string()
@@ -203,7 +246,7 @@ export const CreateCafeSchema = z.object({
   slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60).openapi({
     example: 60,
   }),
-  slot_fee_rate: z.number().nonnegative().openapi({ example: 50000 }),
+  slot_fee_rate: z.number().positive().openapi({ example: 50000 }),
   max_concurrent_bookings: z.number().int().positive().optional().default(10).openapi({
     example: 8,
   }),
@@ -215,7 +258,21 @@ export const CreateCafeSchema = z.object({
   rules: z.array(z.string().min(1).max(500)).optional().default([]),
 });
 
-export const UpdateCafeSchema = CreateCafeSchema.partial().refine(
+export const CreateCafeSchema = CafeUpsertBaseSchema.refine(
+  (value) =>
+    value.latitude !== undefined &&
+    value.latitude !== null &&
+    value.longitude !== undefined &&
+    value.longitude !== null &&
+    value.latitude !== 0 &&
+    value.longitude !== 0,
+  {
+    message: 'Tọa độ latitude/longitude là bắt buộc và không được bằng 0',
+    path: ['latitude'],
+  },
+);
+
+export const UpdateCafeSchema = CafeUpsertBaseSchema.partial().refine(
   (value) => Object.keys(value).length > 0,
   'Cần ít nhất một trường để cập nhật',
 );
@@ -366,6 +423,26 @@ export const CafeImageUploadSchema = z.object({
   sort_order: z.coerce.number().int().min(0).optional().default(0).openapi({ example: 0 }),
 });
 
+const CafePromotionSummarySchema = z.object({
+  code: z.string().openapi({ example: 'SUMMER25' }),
+  description: z.string().nullable().openapi({ example: 'Giảm 25% cho slot đầu tiên' }),
+  discount_type: z.nativeEnum(DiscountType).openapi({ example: DiscountType.PERCENT }),
+  discount_value: z.number().openapi({ example: 25 }),
+  max_discount_amount: z.number().nullable().openapi({ example: 50000 }),
+  min_order_amount: z.number().nullable().openapi({ example: 100000 }),
+  applicable_to: z.nativeEnum(PromoApplicableTo).openapi({ example: PromoApplicableTo.ALL }),
+  expires_at: z.string().datetime().nullable().openapi({ example: '2026-08-01T00:00:00.000Z' }),
+});
+
+const TrackTypeResponseSchema = z.object({
+  id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+  code: z.string().openapi({ example: 'DRIFT' }),
+  name: z.string().openapi({ example: 'Drift' }),
+  description: z.string().nullable().openapi({ example: 'Đường đua drift' }),
+  sortOrder: z.number().int().openapi({ example: 0 }),
+  isActive: z.boolean().openapi({ example: true }),
+});
+
 export const CafeResponseSchema = z.object({
   id: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
   providerId: z.string().uuid().openapi({ example: '7f8d1fd7-5334-47e5-94a8-a8f69a70d001' }),
@@ -385,14 +462,31 @@ export const CafeResponseSchema = z.object({
   latitude: z.number().nullable().openapi({ example: 10.7403 }),
   longitude: z.number().nullable().openapi({ example: 106.712 }),
   operatingHours: z.record(OperatingHourSchema),
-  trackTypes: z.array(TrackTypeSchema).openapi({
-    example: ['550e8400-e29b-41d4-a716-446655440000', '550e8400-e29b-41d4-a716-446655440001'],
-  }),
+  trackTypes: z.array(TrackTypeResponseSchema).openapi({ example: [] }),
   slotDurationMinutes: z.number().int().openapi({ example: 60 }),
   slotFeeRate: z.string().openapi({ example: '50000.00' }),
   maxConcurrentBookings: z.number().int().openapi({ example: 8 }),
   minBookingNoticeMinutes: z.number().int().openapi({ example: 30 }),
   byocCapacity: z.number().int().openapi({ example: 4 }),
+  amenityIds: z.array(z.string().uuid()).openapi({ example: [] }),
+  amenities: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        title: z.string(),
+        description: z.string().nullable(),
+        icon: z.string(),
+        sortOrder: z.number().int(),
+        createdAt: z.string().datetime(),
+        updatedAt: z.string().datetime(),
+      }),
+    )
+    .openapi({ example: [] }),
+  rating: z.number().openapi({ example: 4.8 }),
+  reviewsCount: z.number().int().openapi({ example: 124 }),
+  minPrice: z.number().openapi({ example: 50000 }),
+  activePromotions: z.array(CafePromotionSummarySchema).openapi({ example: [] }),
+  rules: z.array(z.string()).openapi({ example: [] }),
   createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   deletedAt: z.string().datetime().nullable().openapi({ example: null }),

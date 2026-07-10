@@ -31,6 +31,19 @@ function viewerFromRequest(req: AuthRequest) {
   return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
 }
 
+function normalizeCafeListQuery(query: Request['query']) {
+  const normalized: Record<string, unknown> = { ...query };
+
+  if (normalized.amenities === undefined && normalized['amenities[]'] !== undefined) {
+    normalized.amenities = normalized['amenities[]'];
+  }
+  if (normalized.popular_filters === undefined && normalized['popular_filters[]'] !== undefined) {
+    normalized.popular_filters = normalized['popular_filters[]'];
+  }
+
+  return normalized;
+}
+
 export const cafeController = {
   // POST /api/v1/cafes  [auth]
   async createCafe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -47,8 +60,23 @@ export const cafeController = {
   // GET /api/v1/cafes
   async listCafes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { page, limit, scope, slug, district, city, track_type, status } =
-        CafeListQuerySchema.parse(req.query);
+      const {
+        page,
+        limit,
+        scope,
+        query,
+        slug,
+        district,
+        city,
+        track_type,
+        price_min,
+        price_max,
+        amenities,
+        vehicle_type,
+        sort_by,
+        popular_filters,
+        status,
+      } = CafeListQuerySchema.parse(normalizeCafeListQuery(req.query));
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
       const visibleStatus = canFilterStatus ? (status as CafeStatus | undefined) : undefined;
@@ -57,10 +85,17 @@ export const cafeController = {
         page,
         limit,
         scope,
+        query,
         slug,
         district,
         city,
         track_type,
+        price_min,
+        price_max,
+        amenities,
+        vehicle_type,
+        sort_by,
+        popular_filters,
         status: visibleStatus,
         viewer: viewerFromRequest(req),
       });
