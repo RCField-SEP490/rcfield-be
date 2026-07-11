@@ -6,6 +6,8 @@ import {
   BookingMode,
   BookingStatus,
   CafeStatus,
+  ContestMatchStatus,
+  ContestStatus,
   CustomerPackageStatus,
   DiscountType,
   FnbCategory,
@@ -15,6 +17,7 @@ import {
   PromoApplicableTo,
   ReviewStatus,
   VehicleStatus,
+  VehicleSource,
 } from '../types';
 
 extendZodWithOpenApi(z);
@@ -357,6 +360,132 @@ export const UpdatePromotionSchema = PromotionBaseSchema.partial()
       value.schedule_weekdays.length > 0,
     'Vui lòng chọn ít nhất một ngày trong tuần',
   );
+
+// ── contests ────────────────────────────────────────────────────────────────
+
+export const ContestCatalogTemplateQuerySchema = z.object({
+  contest_type_id: z.string().uuid().optional(),
+  contest_format_id: z.string().uuid().optional(),
+  active_only: z.coerce.boolean().optional().default(true),
+});
+
+export const ContestListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  scope: z.enum(['managed']).optional(),
+  status: z.nativeEnum(ContestStatus).optional(),
+  contest_type_id: z.string().uuid().optional(),
+  contest_format_id: z.string().uuid().optional(),
+  cafe_id: z.string().uuid().optional(),
+  query: z.string().trim().min(1).max(200).optional(),
+});
+
+const ContestVehicleRuleSchema = z.object({
+  vehicle_policy: z.enum(['RENTAL_ONLY', 'BYOC_ONLY', 'MIXED']),
+  assignment_policy: z.enum(['AT_CHECK_IN', 'PRE_ASSIGNED']).optional().default('AT_CHECK_IN'),
+});
+
+const ContestUpsertBaseSchema = z.object({
+  name: z.string().trim().min(3).max(255),
+  description: z.string().trim().max(5000).nullable().optional(),
+  contest_type_id: z.string().uuid(),
+  contest_format_id: z.string().uuid(),
+  contest_template_id: z.string().uuid(),
+  track_type_id: z.string().uuid(),
+  participating_cafe_ids: z.array(z.string().uuid()).min(1).max(20),
+  starts_at: z.coerce.date(),
+  ends_at: z.coerce.date(),
+  registration_opens_at: z.coerce.date(),
+  registration_closes_at: z.coerce.date(),
+  capacity: z.number().int().positive(),
+  entry_fee: z.coerce.number().nonnegative().optional().default(0),
+  banner_image_url: z.string().url().nullable().optional(),
+  vehicle_rule: ContestVehicleRuleSchema,
+  config: z.record(z.string(), z.unknown()).optional().default({}),
+});
+
+export const CreateContestSchema = ContestUpsertBaseSchema.refine(
+  (value) => value.ends_at > value.starts_at,
+  {
+    message: 'ends_at phải sau starts_at',
+    path: ['ends_at'],
+  },
+)
+  .refine((value) => value.registration_opens_at < value.registration_closes_at, {
+    message: 'registration_closes_at phải sau registration_opens_at',
+    path: ['registration_closes_at'],
+  })
+  .refine((value) => value.registration_closes_at <= value.starts_at, {
+    message: 'registration_closes_at phải trước hoặc bằng starts_at',
+    path: ['registration_closes_at'],
+  });
+
+export const UpdateContestSchema = ContestUpsertBaseSchema.partial().refine(
+  (value: Record<string, unknown>) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const CreateContestRegistrationSchema = z.object({
+  booking_id: z.string().uuid(),
+  vehicle_id: z.string().uuid(),
+  vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
+});
+
+export const ContestRegistrationActionSchema = z.object({
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export const ContestMarkFeePaidSchema = z.object({
+  note: z.string().trim().max(1000).optional(),
+});
+
+export const ContestCheckInSchema = z.object({
+  checked_in_cafe_id: z.string().uuid(),
+});
+
+export const ContestGenerateMatchesSchema = z.object({
+  cafe_id: z.string().uuid(),
+  track_config_id: z.string().uuid().nullable().optional(),
+  registration_ids: z.array(z.string().uuid()).min(1),
+  drivers_per_match: z.number().int().positive().max(64).optional(),
+  seeding_mode: z.enum(['MANUAL', 'CHECK_IN_ORDER']).optional(),
+});
+
+export const ContestMatchParticipantsUpdateSchema = z.object({
+  participants: z
+    .array(
+      z.object({
+        registration_id: z.string().uuid(),
+        slot_no: z.number().int().positive(),
+        lane: z.string().trim().max(20).nullable().optional(),
+        grid_position: z.number().int().positive().nullable().optional(),
+        seed_no: z.number().int().positive().nullable().optional(),
+      }),
+    )
+    .min(1),
+});
+
+export const ContestSubmitResultsSchema = z.object({
+  results: z
+    .array(
+      z.object({
+        registration_id: z.string().uuid(),
+        finish_position: z.number().int().positive().nullable().optional(),
+        score: z.coerce.number().nullable().optional(),
+        best_lap_ms: z.number().int().positive().nullable().optional(),
+        total_time_ms: z.number().int().positive().nullable().optional(),
+        is_winner: z.boolean().optional().default(false),
+        result_note: z.string().trim().max(1000).nullable().optional(),
+        status: z.nativeEnum(ContestMatchStatus).optional(),
+      }),
+    )
+    .min(1),
+  reason: z.string().trim().min(1).max(1000),
+});
+
+export const ContestCorrectResultsSchema = ContestSubmitResultsSchema.extend({
+  force_cascade: z.boolean().optional().default(false),
+});
 
 export const PromotionIdParamsSchema = z.object({
   promotionId: z.string().uuid(),

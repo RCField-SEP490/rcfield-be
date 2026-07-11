@@ -183,6 +183,56 @@ export enum VehicleSource {
   BYOC = 'BYOC',
 }
 
+// ── Contest ──────────────────────────────────────────────────────────────────
+
+export enum ContestStatus {
+  DRAFT = 'DRAFT',
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestRegistrationStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  CANCELLED = 'CANCELLED',
+  CHECKED_IN = 'CHECKED_IN',
+}
+
+export enum ContestEntryFeePaymentStatus {
+  NOT_REQUIRED = 'NOT_REQUIRED',
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  WAIVED = 'WAIVED',
+  MARKED_PAID = 'MARKED_PAID',
+}
+
+export enum ContestMatchType {
+  HEAD_TO_HEAD = 'HEAD_TO_HEAD',
+  MULTI_DRIVER = 'MULTI_DRIVER',
+  TIME_ATTACK = 'TIME_ATTACK',
+  FINAL = 'FINAL',
+}
+
+export enum ContestMatchStatus {
+  DRAFT = 'DRAFT',
+  READY = 'READY',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestParticipantStatus {
+  READY = 'READY',
+  STARTED = 'STARTED',
+  FINISHED = 'FINISHED',
+  DNS = 'DNS',
+  DNF = 'DNF',
+  DQ = 'DQ',
+}
+
 export enum SessionVehicleStatus {
   ASSIGNED = 'ASSIGNED',
   IN_USE = 'IN_USE',
