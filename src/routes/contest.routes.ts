@@ -21,6 +21,13 @@ contestRouter.get(
   contestController.listCafeContests,
 );
 contestRouter.get('/contests/:contestId', optionalAuthenticate, contestController.getContestById);
+contestRouter.get(
+  '/contests/:contestId/matches',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.listMatches,
+);
 
 contestRouter.post(
   '/contests',
@@ -56,6 +63,34 @@ contestRouter.post(
   authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.cancelContest,
+);
+contestRouter.post(
+  '/contests/:contestId/matches/generate',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.generateMatches,
+);
+contestRouter.post(
+  '/contests/:contestId/leaderboard/publish',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.publishLeaderboard,
+);
+contestRouter.get(
+  '/contests/:contestId/audit-logs',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.listAuditLogs,
+);
+contestRouter.get(
+  '/contests/:contestId/metrics',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.getMetrics,
 );
 
 contestRouter.post(
@@ -122,4 +157,32 @@ contestRouter.post(
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.checkInRegistration,
+);
+contestRouter.patch(
+  '/contest-matches/:matchId/participants',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.updateMatchParticipants,
+);
+contestRouter.post(
+  '/contest-matches/:matchId/results',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.submitMatchResults,
+);
+contestRouter.post(
+  '/contest-matches/:matchId/results/correct',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.correctMatchResults,
+);
+contestRouter.post(
+  '/contest-matches/:matchId/advance',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.advanceMatch,
 );

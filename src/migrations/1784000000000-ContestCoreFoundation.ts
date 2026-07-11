@@ -1,6 +1,8 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class ContestCoreFoundation1784000000000 implements MigrationInterface {
+  public transaction = false;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS contest_types (

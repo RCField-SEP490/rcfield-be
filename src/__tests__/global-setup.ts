@@ -41,7 +41,7 @@ export default async function globalSetup() {
   });
 
   await testDS.initialize();
-  await testDS.runMigrations();
+  await testDS.runMigrations({ transaction: 'none' });
   await testDS.destroy();
 
   console.log('[Test DB] rcfeild_test ready');

@@ -3,7 +3,6 @@ import { AppDataSource } from '../config/database';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { Cafe } from '../models/cafe.entity';
-import { ContestAuditLog } from '../models/contest-audit-log.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestFormat } from '../models/contest-format.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
@@ -20,6 +19,12 @@ import {
   UserRole,
   VehicleSource,
 } from '../types';
+import {
+  assertContestOwner,
+  assertProviderViewer,
+  getContestOrThrow,
+  writeContestAudit,
+} from './contest.helpers';
 import { Viewer } from './cafe.service';
 
 type ListContestsOptions = {
@@ -60,45 +65,6 @@ type CreateRegistrationBody = {
   vehicle_id: string;
   vehicle_source: VehicleSource;
 };
-
-function assertProviderViewer(viewer?: Viewer): asserts viewer is Viewer {
-  if (!viewer || viewer.role !== UserRole.PROVIDER) {
-    throw new AppError('Bạn không có quyền thao tác contest này', 403, 'FORBIDDEN');
-  }
-}
-
-async function getContestOrThrow(contestId: string): Promise<Contest> {
-  const contest = await AppDataSource.getRepository(Contest).findOne({ where: { id: contestId } });
-  if (!contest) throw new AppError('Contest không tồn tại', 404, 'CONTEST_NOT_FOUND');
-  return contest;
-}
-
-async function assertContestOwner(contestId: string, viewer: Viewer): Promise<Contest> {
-  const contest = await getContestOrThrow(contestId);
-  if (viewer.role !== UserRole.PROVIDER || contest.providerId !== viewer.userId) {
-    throw new AppError('Bạn không sở hữu contest này', 403, 'FORBIDDEN');
-  }
-  return contest;
-}
-
-async function writeAudit(
-  payload: Partial<ContestAuditLog> & { contestId: string; eventType: string },
-): Promise<void> {
-  const repo = AppDataSource.getRepository(ContestAuditLog);
-  const audit = repo.create({
-    contestId: payload.contestId,
-    registrationId: payload.registrationId ?? null,
-    matchId: payload.matchId ?? null,
-    actorId: payload.actorId ?? null,
-    actorRole: payload.actorRole ?? null,
-    eventType: payload.eventType,
-    beforeJson: payload.beforeJson ?? null,
-    afterJson: payload.afterJson ?? null,
-    reason: payload.reason ?? null,
-    metadata: payload.metadata ?? {},
-  });
-  await repo.save(audit);
-}
 
 async function loadContestCatalogMaps(contests: Contest[]) {
   const trackTypeIds = Array.from(
@@ -449,7 +415,7 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
     ),
   );
 
-  await writeAudit({
+  await writeContestAudit({
     contestId: saved.id,
     actorId: viewer.userId,
     actorRole: viewer.role,
@@ -541,7 +507,7 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   if (body.entry_fee !== undefined) contest.entryFee = body.entry_fee;
 
   await AppDataSource.getRepository(Contest).save(contest);
-  await writeAudit({
+  await writeContestAudit({
     contestId: contest.id,
     actorId: viewer.userId,
     actorRole: viewer.role,
@@ -581,7 +547,7 @@ export async function changeContestStatus(
 
   contest.status = nextStatus;
   await AppDataSource.getRepository(Contest).save(contest);
-  await writeAudit({
+  await writeContestAudit({
     contestId: contest.id,
     actorId: viewer.userId,
     actorRole: viewer.role,
@@ -681,7 +647,7 @@ export async function createContestRegistration(
   };
 
   const saved = await registrationRepo.save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId,
     registrationId: saved.id,
     actorId: viewer.userId,
@@ -726,7 +692,7 @@ export async function markEntryFeePaid(registrationId: string, viewer: Viewer, n
   registration.entryFeeMarkedPaidAt = new Date();
   registration.metadata = { ...(registration.metadata ?? {}), fee_note: note ?? null };
   await AppDataSource.getRepository(ContestRegistration).save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
     actorId: viewer.userId,
@@ -745,7 +711,7 @@ export async function waiveEntryFee(registrationId: string, viewer: Viewer, note
   registration.entryFeeMarkedPaidAt = new Date();
   registration.metadata = { ...(registration.metadata ?? {}), fee_note: note ?? null };
   await AppDataSource.getRepository(ContestRegistration).save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
     actorId: viewer.userId,
@@ -775,7 +741,7 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
   }
   registration.status = ContestRegistrationStatus.CONFIRMED;
   await AppDataSource.getRepository(ContestRegistration).save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
     actorId: viewer.userId,
@@ -794,7 +760,7 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
   registration.cancelledAt = new Date();
   registration.cancellationReason = reason ?? 'Rejected by provider';
   await AppDataSource.getRepository(ContestRegistration).save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
     actorId: viewer.userId,
@@ -823,7 +789,7 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
   registration.cancelledAt = new Date();
   registration.cancellationReason = reason ?? 'Cancelled';
   await repo.save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
     actorId: viewer.userId,
@@ -922,7 +888,7 @@ export async function checkInRegistration(
   registration.checkedInBy = viewer.userId;
   registration.checkedInAt = new Date();
   await repo.save(registration);
-  await writeAudit({
+  await writeContestAudit({
     contestId: contest.id,
     registrationId: registration.id,
     actorId: viewer.userId,

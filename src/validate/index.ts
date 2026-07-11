@@ -6,7 +6,7 @@ import {
   BookingMode,
   BookingStatus,
   CafeStatus,
-  ContestMatchStatus,
+  ContestParticipantStatus,
   ContestStatus,
   CustomerPackageStatus,
   DiscountType,
@@ -476,7 +476,7 @@ export const ContestSubmitResultsSchema = z.object({
         total_time_ms: z.number().int().positive().nullable().optional(),
         is_winner: z.boolean().optional().default(false),
         result_note: z.string().trim().max(1000).nullable().optional(),
-        status: z.nativeEnum(ContestMatchStatus).optional(),
+        status: z.nativeEnum(ContestParticipantStatus).optional(),
       }),
     )
     .min(1),

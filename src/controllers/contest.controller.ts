@@ -2,15 +2,20 @@ import type { NextFunction, Request, Response } from 'express';
 import { AuthRequest, AppError, ContestStatus, UserRole } from '../types';
 import {
   ContestCatalogTemplateQuerySchema,
+  ContestCorrectResultsSchema,
   ContestCheckInSchema,
+  ContestGenerateMatchesSchema,
   ContestListQuerySchema,
   ContestMarkFeePaidSchema,
+  ContestMatchParticipantsUpdateSchema,
   ContestRegistrationActionSchema,
+  ContestSubmitResultsSchema,
   CreateContestRegistrationSchema,
   CreateContestSchema,
   UpdateContestSchema,
 } from '../validate';
 import * as contestService from '../services/contest.service';
+import * as contestRuntimeService from '../services/contest-runtime.service';
 
 function requireViewer(req: AuthRequest) {
   if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
@@ -282,6 +287,115 @@ export const contestController = {
         body.checked_in_cafe_id,
         viewer,
       );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listMatches(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.listContestMatches(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async generateMatches(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestGenerateMatchesSchema.parse(req.body);
+      const data = await contestRuntimeService.generateContestMatches(
+        req.params.contestId,
+        viewer,
+        body,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateMatchParticipants(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestMatchParticipantsUpdateSchema.parse(req.body);
+      const data = await contestRuntimeService.updateMatchParticipants(
+        req.params.matchId,
+        viewer,
+        body,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async submitMatchResults(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestSubmitResultsSchema.parse(req.body);
+      const data = await contestRuntimeService.submitMatchResults(req.params.matchId, viewer, body);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async correctMatchResults(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestCorrectResultsSchema.parse(req.body);
+      const data = await contestRuntimeService.correctMatchResults(
+        req.params.matchId,
+        viewer,
+        body,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async advanceMatch(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.advanceMatch(req.params.matchId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async publishLeaderboard(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.publishContestLeaderboard(
+        req.params.contestId,
+        viewer,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listAuditLogs(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.listContestAuditLogs(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getMetrics(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.getContestMetrics(req.params.contestId, viewer);
       res.json({ success: true, data });
     } catch (error) {
       next(error);
