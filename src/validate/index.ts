@@ -380,6 +380,38 @@ export const ContestListQuerySchema = z.object({
   query: z.string().trim().min(1).max(200).optional(),
 });
 
+export const MyContestRegistrationsQuerySchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  contest_status: z.nativeEnum(ContestStatus).optional(),
+  customer_journey_status: z
+    .enum([
+      'PENDING_APPROVAL',
+      'APPROVED_WAITING_CHECKIN',
+      'READY_TO_RACE',
+      'IN_BRACKET',
+      'ADVANCED',
+      'ELIMINATED',
+      'FINISHED',
+      'CANCELLED',
+    ])
+    .optional(),
+});
+
+export const ContestRegistrationsQuerySchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  status: z.enum(['PENDING', 'CONFIRMED', 'CANCELLED', 'CHECKED_IN']).optional(),
+  payment_status: z
+    .enum(['NOT_REQUIRED', 'PENDING_PAYMENT', 'PENDING_REVIEW', 'WAIVED', 'MARKED_PAID'])
+    .optional(),
+});
+
+export const ContestMatchesQuerySchema = z.object({
+  round_no: z.coerce.number().int().positive().optional(),
+  status: z.enum(['DRAFT', 'READY', 'RUNNING', 'COMPLETED', 'CANCELLED']).optional(),
+  cafe_id: z.string().uuid().optional(),
+  participant_query: z.string().trim().min(1).max(200).optional(),
+});
+
 const ContestVehicleRuleSchema = z.object({
   vehicle_policy: z.enum(['RENTAL_ONLY', 'BYOC_ONLY', 'MIXED']),
   assignment_policy: z.enum(['AT_CHECK_IN', 'PRE_ASSIGNED']).optional().default('AT_CHECK_IN'),

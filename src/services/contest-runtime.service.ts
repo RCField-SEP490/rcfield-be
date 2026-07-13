@@ -61,6 +61,13 @@ type CorrectResultsBody = SubmitResultsBody & {
   force_cascade?: boolean;
 };
 
+type ContestMatchesQuery = {
+  round_no?: number;
+  status?: 'DRAFT' | 'READY' | 'RUNNING' | 'COMPLETED' | 'CANCELLED';
+  cafe_id?: string;
+  participant_query?: string;
+};
+
 function getDriversPerMatch(contest: Contest, override?: number): number {
   if (override) return override;
   const configValue = contest.config?.drivers_per_match;
@@ -406,9 +413,27 @@ async function protectDownstreamCorrection(match: ContestMatch, forceCascade: bo
   }
 }
 
-export async function listContestMatches(contestId: string, viewer?: Viewer) {
+export async function listContestMatches(
+  contestId: string,
+  viewer?: Viewer,
+  query?: ContestMatchesQuery,
+) {
   await assertViewerCanViewContestMatches(contestId, viewer);
-  return mapMatchesPayload(contestId, viewer);
+  const mapped = await mapMatchesPayload(contestId, viewer);
+  const normalizedQuery = query?.participant_query?.toLowerCase();
+  return mapped.filter((match) => {
+    const matchesRound = !query?.round_no || match.round_no === query.round_no;
+    const matchesStatus = !query?.status || match.status === query.status;
+    const matchesCafe = !query?.cafe_id || match.cafe_id === query.cafe_id;
+    const matchesParticipant =
+      !normalizedQuery ||
+      match.participants.some((participant) =>
+        [participant.registration?.participant_name, participant.registration?.participant_email]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(normalizedQuery)),
+      );
+    return matchesRound && matchesStatus && matchesCafe && matchesParticipant;
+  });
 }
 
 export async function generateContestMatches(

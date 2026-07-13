@@ -68,6 +68,26 @@ type CreateRegistrationBody = {
   vehicle_source: VehicleSource;
 };
 
+type MyContestRegistrationsQuery = {
+  query?: string;
+  contest_status?: ContestStatus;
+  customer_journey_status?:
+    | 'PENDING_APPROVAL'
+    | 'APPROVED_WAITING_CHECKIN'
+    | 'READY_TO_RACE'
+    | 'IN_BRACKET'
+    | 'ADVANCED'
+    | 'ELIMINATED'
+    | 'FINISHED'
+    | 'CANCELLED';
+};
+
+type ContestRegistrationsQuery = {
+  query?: string;
+  status?: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'CHECKED_IN';
+  payment_status?: 'NOT_REQUIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'WAIVED' | 'MARKED_PAID';
+};
+
 async function loadContestCatalogMaps(contests: Contest[]) {
   const trackTypeIds = Array.from(
     new Set(contests.map((item) => item.trackTypeId).filter(Boolean)),
@@ -880,21 +900,54 @@ export async function createContestRegistration(
   return mapped;
 }
 
-export async function listMyContestRegistrations(viewer: Viewer) {
+export async function listMyContestRegistrations(
+  viewer: Viewer,
+  query?: MyContestRegistrationsQuery,
+) {
   const rows = await AppDataSource.getRepository(ContestRegistration).find({
     where: { userId: viewer.userId },
     order: { createdAt: 'DESC' },
   });
-  return mapContestRegistrationsPayload(rows, { includeContest: true });
+  const mapped = await mapContestRegistrationsPayload(rows, { includeContest: true });
+  const normalizedQuery = query?.query?.toLowerCase();
+  return mapped.filter((registration) => {
+    const matchesQuery =
+      !normalizedQuery ||
+      registration.contest?.name?.toLowerCase().includes(normalizedQuery) ||
+      registration.participant?.full_name?.toLowerCase().includes(normalizedQuery) ||
+      registration.participant?.email?.toLowerCase().includes(normalizedQuery);
+    const matchesContestStatus =
+      !query?.contest_status || registration.contest?.status === query.contest_status;
+    const matchesJourney =
+      !query?.customer_journey_status ||
+      registration.customer_journey_status === query.customer_journey_status;
+    return matchesQuery && matchesContestStatus && matchesJourney;
+  });
 }
 
-export async function listContestRegistrations(contestId: string, viewer: Viewer) {
+export async function listContestRegistrations(
+  contestId: string,
+  viewer: Viewer,
+  query?: ContestRegistrationsQuery,
+) {
   await assertContestOwner(contestId, viewer);
   const rows = await AppDataSource.getRepository(ContestRegistration).find({
     where: { contestId },
     order: { createdAt: 'DESC' },
   });
-  return mapContestRegistrationsPayload(rows, { includeContest: false });
+  const mapped = await mapContestRegistrationsPayload(rows, { includeContest: false });
+  const normalizedQuery = query?.query?.toLowerCase();
+  return mapped.filter((registration) => {
+    const matchesQuery =
+      !normalizedQuery ||
+      registration.participant?.full_name?.toLowerCase().includes(normalizedQuery) ||
+      registration.participant?.email?.toLowerCase().includes(normalizedQuery) ||
+      registration.check_in_code?.toLowerCase().includes(normalizedQuery);
+    const matchesStatus = !query?.status || registration.status === query.status;
+    const matchesPayment =
+      !query?.payment_status || registration.payment_status === query.payment_status;
+    return matchesQuery && matchesStatus && matchesPayment;
+  });
 }
 
 async function getContestRegistrationForOwner(registrationId: string, viewer: Viewer) {

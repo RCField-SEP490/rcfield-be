@@ -6,12 +6,15 @@ import {
   ContestCheckInSchema,
   ContestGenerateMatchesSchema,
   ContestListQuerySchema,
+  ContestMatchesQuerySchema,
   ContestMarkFeePaidSchema,
   ContestMatchParticipantsUpdateSchema,
+  ContestRegistrationsQuerySchema,
   ContestRegistrationActionSchema,
   ContestSubmitResultsSchema,
   CreateContestRegistrationSchema,
   CreateContestSchema,
+  MyContestRegistrationsQuerySchema,
   UpdateContestSchema,
 } from '../validate';
 import * as contestService from '../services/contest.service';
@@ -174,7 +177,8 @@ export const contestController = {
   async listMyRegistrations(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);
-      const data = await contestService.listMyContestRegistrations(viewer);
+      const query = MyContestRegistrationsQuerySchema.parse(req.query);
+      const data = await contestService.listMyContestRegistrations(viewer, query);
       res.json({ success: true, data });
     } catch (error) {
       next(error);
@@ -184,7 +188,12 @@ export const contestController = {
   async listContestRegistrations(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);
-      const data = await contestService.listContestRegistrations(req.params.contestId, viewer);
+      const query = ContestRegistrationsQuerySchema.parse(req.query);
+      const data = await contestService.listContestRegistrations(
+        req.params.contestId,
+        viewer,
+        query,
+      );
       res.json({ success: true, data });
     } catch (error) {
       next(error);
@@ -296,7 +305,12 @@ export const contestController = {
   async listMatches(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
-      const data = await contestRuntimeService.listContestMatches(req.params.contestId, viewer);
+      const query = ContestMatchesQuerySchema.parse(req.query);
+      const data = await contestRuntimeService.listContestMatches(
+        req.params.contestId,
+        viewer,
+        query,
+      );
       res.json({ success: true, data });
     } catch (error) {
       next(error);
