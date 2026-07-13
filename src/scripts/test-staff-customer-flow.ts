@@ -93,6 +93,8 @@ async function cleanupTestBooking(bookingId: string): Promise<void> {
   await ds.query(`DELETE FROM sessions WHERE booking_id = $1`, [bookingId]);
   await ds.query(`DELETE FROM booking_vehicles WHERE booking_id = $1`, [bookingId]);
   await ds.query(`DELETE FROM booking_participants WHERE booking_id = $1`, [bookingId]);
+  await ds.query(`DELETE FROM payment_transactions WHERE booking_id = $1`, [bookingId]);
+  await ds.query(`DELETE FROM payment_components WHERE booking_id = $1`, [bookingId]);
   await ds.query(`DELETE FROM bookings WHERE id = $1`, [bookingId]);
 
   for (const [vehicleId, status] of touchedVehicleStatuses) {
@@ -173,7 +175,7 @@ async function main() {
   if (testVehicle) {
     await ds.query(
       `INSERT INTO booking_vehicles (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
-       VALUES ($1, $2, 100000, 150000, 1.5)`,
+       VALUES ($1, $2, 100000, 0, 1.5)`,
       [bookingId, testVehicle.id],
     );
     vehicleId = testVehicle.id;
@@ -207,21 +209,14 @@ async function main() {
   });
   print(`${GREEN}✓ Check-in inspection submitted. ID: ${BOLD}${checkInInspection.id}${RESET}`);
 
-  print(`\n${BOLD}[STEP 7] Customer confirms check-in inspection...${RESET}`);
-  const checkInResponse = await staffService.customerConfirmInspection(
-    session.id,
-    checkInInspection.id,
-    customer.id,
-    true,
-  );
-  assertEqual('Customer check-in response status', checkInResponse.sessionStatus, 'ACTIVE');
+  print(`\n${BOLD}[STEP 7] Verify check-in is auto-confirmed...${RESET}`);
   const activeSession = await loadSession(session.id);
   assertEqual(
-    'Session status after customer check-in confirmation',
+    'Session status after check-in inspection submission',
     activeSession.status,
     'ACTIVE',
   );
-  print(`${GREEN}✓ Customer confirmed. Session is now ${BOLD}${activeSession.status}${RESET}`);
+  print(`${GREEN}✓ Session is now auto-confirmed and ${BOLD}${activeSession.status}${RESET}`);
 
   print(`\n${BOLD}[STEP 8] Staff proposes 30-minute extension...${RESET}`);
   const extension = await staffService.proposeExtension(session.id, staff.id, {
@@ -334,6 +329,10 @@ async function main() {
     'COMPLETED',
   );
   print(`${GREEN}✓ Customer confirmed. Session status: ${BOLD}${completedSession.status}${RESET}`);
+
+  print(`\n${BOLD}[STEP 14] Staff settles pending payments at counter...${RESET}`);
+  await staffService.settlePendingPayments(bookingId, staff.id);
+  print(`${GREEN}✓ Counter payments settled successfully.${RESET}`);
 
   const finalBooking = await ds.getRepository(Booking).findOne({ where: { id: bookingId } });
   const finalSession = await ds.getRepository(Session).findOne({ where: { id: session.id } });
