@@ -329,8 +329,8 @@ export async function createCheckoutUrl(
     };
   }
 
-  // txnRef = bookingId without dashes, max 32 chars
-  const txnRef = bookingId.replace(/-/g, '').substring(0, 32);
+  // Tạo txnRef duy nhất cho lần thanh toán này để cho phép thanh toán lại khi bị lỗi/hủy (giới hạn tối đa 30 ký tự của VNPay)
+  const txnRef = `${bookingId.replace(/-/g, '').substring(0, 20)}_${Date.now().toString().slice(-4)}`;
 
   const vnpayPaymentUrl = createPaymentUrl({
     amount: totalCharged,
