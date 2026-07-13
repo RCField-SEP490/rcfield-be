@@ -681,6 +681,10 @@ export const ListVehicleUnitsQuerySchema = z.object({
   status: z.nativeEnum(VehicleStatus).optional(),
   catalog_id: z.string().uuid().optional(),
   search: z.string().optional(),
+  exclude_retired: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 // ── cafe widget config ────────────────────────────────────────────────────────
