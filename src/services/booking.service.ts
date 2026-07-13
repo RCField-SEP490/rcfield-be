@@ -1041,12 +1041,12 @@ export async function createWalkInBooking(
       const hourlyRate = Number(catalog.hourlyRate);
       const rentalFee = hourlyRate * (slotMinutes / 60);
       rentalFeeTotal += rentalFee;
-      depositTotal += Number(catalog.securityDeposit);
+      depositTotal += 0;
       vehiclePricings.push({
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        securityDeposit: Number(catalog.securityDeposit),
+        securityDeposit: 0,
         damageMultiplier: Number(catalog.damageMultiplier),
       });
     }
@@ -1165,14 +1165,16 @@ export async function createWalkInBooking(
         });
         await em.save(rfComponent);
 
-        const sdComponent = em.create(PaymentComponent, {
-          bookingId: newBooking.id,
-          bookingVehicleId: bv.id,
-          type: PaymentComponentType.SECURITY_DEPOSIT,
-          amount: Number(bv.securityDepositSnapshot),
-          status: PaymentComponentStatus.DISBURSED,
-        });
-        await em.save(sdComponent);
+        if (Number(bv.securityDepositSnapshot) > 0) {
+          const sdComponent = em.create(PaymentComponent, {
+            bookingId: newBooking.id,
+            bookingVehicleId: bv.id,
+            type: PaymentComponentType.SECURITY_DEPOSIT,
+            amount: Number(bv.securityDepositSnapshot),
+            status: PaymentComponentStatus.DISBURSED,
+          });
+          await em.save(sdComponent);
+        }
       }
 
       // Create Payment Transaction as SUCCESS
