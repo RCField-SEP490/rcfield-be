@@ -839,7 +839,32 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
 
 export async function publishContestLeaderboard(contestId: string, viewer: Viewer) {
   const contest = await assertContestOwner(contestId, viewer);
+  const matches = await loadContestMatches(contestId);
+  if (matches.length === 0) {
+    throw new AppError('Contest chưa có match để publish leaderboard', 400, 'CONTEST_NO_MATCHES');
+  }
+
+  const unfinishedMatch = matches.find((match) =>
+    [ContestMatchStatus.DRAFT, ContestMatchStatus.READY, ContestMatchStatus.RUNNING].includes(
+      match.status,
+    ),
+  );
+  if (unfinishedMatch) {
+    throw new AppError(
+      'Không thể publish leaderboard khi vẫn còn match chưa hoàn tất',
+      409,
+      'CONTEST_MATCHES_INCOMPLETE',
+    );
+  }
+
   const leaderboard = await buildLeaderboard(contestId, contest);
+  if (leaderboard.entries.length === 0) {
+    throw new AppError(
+      'Contest chưa có kết quả hoàn tất để publish leaderboard',
+      400,
+      'CONTEST_LEADERBOARD_EMPTY',
+    );
+  }
 
   contest.config = {
     ...(contest.config ?? {}),
@@ -849,6 +874,7 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
       published_by: viewer.userId,
     },
   };
+  contest.status = ContestStatus.COMPLETED;
   await AppDataSource.getRepository(Contest).save(contest);
 
   await writeContestAudit({

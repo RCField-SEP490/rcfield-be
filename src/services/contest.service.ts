@@ -356,7 +356,8 @@ export async function listContests(options: ListContestsOptions) {
 
 export async function getContestDetail(contestId: string, viewer?: Viewer) {
   const contest = await getContestOrThrow(contestId);
-  if (!viewer && contest.status === ContestStatus.DRAFT) {
+  const isOwner = viewer?.role === UserRole.PROVIDER && contest.providerId === viewer.userId;
+  if (!isOwner && [ContestStatus.DRAFT, ContestStatus.CANCELLED].includes(contest.status)) {
     throw new AppError('Contest chưa được công khai', 404, 'CONTEST_NOT_PUBLIC');
   }
   const [payload] = await mapContestPayload([contest]);
@@ -575,8 +576,27 @@ export async function createContestRegistration(
   if (contest.status !== ContestStatus.OPEN) {
     throw new AppError('Contest chưa mở đăng ký', 400, 'CONTEST_NOT_OPEN');
   }
+  const now = new Date();
+  if (contest.registrationOpensAt && now < contest.registrationOpensAt) {
+    throw new AppError('Chưa tới thời gian mở đăng ký', 400, 'CONTEST_REGISTRATION_NOT_OPEN_YET');
+  }
+  if (contest.registrationClosesAt && now > contest.registrationClosesAt) {
+    throw new AppError('Contest đã đóng đăng ký', 400, 'CONTEST_REGISTRATION_CLOSED');
+  }
   if (body.vehicle_source !== VehicleSource.RENTAL) {
     throw new AppError('Phase đầu chỉ hỗ trợ đăng ký RENTAL contest', 400, 'CONTEST_RENTAL_ONLY');
+  }
+
+  if (contest.capacity && contest.capacity > 0) {
+    const activeCount = await AppDataSource.getRepository(ContestRegistration).count({
+      where: { contestId },
+    });
+    const cancelledCount = await AppDataSource.getRepository(ContestRegistration).count({
+      where: { contestId, status: ContestRegistrationStatus.CANCELLED },
+    });
+    if (activeCount - cancelledCount >= contest.capacity) {
+      throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
+    }
   }
 
   const existing = await AppDataSource.getRepository(ContestRegistration).findOne({
