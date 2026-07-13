@@ -6,7 +6,7 @@ import { IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
-import { AppError, UserRole, AuthProvider, ProviderStatus } from '../types';
+import { AppError, UserRole, AuthProvider, ProviderStatus, CafeStatus } from '../types';
 import { User } from '../models/user.entity';
 import { RefreshToken } from '../models/refresh-token.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
@@ -79,9 +79,15 @@ class AuthService {
   }
 
   private async getAssignedCafeId(userId: string): Promise<string | null> {
-    const [assignment] = await AppDataSource.query(
-      `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
-      [userId],
+    const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+      `SELECT sca.cafe_id
+         FROM staff_cafe_assignments sca
+         JOIN cafes c ON c.id = sca.cafe_id
+        WHERE sca.staff_id = $1
+          AND c.deleted_at IS NULL
+          AND c.status = $2
+        LIMIT 1`,
+      [userId, CafeStatus.ACTIVE],
     );
     return assignment ? assignment.cafe_id : null;
   }
