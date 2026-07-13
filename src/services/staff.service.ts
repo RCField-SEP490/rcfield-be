@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
-import { IsNull, LessThan, MoreThan, Not, In } from 'typeorm';
+import { IsNull, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import {
   AppError,
   AuthProvider,
+  BookingMode,
   BookingSource,
   BookingStatus,
   UserRole,
@@ -28,6 +29,7 @@ import {
   PaymentTransactionType,
   PaymentTransactionStatus,
   BookingParticipantType,
+  CafeOperatingHours,
 } from '../types';
 import { User } from '../models/user.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
@@ -39,6 +41,8 @@ import { SessionVehicle } from '../models/session-vehicle.entity';
 import { Booking } from '../models/booking.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { Cafe } from '../models/cafe.entity';
+import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { Inspection } from '../models/inspection.entity';
 import { InspectionPhoto } from '../models/inspection-photo.entity';
@@ -88,19 +92,34 @@ export interface StaffListItem {
 }
 
 export interface TodayBookingItem {
-  id: string;
-  customerName: string;
-  customerPhone: string | null;
-  startTime: string;
-  endTime: string;
-  createdAt: string;
-  status: string;
-  mode: string;
-  vehicleName: string | null;
-  trackTypeName: string | null;
-  participantCount: number;
-  vehicleCount: number;
-  fnbPreorderAmount: number;
+  bookingId: string;
+  shortCode: string;
+  cafeId: string;
+  cafeName: string;
+  cafeAddress: string;
+  cafePhone: string;
+  trackName: string;
+  trackType: string;
+  bookingMode: 'SINGLE' | 'PACKAGE' | 'SUBSCRIPTION';
+  playMode: BookingMode;
+  source: BookingSource;
+  status: BookingStatus;
+  slotStart: string;
+  slotEnd: string;
+  slotCount: number;
+  depositAmount: number;
+  slotFee: number;
+  rentalFee: number;
+  fnbPreorderFee: number;
+  fnbOnsiteFee: number;
+  discountAmount: number;
+  totalAmount: number;
+  paymentStatus: 'UNPAID' | 'PAID';
+  payment_components: PaymentComponent[];
+  plannedParticipants: string[];
+  participantDetails: { name: string; phone?: string; isBooker: boolean }[];
+  plannedVehicles: string[];
+  sessions: any[];
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -470,12 +489,13 @@ export async function activateStaffAccount(
   };
 }
 
-export async function getTodayBookings(cafeId: string): Promise<any[]> {
+export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem[]> {
   const rows = await AppDataSource.query<any[]>(
     `SELECT
        b.id,
        b.status,
        b.play_mode,
+       b.source,
        b.slot_start,
        b.slot_end,
        b.slot_count,
@@ -489,13 +509,13 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
      JOIN cafes c ON c.id = b.cafe_id
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
      WHERE b.cafe_id = $1
-       AND b.slot_start::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+       AND (b.slot_start AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
        AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'COMPLETED', 'CANCELLED')
      ORDER BY b.slot_start ASC`,
     [cafeId],
   );
 
-  const bookingsList = [];
+  const bookingsList: TodayBookingItem[] = [];
 
   for (const row of rows) {
     // 1. Fetch planned participants
@@ -554,13 +574,6 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
     const depositComp = comps.find((c) => c.type === PaymentComponentType.SECURITY_DEPOSIT);
     const slotComp = comps.find((c) => c.type === PaymentComponentType.SLOT_FEE);
     const rentalComps = comps.filter((c) => c.type === PaymentComponentType.RENTAL_FEE);
-    const preorderFnbComp = comps.find(
-      (c) =>
-        c.type === PaymentComponentType.FB_PREORDER &&
-        (c.status === PaymentComponentStatus.HELD ||
-          c.status === PaymentComponentStatus.REFUNDED ||
-          c.status === PaymentComponentStatus.DISBURSED),
-    );
 
     const depositAmount = depositComp ? Number(depositComp.amount) : 0;
     const slotFee = slotComp ? Number(slotComp.amount) : 120000;
@@ -568,7 +581,17 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
       rentalComps.length > 0
         ? rentalComps.reduce((sum, c) => sum + Number(c.amount), 0)
         : bvList.length * 100000;
-    const fnbPreorderFee = preorderFnbComp ? Number(preorderFnbComp.amount) : 0;
+    const fnbOrders = await AppDataSource.getRepository(FnbOrder).find({
+      where: { bookingId: row.id },
+    });
+    const fnbPreorderFee = fnbOrders
+      .filter(
+        (o) => o.orderType === FnbOrderType.PRE_ORDER && o.status !== FnbOrderStatus.CANCELLED,
+      )
+      .reduce((sum, o) => sum + Number(o.totalAmount), 0);
+    const fnbOnsiteFee = fnbOrders
+      .filter((o) => o.orderType === FnbOrderType.ON_SITE && o.status !== FnbOrderStatus.CANCELLED)
+      .reduce((sum, o) => sum + Number(o.totalAmount), 0);
     const totalAmount = slotFee + rentalFee + fnbPreorderFee;
 
     bookingsList.push({
@@ -582,6 +605,7 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
       trackType: row.play_mode === 'BYOC' ? 'DRIFT_ASPHALT' : 'DRIFT_CARPET',
       bookingMode: 'SINGLE',
       playMode: row.play_mode,
+      source: row.source,
       status: row.status,
       slotStart: row.slot_start.toISOString(),
       slotEnd: row.slot_end.toISOString(),
@@ -590,9 +614,18 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
       slotFee,
       rentalFee,
       fnbPreorderFee,
+      fnbOnsiteFee,
       discountAmount: Number(row.discount_amount) || 0,
       totalAmount,
-      paymentStatus: row.status === 'PENDING' ? 'UNPAID' : 'PAID',
+      paymentStatus:
+        row.status === 'PENDING' ||
+        comps.some(
+          (c) =>
+            c.status === PaymentComponentStatus.PENDING ||
+            c.status === PaymentComponentStatus.PENDING_REFUND,
+        )
+          ? 'UNPAID'
+          : 'PAID',
       payment_components: comps,
       plannedParticipants,
       participantDetails,
@@ -1194,6 +1227,10 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   if (!booking) {
     throw new AppError('Không tìm thấy đơn đặt lịch gốc của phiên này', 404, 'BOOKING_NOT_FOUND');
   }
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
+  if (!cafe) {
+    throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
+  }
 
   const participants = await AppDataSource.getRepository(SessionParticipant).find({
     where: { sessionId },
@@ -1328,6 +1365,25 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     where: { sessionId },
     order: { createdAt: 'DESC' },
   });
+  const approvedExtensions = await AppDataSource.getRepository(ExtensionProposal).find({
+    where: { sessionId, status: ExtensionProposalStatus.APPROVED },
+  });
+  const approvedExtensionFee = approvedExtensions.reduce(
+    (sum, ext) => sum + Number(ext.feeAmount),
+    0,
+  );
+  const approvedExtensionMinutes = approvedExtensions.reduce(
+    (sum, ext) => sum + Number(ext.durationMinutes),
+    0,
+  );
+  const mappedApprovedExtensions = approvedExtensions
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((ext) => ({
+      proposalId: ext.id,
+      extraMinutes: ext.durationMinutes,
+      additionalFee: Number(ext.feeAmount),
+      approvedAt: ext.respondedAt?.toISOString() ?? ext.updatedAt.toISOString(),
+    }));
 
   let extensionProposal = undefined;
   if (latestProposal) {
@@ -1342,6 +1398,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       status: latestProposal.status,
     };
   }
+  const extensionPricingOptions = await buildExtensionPricingOptions(booking, session, cafe);
 
   return {
     sessionId: session.id,
@@ -1359,6 +1416,10 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     inspections: mappedInspections,
     damageClaim,
     extensionProposal,
+    approvedExtensionFee,
+    approvedExtensionMinutes,
+    approvedExtensions: mappedApprovedExtensions,
+    extensionPricingOptions,
     fnbOrders: mappedFnbOrders,
   };
 }
@@ -1488,15 +1549,46 @@ export async function submitInspection(
       });
     }
   } else {
-    // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
-    session.status = SessionStatus.CHECKING_OUT;
-    session.checkedOutBy = staffUserId;
-    await AppDataSource.getRepository(Session).save(session);
+    // CHECK_OUT
+    if (booking && booking.source === BookingSource.STAFF_MANUAL) {
+      session.status = SessionStatus.COMPLETED;
+      session.actualEndAt = new Date();
+      session.checkedOutBy = staffUserId;
+      await AppDataSource.getRepository(Session).save(session);
 
-    if (activeSVs.length > 0) {
-      for (const sv of activeSVs) {
-        sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
-        await svRepo.save(sv);
+      if (activeSVs.length > 0) {
+        const vehicleRepo = AppDataSource.getRepository(Vehicle);
+        for (const sv of activeSVs) {
+          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+          sv.returnedAt = new Date();
+          await svRepo.save(sv);
+
+          if (sv.vehicleSource === VehicleSource.RENTAL && sv.vehicleId) {
+            const veh = await vehicleRepo.findOne({ where: { id: sv.vehicleId } });
+            if (veh) {
+              veh.status = damageFlagged ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
+              await vehicleRepo.save(veh);
+            }
+          }
+        }
+      }
+
+      booking.status = BookingStatus.COMPLETED;
+      booking.completedAt = new Date();
+      await AppDataSource.getRepository(Booking).save(booking);
+
+      await settleSessionCheckoutBilling(sessionId, inspection);
+    } else {
+      // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
+      session.status = SessionStatus.CHECKING_OUT;
+      session.checkedOutBy = staffUserId;
+      await AppDataSource.getRepository(Session).save(session);
+
+      if (activeSVs.length > 0) {
+        for (const sv of activeSVs) {
+          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+          await svRepo.save(sv);
+        }
       }
     }
   }
@@ -1528,6 +1620,178 @@ export async function submitInspection(
   return inspection;
 }
 
+function getSnapshotTrackConfigId(snapshot: object | null): string | null {
+  const value = (snapshot as { track_config_id?: unknown } | null)?.track_config_id;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+async function resolveBookingTrackConfig(booking: Booking): Promise<CafeTrackConfig | null> {
+  const trackConfigRepo = AppDataSource.getRepository(CafeTrackConfig);
+  const trackConfigId = booking.trackConfigId ?? getSnapshotTrackConfigId(booking.snapshot);
+
+  if (trackConfigId) {
+    const trackConfig = await trackConfigRepo.findOne({
+      where: { id: trackConfigId, cafeId: booking.cafeId, isActive: true },
+    });
+    if (trackConfig) return trackConfig;
+  }
+
+  return trackConfigRepo.findOne({
+    where: { cafeId: booking.cafeId, trackTypeId: booking.trackTypeId, isActive: true },
+  });
+}
+
+function formatSlotTime(value: Date | string): string {
+  return new Date(value).toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
+}
+
+const VN_TZ_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function getLocalDateStartUtcMs(value: Date): number {
+  const local = new Date(value.getTime() + VN_TZ_OFFSET_MS);
+  return (
+    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - VN_TZ_OFFSET_MS
+  );
+}
+
+function getDayKeyForLocalStart(localStartUtcMs: number): string {
+  const local = new Date(localStartUtcMs + VN_TZ_OFFSET_MS);
+  return DAY_KEYS[local.getUTCDay()];
+}
+
+function parseOperatingTimeToMinutes(value?: string): number | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours === 24 && minutes === 0) return 24 * 60;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function buildOperatingWindow(
+  operatingHours: CafeOperatingHours | null | undefined,
+  localStartUtcMs: number,
+): { openAt: Date; closeAt: Date } | null {
+  const dayKey = getDayKeyForLocalStart(localStartUtcMs);
+  const schedule = operatingHours?.[dayKey];
+  if (!schedule || schedule.is_closed) return null;
+
+  const openMinutes = parseOperatingTimeToMinutes(schedule.open);
+  const closeMinutes = parseOperatingTimeToMinutes(schedule.close);
+  if (openMinutes === null || closeMinutes === null) return null;
+
+  let closeOffsetMinutes = closeMinutes;
+  if (closeOffsetMinutes <= openMinutes) closeOffsetMinutes += 24 * 60;
+
+  return {
+    openAt: new Date(localStartUtcMs + openMinutes * 60000),
+    closeAt: new Date(localStartUtcMs + closeOffsetMinutes * 60000),
+  };
+}
+
+function resolveOperatingWindowForBooking(
+  cafe: Cafe,
+  booking: Booking,
+): {
+  openAt: Date;
+  closeAt: Date;
+} | null {
+  const localStart = getLocalDateStartUtcMs(booking.slotStart);
+  const candidates = [localStart, localStart - 24 * 60 * 60000];
+
+  for (const candidate of candidates) {
+    const window = buildOperatingWindow(cafe.operatingHours, candidate);
+    if (
+      window &&
+      booking.slotStart.getTime() >= window.openAt.getTime() &&
+      booking.slotStart.getTime() <= window.closeAt.getTime()
+    ) {
+      return window;
+    }
+  }
+
+  return buildOperatingWindow(cafe.operatingHours, localStart);
+}
+
+function getExtensionBlockedReason(cafe: Cafe, booking: Booking, proposedEnd: Date): string | null {
+  const operatingWindow = resolveOperatingWindowForBooking(cafe, booking);
+  if (!operatingWindow) return null;
+  if (proposedEnd.getTime() <= operatingWindow.closeAt.getTime()) return null;
+  return `Vượt giờ đóng cửa (${formatSlotTime(operatingWindow.closeAt)})`;
+}
+
+async function getApprovedExtensionMinutes(sessionId: string): Promise<number> {
+  const approvedExtensions = await AppDataSource.getRepository(ExtensionProposal).find({
+    where: { sessionId, status: ExtensionProposalStatus.APPROVED },
+  });
+  return approvedExtensions.reduce((sum, ext) => sum + Number(ext.durationMinutes), 0);
+}
+
+async function getExtensionSlotRatePerMinute(booking: Booking, session: Session): Promise<number> {
+  const slotComp = await AppDataSource.getRepository(PaymentComponent).findOne({
+    where: { bookingId: booking.id, type: PaymentComponentType.SLOT_FEE },
+  });
+  const slotFee = slotComp ? Number(slotComp.amount) : 0;
+  if (slotFee <= 0) return 0;
+
+  const approvedExtensionMinutes = await getApprovedExtensionMinutes(session.id);
+  const currentEndMs = Math.max(booking.slotEnd.getTime(), session.plannedEndAt.getTime());
+  const currentDurationMinutes = (currentEndMs - booking.slotStart.getTime()) / 60000;
+  const originalDurationMinutes = Math.max(currentDurationMinutes - approvedExtensionMinutes, 1);
+
+  return slotFee / originalDurationMinutes;
+}
+
+function roundExtensionFee(ratePerMinute: number, extraMinutes: number): number {
+  if (ratePerMinute <= 0 || extraMinutes <= 0) return 0;
+  return Math.round((ratePerMinute * extraMinutes) / 1000) * 1000;
+}
+
+async function calculateExtensionFee(
+  booking: Booking,
+  session: Session,
+  extraMinutes: number,
+): Promise<number> {
+  const ratePerMinute = await getExtensionSlotRatePerMinute(booking, session);
+  return roundExtensionFee(ratePerMinute, extraMinutes);
+}
+
+async function buildExtensionPricingOptions(
+  booking: Booking,
+  session: Session,
+  cafe: Cafe,
+): Promise<
+  Array<{
+    extraMinutes: number;
+    additionalFee: number;
+    newPlannedEnd: string;
+    available: boolean;
+    blockedReason?: string;
+  }>
+> {
+  const options = [15, 30, 60] as const;
+  const ratePerMinute = await getExtensionSlotRatePerMinute(booking, session);
+  return options.map((extraMinutes) => {
+    const proposedEnd = new Date(session.plannedEndAt.getTime() + extraMinutes * 60000);
+    const blockedReason = getExtensionBlockedReason(cafe, booking, proposedEnd);
+
+    return {
+      extraMinutes,
+      additionalFee: roundExtensionFee(ratePerMinute, extraMinutes),
+      newPlannedEnd: proposedEnd.toISOString(),
+      available: !blockedReason,
+      ...(blockedReason ? { blockedReason } : {}),
+    };
+  });
+}
+
 export async function proposeExtension(
   sessionId: string,
   staffUserId: string,
@@ -1538,26 +1802,157 @@ export async function proposeExtension(
     throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
   }
 
-  const { extraMinutes, additionalFee, direct } = data;
+  const extraMinutes = Number(data.extraMinutes);
+  const direct = Boolean(data.direct);
+  if (!Number.isFinite(extraMinutes) || extraMinutes <= 0) {
+    throw new AppError('Thời lượng gia hạn không hợp lệ', 400, 'INVALID_EXTENSION_DURATION');
+  }
+  if (session.status !== SessionStatus.ACTIVE) {
+    throw new AppError('Chỉ có thể gia hạn phiên đang ACTIVE', 400, 'EXTENSION_NOT_ALLOWED');
+  }
 
-  // Check whether the extended slot conflicts with an existing booking at the same cafe
-  const booking = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
-  if (booking) {
-    const proposedEnd = new Date(booking.slotEnd.getTime() + extraMinutes * 60 * 1000);
-    const conflict = await AppDataSource.getRepository(Booking).findOne({
+  const booking = await AppDataSource.getRepository(Booking)
+    .createQueryBuilder('booking')
+    .addSelect('booking.trackConfigId')
+    .where('booking.id = :bookingId', { bookingId: session.bookingId })
+    .getOne();
+  if (!booking) {
+    throw new AppError('Không tìm thấy đơn đặt lịch gốc của phiên này', 404, 'BOOKING_NOT_FOUND');
+  }
+  if (direct && booking.source !== BookingSource.STAFF_MANUAL) {
+    throw new AppError(
+      'Đơn đặt trước cần khách xác nhận gia hạn qua app',
+      400,
+      'DIRECT_EXTENSION_NOT_ALLOWED',
+    );
+  }
+
+  const additionalFee = await calculateExtensionFee(booking, session, extraMinutes);
+  const extensionStart = session.plannedEndAt;
+  const proposedEnd = new Date(extensionStart.getTime() + extraMinutes * 60 * 1000);
+  const activeStatuses = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
+  if (!cafe) {
+    throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
+  }
+  const operatingHoursBlockedReason = getExtensionBlockedReason(cafe, booking, proposedEnd);
+  if (operatingHoursBlockedReason) {
+    throw new AppError(
+      `Không thể gia hạn thêm ${extraMinutes} phút vì ${operatingHoursBlockedReason.toLowerCase()}.`,
+      409,
+      'OPERATING_HOURS_EXCEEDED',
+    );
+  }
+  const trackConfig = await resolveBookingTrackConfig(booking);
+
+  const applyTrackScope = (query: SelectQueryBuilder<Booking>) => {
+    if (trackConfig) {
+      query.andWhere(
+        '(b.track_config_id = :trackConfigId OR (b.track_config_id IS NULL AND b.track_type_id = :trackTypeId))',
+        { trackConfigId: trackConfig.id, trackTypeId: booking.trackTypeId },
+      );
+    } else {
+      query.andWhere('b.track_type_id = :trackTypeId', { trackTypeId: booking.trackTypeId });
+    }
+    return query;
+  };
+
+  const buildOverlapQuery = () =>
+    applyTrackScope(
+      AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .where('b.cafe_id = :cafeId', { cafeId: booking.cafeId })
+        .andWhere('b.id != :bookingId', { bookingId: booking.id })
+        .andWhere('b.play_mode = :playMode', { playMode: booking.playMode })
+        .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
+        .andWhere('b.slot_start < :proposedEnd', { proposedEnd })
+        .andWhere('b.slot_end > :extensionStart', { extensionStart }),
+    );
+
+  if (booking.playMode === BookingMode.RENTAL) {
+    const sessionVehicleRows = await AppDataSource.getRepository(SessionVehicle).find({
       where: {
-        cafeId: booking.cafeId,
-        id: Not(booking.id),
-        status: Not(In([BookingStatus.CANCELLED, BookingStatus.NO_SHOW])),
-        slotStart: LessThan(proposedEnd),
-        slotEnd: MoreThan(booking.slotEnd),
+        sessionId,
+        vehicleSource: VehicleSource.RENTAL,
+        returnedAt: IsNull(),
       },
     });
-    if (conflict) {
+    let currentVehicleIds = sessionVehicleRows
+      .map((sv) => sv.vehicleId)
+      .filter((vehicleId): vehicleId is string => Boolean(vehicleId));
+
+    if (currentVehicleIds.length === 0) {
+      const bookingVehicles = await AppDataSource.getRepository(BookingVehicle).find({
+        where: { bookingId: booking.id },
+      });
+      currentVehicleIds = bookingVehicles.map((bv) => bv.vehicleId);
+    }
+
+    if (currentVehicleIds.length > 0) {
+      const vehicleConflict = await AppDataSource.getRepository(BookingVehicle)
+        .createQueryBuilder('bv')
+        .innerJoin(Booking, 'b', 'b.id = bv.booking_id')
+        .where('bv.vehicle_id IN (:...vehicleIds)', { vehicleIds: currentVehicleIds })
+        .andWhere('b.cafe_id = :cafeId', { cafeId: booking.cafeId })
+        .andWhere('b.id != :bookingId', { bookingId: booking.id })
+        .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
+        .andWhere('b.slot_start < :proposedEnd', { proposedEnd })
+        .andWhere('b.slot_end > :extensionStart', { extensionStart })
+        .select('b.slot_start', 'slotStart')
+        .orderBy('b.slot_start', 'ASC')
+        .getRawOne<{ slotStart: Date }>();
+
+      if (vehicleConflict) {
+        throw new AppError(
+          `Xe đang dùng đã có đơn đặt lịch lúc ${formatSlotTime(vehicleConflict.slotStart)}. Không thể gia hạn thêm ${extraMinutes} phút.`,
+          409,
+          'SLOT_CONFLICT',
+        );
+      }
+    }
+
+    const capacity = Number(trackConfig?.maxConcurrent ?? cafe.maxConcurrentBookings);
+    const overlaps = await buildOverlapQuery()
+      .select('b.id', 'bookingId')
+      .addSelect('b.slot_start', 'slotStart')
+      .orderBy('b.slot_start', 'ASC')
+      .getRawMany<{ bookingId: string; slotStart: Date }>();
+
+    if (overlaps.length + 1 > capacity) {
+      const firstConflictTime = overlaps[0]?.slotStart ?? extensionStart;
       throw new AppError(
-        `Slot tiếp theo đã có đơn đặt lịch (${conflict.slotStart.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}). Không thể gia hạn thêm ${extraMinutes} phút.`,
+        `Slot tiếp theo đã hết chỗ (${formatSlotTime(firstConflictTime)}). Không thể gia hạn thêm ${extraMinutes} phút.`,
+        409,
+        'SLOT_CONFLICT',
+      );
+    }
+  } else {
+    const capacity = Number(trackConfig?.byocCapacity ?? cafe.byocCapacity);
+    const overlapRows = await buildOverlapQuery()
+      .leftJoin(BookingParticipant, 'bp', 'bp.booking_id = b.id')
+      .select('b.id', 'bookingId')
+      .addSelect('b.slot_start', 'slotStart')
+      .addSelect('COUNT(bp.id)', 'participantCount')
+      .groupBy('b.id')
+      .addGroupBy('b.slot_start')
+      .orderBy('b.slot_start', 'ASC')
+      .getRawMany<{ bookingId: string; slotStart: Date; participantCount: string }>();
+
+    const occupiedPlayers = overlapRows.reduce(
+      (sum, row) => sum + Math.max(Number(row.participantCount) || 0, 1),
+      0,
+    );
+    const currentPlayers = Math.max(
+      await AppDataSource.getRepository(BookingParticipant).count({
+        where: { bookingId: booking.id },
+      }),
+      1,
+    );
+
+    if (occupiedPlayers + currentPlayers > capacity) {
+      const firstConflictTime = overlapRows[0]?.slotStart ?? extensionStart;
+      throw new AppError(
+        `Slot tiếp theo đã hết chỗ (${formatSlotTime(firstConflictTime)}). Không thể gia hạn thêm ${extraMinutes} phút.`,
         409,
         'SLOT_CONFLICT',
       );
@@ -1584,6 +1979,7 @@ export async function proposeExtension(
 
     if (booking) {
       booking.slotCount = Number(booking.slotCount) + Math.ceil(extraMinutes / 30);
+      booking.slotEnd = session.plannedEndAt;
       await AppDataSource.getRepository(Booking).save(booking);
 
       if (booking.customerId) {
@@ -1926,6 +2322,7 @@ export async function simulateClientExtensionResponse(
     if (booking) {
       booking.slotCount =
         Number(booking.slotCount) + Math.ceil(latestProposal.durationMinutes / 30);
+      booking.slotEnd = session.plannedEndAt;
       await AppDataSource.getRepository(Booking).save(booking);
     }
   }
@@ -2121,6 +2518,7 @@ export async function customerRespondExtension(
     session.actualTotalAmount =
       Number(session.actualTotalAmount) + Number(latestProposal.feeAmount);
     booking.slotCount = Number(booking.slotCount) + Math.ceil(latestProposal.durationMinutes / 30);
+    booking.slotEnd = session.plannedEndAt;
     await AppDataSource.getRepository(Booking).save(booking);
   }
   await AppDataSource.getRepository(Session).save(session);
@@ -2233,8 +2631,16 @@ export async function settleSessionCheckoutBilling(
   const newComponents: Partial<PaymentComponent>[] = [];
 
   if (totalExtensionFee > 0) {
-    const exists = existingComponents.some((c) => c.type === PaymentComponentType.EXTENSION_FEE);
-    if (!exists) {
+    const existingExtensionComp = existingComponents.find(
+      (c) => c.type === PaymentComponentType.EXTENSION_FEE,
+    );
+    if (existingExtensionComp) {
+      existingExtensionComp.amount = totalExtensionFee;
+      if (existingExtensionComp.status !== PaymentComponentStatus.DISBURSED) {
+        existingExtensionComp.status = PaymentComponentStatus.PENDING;
+      }
+      await compRepo.save(existingExtensionComp);
+    } else {
       newComponents.push({
         bookingId: booking.id,
         type: PaymentComponentType.EXTENSION_FEE,
@@ -2245,11 +2651,14 @@ export async function settleSessionCheckoutBilling(
   }
 
   if (totalOnsiteFnb > 0) {
-    const exists = existingComponents.some(
+    const existingOnsiteFnbComp = existingComponents.find(
       (c) =>
         c.type === PaymentComponentType.FB_PREORDER && c.status === PaymentComponentStatus.PENDING,
     );
-    if (!exists) {
+    if (existingOnsiteFnbComp) {
+      existingOnsiteFnbComp.amount = totalOnsiteFnb;
+      await compRepo.save(existingOnsiteFnbComp);
+    } else {
       newComponents.push({
         bookingId: booking.id,
         type: PaymentComponentType.FB_PREORDER,

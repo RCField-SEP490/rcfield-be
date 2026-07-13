@@ -86,7 +86,12 @@ export const vehicleController = {
       const result = await vehicleService.listVehicleUnits(
         cafeId,
         req.user ? { userId: req.user.userId, role: req.user.role } : undefined,
-        query,
+        {
+          status: query.status,
+          catalog_id: query.catalog_id,
+          search: query.search,
+          excludeRetired: query.exclude_retired,
+        },
       );
       res.json({ success: true, data: result });
     } catch (err) {
@@ -104,7 +109,12 @@ export const vehicleController = {
       const result = await vehicleService.listVehicleUnits(
         cafeId,
         req.user ? { userId: req.user.userId, role: req.user.role } : undefined,
-        { ...query, catalog_id: catalogId },
+        {
+          status: query.status,
+          search: query.search,
+          excludeRetired: query.exclude_retired,
+          catalog_id: catalogId,
+        },
       );
       res.json({ success: true, data: result });
     } catch (err) {
