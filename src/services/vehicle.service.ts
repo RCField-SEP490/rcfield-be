@@ -274,6 +274,7 @@ export async function listVehicleUnits(
         name: v.catalog.name,
         tier: v.catalog.tier,
         cover_image_url: v.catalog.coverImageUrl,
+        hourlyRate: Number(v.catalog.hourlyRate),
       },
       createdAt: v.createdAt,
     };

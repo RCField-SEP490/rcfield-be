@@ -374,7 +374,7 @@ export const staffController = {
   async settlePendingPayments(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const data = await staffService.settlePendingPayments(req.params.bookingId);
+      const data = await staffService.settlePendingPayments(req.params.bookingId, req.user.userId);
       res.json({ success: true, data });
     } catch (err) {
       next(err);

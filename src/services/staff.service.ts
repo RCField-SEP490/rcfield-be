@@ -2309,7 +2309,7 @@ export async function settleSessionCheckoutBilling(
   await sessionRepo.save(session);
 }
 
-export async function settlePendingPayments(bookingId: string): Promise<any> {
+export async function settlePendingPayments(bookingId: string, staffUserId: string): Promise<any> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
@@ -2408,12 +2408,13 @@ export async function settlePendingPayments(bookingId: string): Promise<any> {
 
   // ── NOTIFICATIONS ─────────────────────────────────────────────────────────
   try {
+    const shortRef = booking.id.substring(0, 8).toUpperCase();
     if (booking.customerId) {
       await createNotification(
         booking.customerId,
         NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
         'Thanh toán thành công',
-        `Đơn đặt ${booking.id.substring(0, 8).toUpperCase()} đã được quyết toán hoàn tất tại quầy.`,
+        `Đơn đặt #${shortRef} đã được quyết toán hoàn tất tại quầy.`,
       );
       wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
         bookingId,
@@ -2422,8 +2423,20 @@ export async function settlePendingPayments(bookingId: string): Promise<any> {
         netCounterAmount,
       });
     }
+    await createNotification(
+      staffUserId,
+      NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
+      'Quyết toán hoàn tất',
+      `Đơn đặt #${shortRef} đã được quyết toán thành công.`,
+    );
+    wsService.pushToUser(staffUserId, 'CUSTOMER_PAYMENT_CONFIRMED', {
+      bookingId,
+      totalCounterBill,
+      depositRefundAmount,
+      netCounterAmount,
+    });
   } catch (err) {
-    logger.error('SettlePendingNotification', 'Failed to notify customer', err);
+    logger.error('SettlePendingNotification', 'Failed to notify', err);
   }
 
   if (booking.status === BookingStatus.AWAITING_PAYMENT) {
