@@ -246,6 +246,15 @@ async function loadUsersMap(userIds: string[]) {
   return new Map(users.map((item) => [item.id, item]));
 }
 
+function getUserRacingProfile(user?: User | null) {
+  const profile = (user?.racing_profile ?? {}) as Record<string, unknown>;
+  return {
+    driverHandle: typeof profile.driver_handle === 'string' ? profile.driver_handle : null,
+    titleLabel:
+      typeof profile.current_title_label === 'string' ? profile.current_title_label : null,
+  };
+}
+
 async function loadLatestMatchMapForRegistrations(registrationIds: string[]) {
   if (registrationIds.length === 0) return new Map<string, Record<string, unknown>>();
 
@@ -391,6 +400,8 @@ async function mapContestRegistrationsPayload(
             full_name: user.full_name,
             email: user.email,
             avatar_url: user.avatar_url,
+            driver_handle: getUserRacingProfile(user).driverHandle,
+            driver_title_label: getUserRacingProfile(user).titleLabel,
           }
         : null,
       contest: contest ?? null,

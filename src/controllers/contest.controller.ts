@@ -19,6 +19,7 @@ import {
 } from '../validate';
 import * as contestService from '../services/contest.service';
 import * as contestRuntimeService from '../services/contest-runtime.service';
+import * as racingNetworkService from '../services/racing-network.service';
 
 function requireViewer(req: AuthRequest) {
   if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
@@ -410,6 +411,17 @@ export const contestController = {
     try {
       const viewer = requireViewer(req);
       const data = await contestRuntimeService.getContestMetrics(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // POST /api/v1/contests/:contestId/sync-race-records  [auth]
+  async syncRaceRecords(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await racingNetworkService.syncContestRaceRecords(req.params.contestId, viewer);
       res.json({ success: true, data });
     } catch (error) {
       next(error);

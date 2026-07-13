@@ -6,6 +6,7 @@ import { ContestMatchParticipant } from '../models/contest-match-participant.ent
 import { ContestMatch } from '../models/contest-match.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
 import { Contest } from '../models/contest.entity';
+import { RaceRecord } from '../models/race-record.entity';
 import { User } from '../models/user.entity';
 import {
   AppError,
@@ -14,6 +15,7 @@ import {
   ContestParticipantStatus,
   ContestRegistrationStatus,
   ContestStatus,
+  RaceRecordVerificationStatus,
   UserRole,
 } from '../types';
 import { Viewer } from './cafe.service';
@@ -145,6 +147,15 @@ async function loadUsersMap(userIds: string[]) {
   if (userIds.length === 0) return new Map<string, User>();
   const users = await AppDataSource.getRepository(User).findBy({ id: In(userIds) });
   return new Map(users.map((item) => [item.id, item]));
+}
+
+function getUserRacingProfile(user?: User | null) {
+  const profile = (user?.racing_profile ?? {}) as Record<string, unknown>;
+  return {
+    driverHandle: typeof profile.driver_handle === 'string' ? profile.driver_handle : null,
+    titleLabel:
+      typeof profile.current_title_label === 'string' ? profile.current_title_label : null,
+  };
 }
 
 async function loadContestMatches(contestId: string) {
@@ -304,6 +315,8 @@ async function mapMatchesPayload(contestId: string, viewer?: Viewer) {
               participant_name: user?.full_name ?? null,
               participant_email: user?.email ?? null,
               participant_avatar_url: user?.avatar_url ?? null,
+              driver_handle: getUserRacingProfile(user).driverHandle,
+              driver_title_label: getUserRacingProfile(user).titleLabel,
               status: registration.status,
               check_in_code: registration.checkInCode,
               checked_in_at: registration.checkedInAt,
@@ -857,6 +870,10 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
 
 type LeaderboardEntry = {
   registration_id: string;
+  user_id: string | null;
+  display_name: string | null;
+  driver_handle: string | null;
+  driver_title_label: string | null;
   wins: number;
   best_lap_ms: number | null;
   total_time_ms: number | null;
@@ -893,12 +910,26 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
   const participantsByMatch = await loadContestMatchParticipantsByMatch(
     completedMatches.map((item) => item.id),
   );
+  const registrationIds = Array.from(
+    new Set([...participantsByMatch.values()].flat().map((item) => item.registrationId)),
+  );
+  const registrationMap = await loadContestRegistrationsMap(registrationIds);
+  const userMap = await loadUsersMap(
+    Array.from(new Set(Array.from(registrationMap.values()).map((item) => item.userId))),
+  );
 
   const entryMap = new Map<string, LeaderboardEntry>();
   for (const match of completedMatches) {
     for (const participant of participantsByMatch.get(match.id) ?? []) {
+      const registration = registrationMap.get(participant.registrationId);
+      const user = registration ? (userMap.get(registration.userId) ?? null) : null;
+      const racing = getUserRacingProfile(user);
       const current = entryMap.get(participant.registrationId) ?? {
         registration_id: participant.registrationId,
+        user_id: registration?.userId ?? null,
+        display_name: user?.full_name ?? null,
+        driver_handle: racing.driverHandle,
+        driver_title_label: racing.titleLabel,
         wins: 0,
         best_lap_ms: null,
         total_time_ms: null,
@@ -1003,10 +1034,17 @@ export async function getContestMetrics(contestId: string, viewer: Viewer) {
     where: { contestId },
   });
   const matches = await loadContestMatches(contestId);
+  const raceRecordCount = await AppDataSource.getRepository(RaceRecord).count({
+    where: {
+      contestId,
+      verificationStatus: RaceRecordVerificationStatus.VERIFIED,
+    },
+  });
   const leaderboard = (contest.config?.published_leaderboard ?? null) as Record<
     string,
     unknown
   > | null;
+  const globalSync = (contest.config?.global_sync ?? null) as Record<string, unknown> | null;
 
   return {
     contest_id: contestId,
@@ -1035,6 +1073,12 @@ export async function getContestMetrics(contestId: string, viewer: Viewer) {
       published_at: leaderboard?.published_at ?? null,
       entry_count: Array.isArray(leaderboard?.entries) ? leaderboard.entries.length : 0,
       mode: leaderboard?.mode ?? getLeaderboardMode(contest),
+    },
+    global_sync: {
+      synced: raceRecordCount > 0,
+      synced_at: globalSync?.synced_at ?? null,
+      synced_count: Number(globalSync?.synced_count ?? raceRecordCount),
+      superseded_count: Number(globalSync?.superseded_count ?? 0),
     },
   };
 }

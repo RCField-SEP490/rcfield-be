@@ -49,6 +49,9 @@ export class User {
   @Column({ name: 'favorite_cafe_ids', type: 'uuid', array: true, default: [] })
   favorite_cafe_ids: string[];
 
+  @Column({ name: 'racing_profile', type: 'jsonb', default: {} })
+  racing_profile: Record<string, unknown>;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
 

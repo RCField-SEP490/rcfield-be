@@ -76,6 +76,13 @@ contestRouter.post(
   requireActiveProvider,
   contestController.publishLeaderboard,
 );
+contestRouter.post(
+  '/contests/:contestId/sync-race-records',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.syncRaceRecords,
+);
 contestRouter.get(
   '/contests/:contestId/audit-logs',
   authenticate,

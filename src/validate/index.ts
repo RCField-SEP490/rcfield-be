@@ -68,6 +68,33 @@ export const ChangePasswordSchema = z.object({
   new_password: z.string().min(6, 'Mật khẩu mới tối thiểu 6 ký tự').max(100),
 });
 
+export const UpdateDriverPassportSchema = z
+  .object({
+    driver_handle: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(
+        /^[a-zA-Z0-9._-]+$/,
+        'driver_handle chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang',
+      )
+      .optional(),
+    display_name: z.string().trim().min(2).max(120).optional(),
+    home_cafe_id: z.string().uuid().nullable().optional(),
+    public_profile_enabled: z.boolean().optional(),
+    leaderboard_opt_in: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
+
+export const GlobalLeaderboardQuerySchema = z.object({
+  period: z.enum(['daily', 'weekly', 'monthly', 'all_time']).optional().default('all_time'),
+  city: z.string().trim().min(1).max(100).optional(),
+  cafe_id: z.string().uuid().optional(),
+  vehicle_source: z.nativeEnum(VehicleSource).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional().default(50),
+});
+
 export const CreateStaffSchema = z.object({
   cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
   full_name: z.string().trim().min(2).max(255),

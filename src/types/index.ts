@@ -233,6 +233,19 @@ export enum ContestParticipantStatus {
   DQ = 'DQ',
 }
 
+export enum RaceRecordSourceType {
+  CONTEST = 'CONTEST',
+  SESSION_TIME_ATTACK = 'SESSION_TIME_ATTACK',
+  ADMIN_IMPORT = 'ADMIN_IMPORT',
+}
+
+export enum RaceRecordVerificationStatus {
+  PENDING = 'PENDING',
+  VERIFIED = 'VERIFIED',
+  REJECTED = 'REJECTED',
+  SUPERSEDED = 'SUPERSEDED',
+}
+
 export enum SessionVehicleStatus {
   ASSIGNED = 'ASSIGNED',
   IN_USE = 'IN_USE',
