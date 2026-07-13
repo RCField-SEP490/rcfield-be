@@ -23,9 +23,7 @@ contestRouter.get(
 contestRouter.get('/contests/:contestId', optionalAuthenticate, contestController.getContestById);
 contestRouter.get(
   '/contests/:contestId/matches',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
+  optionalAuthenticate,
   contestController.listMatches,
 );
 
@@ -161,28 +159,24 @@ contestRouter.post(
 contestRouter.patch(
   '/contest-matches/:matchId/participants',
   authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.updateMatchParticipants,
 );
 contestRouter.post(
   '/contest-matches/:matchId/results',
   authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.submitMatchResults,
 );
 contestRouter.post(
   '/contest-matches/:matchId/results/correct',
   authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.correctMatchResults,
 );
 contestRouter.post(
   '/contest-matches/:matchId/advance',
   authenticate,
-  authorize(UserRole.PROVIDER),
-  requireActiveProvider,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.advanceMatch,
 );

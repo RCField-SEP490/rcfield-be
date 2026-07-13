@@ -295,7 +295,7 @@ export const contestController = {
 
   async listMatches(req: AuthRequest, res: Response, next: NextFunction) {
     try {
-      const viewer = requireViewer(req);
+      const viewer = req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
       const data = await contestRuntimeService.listContestMatches(req.params.contestId, viewer);
       res.json({ success: true, data });
     } catch (error) {

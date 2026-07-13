@@ -10,6 +10,7 @@ import { ContestTemplate } from '../models/contest-template.entity';
 import { ContestType } from '../models/contest-type.entity';
 import { Contest } from '../models/contest.entity';
 import { TrackType } from '../models/track-type.entity';
+import { User } from '../models/user.entity';
 import {
   AppError,
   BookingStatus,
@@ -23,6 +24,7 @@ import {
   assertContestOwner,
   assertProviderViewer,
   getContestOrThrow,
+  isStaffAssignedToContest,
   writeContestAudit,
 } from './contest.helpers';
 import { Viewer } from './cafe.service';
@@ -218,6 +220,170 @@ async function mapContestPayload(contests: Contest[]) {
   });
 }
 
+async function loadUsersMap(userIds: string[]) {
+  if (userIds.length === 0) return new Map<string, User>();
+  const users = await AppDataSource.getRepository(User).findBy({ id: In(userIds) });
+  return new Map(users.map((item) => [item.id, item]));
+}
+
+async function loadLatestMatchMapForRegistrations(registrationIds: string[]) {
+  if (registrationIds.length === 0) return new Map<string, Record<string, unknown>>();
+
+  const rows = await AppDataSource.query<
+    {
+      registration_id: string;
+      participant_status: string;
+      finish_position: number | null;
+      is_winner: boolean;
+      match_id: string;
+      contest_id: string;
+      round_no: number;
+      match_no: number;
+      name: string | null;
+      match_status: string;
+      match_type: string;
+      scheduled_at: string | null;
+      started_at: string | null;
+      ended_at: string | null;
+      next_match_id: string | null;
+    }[]
+  >(
+    `SELECT DISTINCT ON (p.registration_id)
+       p.registration_id,
+       p.status AS participant_status,
+       p.finish_position,
+       p.is_winner,
+       m.id AS match_id,
+       m.contest_id,
+       m.round_no,
+       m.match_no,
+       m.name,
+       m.status AS match_status,
+       m.match_type,
+       m.scheduled_at,
+       m.started_at,
+       m.ended_at,
+       m.next_match_id
+     FROM contest_match_participants p
+     JOIN contest_matches m ON m.id = p.match_id
+     WHERE p.registration_id = ANY($1::uuid[])
+     ORDER BY p.registration_id, m.round_no DESC, m.match_no DESC, m.created_at DESC`,
+    [registrationIds],
+  );
+
+  return new Map(
+    rows.map((row) => [
+      row.registration_id,
+      {
+        match_id: row.match_id,
+        contest_id: row.contest_id,
+        round_no: row.round_no,
+        match_no: row.match_no,
+        name: row.name,
+        status: row.match_status,
+        match_type: row.match_type,
+        scheduled_at: row.scheduled_at,
+        started_at: row.started_at,
+        ended_at: row.ended_at,
+        next_match_id: row.next_match_id,
+        participant_status: row.participant_status,
+        finish_position: row.finish_position,
+        is_winner: row.is_winner,
+      },
+    ]),
+  );
+}
+
+function deriveCustomerJourneyStatus(
+  registration: ContestRegistration,
+  contest: { status: ContestStatus } | undefined,
+  latestMatch: Record<string, unknown> | undefined,
+) {
+  if (registration.status === ContestRegistrationStatus.CANCELLED) return 'CANCELLED';
+  if (registration.status === ContestRegistrationStatus.PENDING) return 'PENDING_APPROVAL';
+  if (registration.status === ContestRegistrationStatus.CONFIRMED)
+    return 'APPROVED_WAITING_CHECKIN';
+  if (!latestMatch) return 'READY_TO_RACE';
+
+  const matchStatus = String(latestMatch.status ?? '');
+  const isWinner = Boolean(latestMatch.is_winner);
+  if (contest?.status === ContestStatus.COMPLETED) return 'FINISHED';
+  if (
+    [ContestStatus.RUNNING, ContestStatus.CLOSED].includes(contest?.status ?? ContestStatus.DRAFT)
+  ) {
+    if (['READY', 'RUNNING', 'DRAFT'].includes(matchStatus)) return 'IN_BRACKET';
+    if (matchStatus === 'COMPLETED' && isWinner) return 'ADVANCED';
+    if (matchStatus === 'COMPLETED' && !isWinner) return 'ELIMINATED';
+  }
+
+  return 'CHECKED_IN';
+}
+
+async function mapContestRegistrationsPayload(
+  registrations: ContestRegistration[],
+  options?: { includeContest?: boolean },
+) {
+  const userMap = await loadUsersMap(
+    Array.from(new Set(registrations.map((item) => item.userId).filter(Boolean))),
+  );
+  const contestMap = options?.includeContest
+    ? new Map(
+        (
+          await mapContestPayload(
+            await AppDataSource.getRepository(Contest).findBy({
+              id: In(Array.from(new Set(registrations.map((item) => item.contestId)))),
+            }),
+          )
+        ).map((item) => [item.id, item]),
+      )
+    : new Map<string, Awaited<ReturnType<typeof mapContestPayload>>[number]>();
+  const latestMatchMap = await loadLatestMatchMapForRegistrations(
+    registrations.map((item) => item.id),
+  );
+
+  return registrations.map((registration) => {
+    const user = userMap.get(registration.userId);
+    const contest = contestMap.get(registration.contestId);
+    const latestMatch = latestMatchMap.get(registration.id);
+
+    return {
+      id: registration.id,
+      contest_id: registration.contestId,
+      user_id: registration.userId,
+      status: registration.status,
+      vehicle_source: registration.vehicleSource,
+      vehicle_id: registration.vehicleId,
+      customer_vehicle_id: registration.customerVehicleId,
+      booking_id: registration.bookingId,
+      check_in_code: registration.checkInCode,
+      checked_in_cafe_id: registration.checkedInCafeId,
+      checked_in_by: registration.checkedInBy,
+      checked_in_at: registration.checkedInAt,
+      payment_status: registration.paymentStatus,
+      entry_fee_amount: Number(registration.entryFeeAmount ?? 0),
+      cancellation_reason: registration.cancellationReason,
+      metadata: registration.metadata ?? {},
+      created_at: registration.createdAt,
+      updated_at: registration.updatedAt,
+      participant: user
+        ? {
+            id: user.id,
+            full_name: user.full_name,
+            email: user.email,
+            avatar_url: user.avatar_url,
+          }
+        : null,
+      contest: contest ?? null,
+      latest_match: latestMatch ?? null,
+      customer_journey_status: deriveCustomerJourneyStatus(
+        registration,
+        contest ? { status: contest.status } : undefined,
+        latestMatch,
+      ),
+    };
+  });
+}
+
 async function resolveCatalogOrThrow(
   contestTypeId: string,
   contestFormatId: string,
@@ -357,10 +523,44 @@ export async function listContests(options: ListContestsOptions) {
 export async function getContestDetail(contestId: string, viewer?: Viewer) {
   const contest = await getContestOrThrow(contestId);
   const isOwner = viewer?.role === UserRole.PROVIDER && contest.providerId === viewer.userId;
-  if (!isOwner && [ContestStatus.DRAFT, ContestStatus.CANCELLED].includes(contest.status)) {
+  const isAssignedStaff =
+    viewer?.role === UserRole.STAFF
+      ? await isStaffAssignedToContest(contestId, viewer.userId)
+      : false;
+  const isRegisteredCustomer =
+    viewer?.role === UserRole.CUSTOMER
+      ? Boolean(
+          await AppDataSource.getRepository(ContestRegistration).findOne({
+            where: { contestId, userId: viewer.userId },
+          }),
+        )
+      : false;
+
+  if (
+    !isOwner &&
+    !isAssignedStaff &&
+    !isRegisteredCustomer &&
+    [ContestStatus.DRAFT, ContestStatus.CANCELLED].includes(contest.status)
+  ) {
     throw new AppError('Contest chưa được công khai', 404, 'CONTEST_NOT_PUBLIC');
   }
   const [payload] = await mapContestPayload([contest]);
+
+  if (viewer?.role === UserRole.CUSTOMER) {
+    const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+      where: { contestId, userId: viewer.userId },
+    });
+    if (registration) {
+      const [mappedRegistration] = await mapContestRegistrationsPayload([registration], {
+        includeContest: false,
+      });
+      return {
+        ...payload,
+        my_registration: mappedRegistration,
+      };
+    }
+  }
+
   return payload;
 }
 
@@ -676,7 +876,8 @@ export async function createContestRegistration(
     afterJson: { status: saved.status, paymentStatus: saved.paymentStatus },
   });
 
-  return saved;
+  const [mapped] = await mapContestRegistrationsPayload([saved], { includeContest: true });
+  return mapped;
 }
 
 export async function listMyContestRegistrations(viewer: Viewer) {
@@ -684,15 +885,16 @@ export async function listMyContestRegistrations(viewer: Viewer) {
     where: { userId: viewer.userId },
     order: { createdAt: 'DESC' },
   });
-  return rows;
+  return mapContestRegistrationsPayload(rows, { includeContest: true });
 }
 
 export async function listContestRegistrations(contestId: string, viewer: Viewer) {
   await assertContestOwner(contestId, viewer);
-  return AppDataSource.getRepository(ContestRegistration).find({
+  const rows = await AppDataSource.getRepository(ContestRegistration).find({
     where: { contestId },
     order: { createdAt: 'DESC' },
   });
+  return mapContestRegistrationsPayload(rows, { includeContest: false });
 }
 
 async function getContestRegistrationForOwner(registrationId: string, viewer: Viewer) {
@@ -721,7 +923,8 @@ export async function markEntryFeePaid(registrationId: string, viewer: Viewer, n
     afterJson: { paymentStatus: registration.paymentStatus },
     reason: note ?? null,
   });
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
+  return mapped;
 }
 
 export async function waiveEntryFee(registrationId: string, viewer: Viewer, note?: string) {
@@ -740,7 +943,8 @@ export async function waiveEntryFee(registrationId: string, viewer: Viewer, note
     afterJson: { paymentStatus: registration.paymentStatus },
     reason: note ?? null,
   });
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
+  return mapped;
 }
 
 export async function approveRegistration(registrationId: string, viewer: Viewer, reason?: string) {
@@ -770,7 +974,8 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
     afterJson: { status: registration.status },
     reason: reason ?? null,
   });
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
+  return mapped;
 }
 
 export async function rejectRegistration(registrationId: string, viewer: Viewer, reason?: string) {
@@ -789,7 +994,8 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
     afterJson: { status: registration.status },
     reason: registration.cancellationReason,
   });
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
+  return mapped;
 }
 
 export async function cancelRegistration(registrationId: string, viewer: Viewer, reason?: string) {
@@ -818,7 +1024,8 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
     afterJson: { status: registration.status },
     reason: registration.cancellationReason,
   });
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
+  return mapped;
 }
 
 export async function lookupRegistrationByCode(
@@ -850,7 +1057,8 @@ export async function lookupRegistrationByCode(
   });
   if (!registration)
     throw new AppError('Không tìm thấy registration', 404, 'REGISTRATION_NOT_FOUND');
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: true });
+  return mapped;
 }
 
 export async function checkInRegistration(
@@ -916,5 +1124,6 @@ export async function checkInRegistration(
     eventType: 'registration.checked_in',
     afterJson: { status: registration.status, checkedInCafeId },
   });
-  return registration;
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: true });
+  return mapped;
 }

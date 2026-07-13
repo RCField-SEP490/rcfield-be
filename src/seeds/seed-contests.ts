@@ -5,11 +5,17 @@ import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 
 const SEED_CONTEST_PREFIX = '[SEED-CONTEST]';
+const CONTEST_STORY_DATE = new Date('2026-07-14T09:00:00+07:00');
+const VICTORY_CHALLENGE_SOURCE_URL =
+  'https://baokhanhhoa.vn/the-thao/202605/giai-dua-xe-o-to-the-thao-dia-hinh-quoc-te-victory-challenge-2026-tro-lai-nha-trang-42b4cb8/';
+const VICTORY_CHALLENGE_BANNER_URL =
+  'https://baokhanhhoa.vn/file/e7837c02857c8ca30185a8c39b582c03/052026/poster_victory_20260513161312.jpg';
 const TEST_CUSTOMERS = [
-  { email: 'contest.customer1@gmail.com', full_name: 'Contest Customer 1' },
-  { email: 'contest.customer2@gmail.com', full_name: 'Contest Customer 2' },
-  { email: 'contest.customer3@gmail.com', full_name: 'Contest Customer 3' },
-  { email: 'contest.customer4@gmail.com', full_name: 'Contest Customer 4' },
+  { email: 'customer@gmail.com', full_name: 'Khách Hàng' },
+  { email: 'contest.customer1@gmail.com', full_name: 'Nguyễn Hoàng Phúc' },
+  { email: 'contest.customer2@gmail.com', full_name: 'Trần Gia Bảo' },
+  { email: 'contest.customer3@gmail.com', full_name: 'Lê Minh Quân' },
+  { email: 'contest.customer4@gmail.com', full_name: 'Phạm Nhật Nam' },
 ];
 
 type SeedUser = {
@@ -50,11 +56,19 @@ async function ensureContestSchemaReady(): Promise<void> {
 }
 
 async function ensureUser(email: string, fullName: string): Promise<SeedUser> {
-  const [existing] = await AppDataSource.query<SeedUser[]>(
-    `SELECT id, email FROM users WHERE email = $1 LIMIT 1`,
+  const [existing] = await AppDataSource.query<(SeedUser & { full_name: string })[]>(
+    `SELECT id, email, full_name FROM users WHERE email = $1 LIMIT 1`,
     [email],
   );
-  if (existing) return existing;
+  if (existing) {
+    if (existing.full_name !== fullName) {
+      await AppDataSource.query(`UPDATE users SET full_name = $2 WHERE id = $1`, [
+        existing.id,
+        fullName,
+      ]);
+    }
+    return { id: existing.id, email: existing.email };
+  }
 
   const passwordHash = await bcrypt.hash('123456', 10);
   const [created] = await AppDataSource.query<SeedUser[]>(
@@ -423,15 +437,16 @@ async function main() {
 
   await cleanupSeedContests();
 
-  const now = new Date();
+  const now = new Date(CONTEST_STORY_DATE);
   const oneHour = 60 * 60 * 1000;
   const oneDay = 24 * oneHour;
 
   const draftContestId = await insertContest({
     cafeId: hostCafe.id,
     providerId,
-    name: `${SEED_CONTEST_PREFIX} Draft Provider Setup`,
-    description: 'Contest nhap de test managed list va detail cho provider.',
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Cup 2026 - Bản Nháp Điều Hành`,
+    description:
+      'Bản nháp nội bộ để provider hoàn thiện poster, điều lệ, cơ cấu giải thưởng và danh sách chi nhánh tham gia trước khi mở công khai.',
     status: 'DRAFT',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -449,7 +464,13 @@ async function main() {
       drivers_per_match: 2,
       seeding_mode: 'MANUAL',
       auto_bye: true,
+      competition_mechanic: 'HEAD_TO_HEAD_ELIMINATION',
+      rulebook: {
+        source_reference: VICTORY_CHALLENGE_SOURCE_URL,
+        race_day_date: '2026-07-14',
+      },
     },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(draftContestId, hostCafe.id, 'HOST', 0);
   if (secondaryCafe) await addContestCafe(draftContestId, secondaryCafe.id, 'PARTICIPATING', 1);
@@ -464,8 +485,9 @@ async function main() {
   const openContestId = await insertContest({
     cafeId: hostCafe.id,
     providerId,
-    name: `${SEED_CONTEST_PREFIX} Open Registration Drift Cup`,
-    description: 'Contest dang mo de FE test list, detail va registration dashboard.',
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Sprint Qualifier 2026`,
+    description:
+      'Vòng tuyển chọn đang mở đăng ký cho giải đối kháng 1v1. Người chơi đủ điều kiện sẽ được xếp seed theo thứ tự check-in trước ngày đua 14/07/2026.',
     status: 'OPEN',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -483,11 +505,15 @@ async function main() {
       drivers_per_match: 2,
       seeding_mode: 'MANUAL',
       auto_bye: true,
+      competition_mechanic: 'QUALIFIER_TO_KNOCKOUT',
+      source_reference: VICTORY_CHALLENGE_SOURCE_URL,
       prizes: [
-        { rank: 1, title: 'Champion', description: 'Voucher 1.000.000 VND' },
-        { rank: 2, title: 'Runner-up', description: 'Voucher 500.000 VND' },
+        { rank: 1, title: 'Champion', description: 'Cúp vô địch + voucher 1.500.000 VND' },
+        { rank: 2, title: 'Runner-up', description: 'Huy chương bạc + voucher 800.000 VND' },
+        { rank: 3, title: 'Top 3', description: 'Huy chương đồng + voucher 500.000 VND' },
       ],
     },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(openContestId, hostCafe.id, 'HOST', 0);
   if (secondaryCafe) await addContestCafe(openContestId, secondaryCafe.id, 'PARTICIPATING', 1);
@@ -530,8 +556,9 @@ async function main() {
   const runningContestId = await insertContest({
     cafeId: hostCafe.id,
     providerId,
-    name: `${SEED_CONTEST_PREFIX} Running Knockout Night`,
-    description: 'Contest dang runtime de test registrations, matches, audit log va metrics.',
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Cup 2026 - Nhánh Đối Kháng`,
+    description:
+      'Giải đang diễn ra trong ngày 14/07/2026. Người chơi check-in tại RC Arena Hà Nội, thi đấu loại trực tiếp 1v1 và staff có thể xử lý tại chi nhánh được phân công.',
     status: 'RUNNING',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -550,7 +577,14 @@ async function main() {
       seeding_mode: 'CHECK_IN_ORDER',
       auto_bye: true,
       leaderboard_mode: 'KNOCKOUT_WINS',
+      competition_mechanic: 'HEAD_TO_HEAD_ELIMINATION',
+      source_reference: VICTORY_CHALLENGE_SOURCE_URL,
+      prizes: [
+        { rank: 1, title: 'Nhà vô địch', description: 'Cúp + bộ pin drift race spec' },
+        { rank: 2, title: 'Á quân', description: 'Voucher bảo dưỡng xe RC 700.000 VND' },
+      ],
     },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(runningContestId, hostCafe.id, 'HOST', 0);
 
@@ -610,7 +644,7 @@ async function main() {
     cafeId: hostCafe.id,
     roundNo: 2,
     matchNo: 1,
-    name: 'Final 1',
+    name: 'Chung kết',
     matchType: 'FINAL',
     status: 'DRAFT',
     scheduledAt: new Date(now.getTime() + oneHour),
@@ -622,7 +656,7 @@ async function main() {
     cafeId: hostCafe.id,
     roundNo: 1,
     matchNo: 1,
-    name: 'Round 1 Match 1',
+    name: 'Bán kết 1',
     matchType: 'HEAD_TO_HEAD',
     status: 'COMPLETED',
     nextMatchId: runningFinalId,
@@ -640,7 +674,7 @@ async function main() {
     cafeId: hostCafe.id,
     roundNo: 1,
     matchNo: 2,
-    name: 'Round 1 Match 2',
+    name: 'Bán kết 2',
     matchType: 'HEAD_TO_HEAD',
     status: 'READY',
     nextMatchId: runningFinalId,
@@ -720,8 +754,9 @@ async function main() {
   const completedContestId = await insertContest({
     cafeId: hostCafe.id,
     providerId,
-    name: `${SEED_CONTEST_PREFIX} Completed Time Trial Finals`,
-    description: 'Contest da publish leaderboard de FE test detail, metrics va ranking.',
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Time Attack 2026`,
+    description:
+      'Nội dung time attack đã hoàn tất và đã publish leaderboard, dùng để FE test bảng xếp hạng cuối giải và lịch sử thi đấu.',
     status: 'COMPLETED',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -739,6 +774,13 @@ async function main() {
       drivers_per_match: 1,
       seeding_mode: 'CHECK_IN_ORDER',
       leaderboard_mode: 'BEST_LAP',
+      competition_mechanic: 'TIME_ATTACK_BEST_LAP',
+      source_reference: VICTORY_CHALLENGE_SOURCE_URL,
+      prizes: [
+        { rank: 1, title: 'Fastest Lap', description: 'Cúp best lap + voucher 1.000.000 VND' },
+        { rank: 2, title: 'Top 2', description: 'Voucher 600.000 VND' },
+        { rank: 3, title: 'Top 3', description: 'Voucher 300.000 VND' },
+      ],
       published_leaderboard: {
         mode: 'BEST_LAP',
         match_count: 3,
@@ -778,6 +820,7 @@ async function main() {
         ],
       },
     },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(completedContestId, hostCafe.id, 'HOST', 0);
 
@@ -870,7 +913,7 @@ async function main() {
     cafeId: hostCafe.id,
     roundNo: 1,
     matchNo: 1,
-    name: 'Time Trial 1',
+    name: 'Lượt chạy 1',
     matchType: 'TIME_ATTACK',
     status: 'COMPLETED',
     scheduledAt: new Date(now.getTime() - oneDay * 5),
@@ -892,7 +935,7 @@ async function main() {
     cafeId: hostCafe.id,
     roundNo: 1,
     matchNo: 2,
-    name: 'Time Trial 2',
+    name: 'Lượt chạy 2',
     matchType: 'TIME_ATTACK',
     status: 'COMPLETED',
     scheduledAt: new Date(now.getTime() - oneDay * 5 + 15 * 60 * 1000),
@@ -914,7 +957,7 @@ async function main() {
     cafeId: hostCafe.id,
     roundNo: 1,
     matchNo: 3,
-    name: 'Time Trial 3',
+    name: 'Lượt chạy 3',
     matchType: 'TIME_ATTACK',
     status: 'COMPLETED',
     scheduledAt: new Date(now.getTime() - oneDay * 5 + 30 * 60 * 1000),

@@ -6,6 +6,7 @@ import { ContestMatchParticipant } from '../models/contest-match-participant.ent
 import { ContestMatch } from '../models/contest-match.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
 import { Contest } from '../models/contest.entity';
+import { User } from '../models/user.entity';
 import {
   AppError,
   ContestMatchStatus,
@@ -13,9 +14,16 @@ import {
   ContestParticipantStatus,
   ContestRegistrationStatus,
   ContestStatus,
+  UserRole,
 } from '../types';
 import { Viewer } from './cafe.service';
-import { assertContestOwner, writeContestAudit } from './contest.helpers';
+import {
+  assertContestOwner,
+  getContestOrThrow,
+  isStaffAssignedToCafe,
+  isStaffAssignedToContest,
+  writeContestAudit,
+} from './contest.helpers';
 
 type GenerateMatchesBody = {
   cafe_id: string;
@@ -126,6 +134,12 @@ async function loadContestRegistrationsMap(registrationIds: string[]) {
   return new Map(registrations.map((item) => [item.id, item]));
 }
 
+async function loadUsersMap(userIds: string[]) {
+  if (userIds.length === 0) return new Map<string, User>();
+  const users = await AppDataSource.getRepository(User).findBy({ id: In(userIds) });
+  return new Map(users.map((item) => [item.id, item]));
+}
+
 async function loadContestMatches(contestId: string) {
   return AppDataSource.getRepository(ContestMatch).find({
     where: { contestId },
@@ -145,6 +159,53 @@ async function loadContestMatchParticipantsByMatch(matchIds: string[]) {
     map.set(participant.matchId, list);
     return map;
   }, new Map());
+}
+
+async function assertViewerCanViewContestMatches(contestId: string, viewer?: Viewer) {
+  const contest = await getContestOrThrow(contestId);
+  const isPublicContest = ![ContestStatus.DRAFT, ContestStatus.CANCELLED].includes(contest.status);
+
+  if (!viewer) {
+    if (!isPublicContest) {
+      throw new AppError('Contest chưa được công khai', 404, 'CONTEST_NOT_PUBLIC');
+    }
+    return contest;
+  }
+
+  if (viewer.role === UserRole.PROVIDER && contest.providerId === viewer.userId) return contest;
+
+  if (viewer.role === UserRole.STAFF) {
+    const assigned = await isStaffAssignedToContest(contestId, viewer.userId);
+    if (assigned) return contest;
+  }
+
+  if (viewer.role === UserRole.CUSTOMER) {
+    const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+      where: { contestId, userId: viewer.userId },
+    });
+    if (registration) return contest;
+  }
+
+  if (isPublicContest) return contest;
+
+  throw new AppError('Bạn không có quyền xem bracket của contest này', 403, 'FORBIDDEN');
+}
+
+async function assertViewerCanOperateMatch(match: ContestMatch, viewer: Viewer) {
+  if (viewer.role === UserRole.PROVIDER) {
+    await assertContestOwner(match.contestId, viewer);
+    return;
+  }
+
+  if (viewer.role === UserRole.STAFF) {
+    const assigned = await isStaffAssignedToCafe(viewer.userId, match.cafeId);
+    if (!assigned) {
+      throw new AppError('Staff không được thao tác match ở chi nhánh này', 403, 'FORBIDDEN');
+    }
+    return;
+  }
+
+  throw new AppError('Forbidden', 403, 'FORBIDDEN');
 }
 
 function inferMatchWinners(
@@ -179,7 +240,7 @@ function inferMatchWinners(
   return ranked.slice(0, winnersToAdvance);
 }
 
-async function mapMatchesPayload(contestId: string) {
+async function mapMatchesPayload(contestId: string, viewer?: Viewer) {
   const matches = await loadContestMatches(contestId);
   const participantsByMatch = await loadContestMatchParticipantsByMatch(
     matches.map((item) => item.id),
@@ -188,6 +249,9 @@ async function mapMatchesPayload(contestId: string) {
     new Set([...participantsByMatch.values()].flat().map((item) => item.registrationId)),
   );
   const registrationMap = await loadContestRegistrationsMap(registrationIds);
+  const usersMap = await loadUsersMap(
+    Array.from(new Set(Array.from(registrationMap.values()).map((item) => item.userId))),
+  );
 
   return matches.map((match) => ({
     id: match.id,
@@ -210,6 +274,7 @@ async function mapMatchesPayload(contestId: string) {
     decided_at: match.decidedAt,
     participants: (participantsByMatch.get(match.id) ?? []).map((participant) => {
       const registration = registrationMap.get(participant.registrationId);
+      const user = registration ? (usersMap.get(registration.userId) ?? null) : null;
       return {
         id: participant.id,
         registration_id: participant.registrationId,
@@ -229,9 +294,14 @@ async function mapMatchesPayload(contestId: string) {
           ? {
               id: registration.id,
               user_id: registration.userId,
+              participant_name: user?.full_name ?? null,
+              participant_email: user?.email ?? null,
+              participant_avatar_url: user?.avatar_url ?? null,
               status: registration.status,
               check_in_code: registration.checkInCode,
               checked_in_at: registration.checkedInAt,
+              is_my_registration:
+                viewer?.role === UserRole.CUSTOMER && registration.userId === viewer.userId,
             }
           : null,
       };
@@ -336,9 +406,9 @@ async function protectDownstreamCorrection(match: ContestMatch, forceCascade: bo
   }
 }
 
-export async function listContestMatches(contestId: string, viewer: Viewer) {
-  await assertContestOwner(contestId, viewer);
-  return mapMatchesPayload(contestId);
+export async function listContestMatches(contestId: string, viewer?: Viewer) {
+  await assertViewerCanViewContestMatches(contestId, viewer);
+  return mapMatchesPayload(contestId, viewer);
 }
 
 export async function generateContestMatches(
@@ -486,7 +556,7 @@ export async function generateContestMatches(
     },
   });
 
-  return mapMatchesPayload(contestId);
+  return mapMatchesPayload(contestId, viewer);
 }
 
 export async function updateMatchParticipants(
@@ -495,7 +565,7 @@ export async function updateMatchParticipants(
   body: MatchParticipantUpdateBody,
 ) {
   const { match, participants } = await loadMatchBundle(matchId);
-  await assertContestOwner(match.contestId, viewer);
+  await assertViewerCanOperateMatch(match, viewer);
 
   if (match.status === ContestMatchStatus.COMPLETED) {
     throw new AppError('Không thể đổi participant khi match đã hoàn tất', 400, 'MATCH_COMPLETED');
@@ -544,12 +614,13 @@ export async function updateMatchParticipants(
     afterJson: { participants: body.participants },
   });
 
-  return mapMatchesPayload(match.contestId);
+  return mapMatchesPayload(match.contestId, viewer);
 }
 
 export async function submitMatchResults(matchId: string, viewer: Viewer, body: SubmitResultsBody) {
   const { match, participants } = await loadMatchBundle(matchId);
-  const contest = await assertContestOwner(match.contestId, viewer);
+  await assertViewerCanOperateMatch(match, viewer);
+  const contest = await getContestOrThrow(match.contestId);
   if (participants.length === 0) {
     throw new AppError('Match chưa có participant', 400, 'MATCH_HAS_NO_PARTICIPANTS');
   }
@@ -623,7 +694,7 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
     reason: body.reason,
   });
 
-  return mapMatchesPayload(match.contestId);
+  return mapMatchesPayload(match.contestId, viewer);
 }
 
 export async function correctMatchResults(
@@ -632,7 +703,11 @@ export async function correctMatchResults(
   body: CorrectResultsBody,
 ) {
   const { match } = await loadMatchBundle(matchId);
-  await assertContestOwner(match.contestId, viewer);
+  await assertViewerCanOperateMatch(match, viewer);
+
+  if (viewer.role === UserRole.STAFF && body.force_cascade) {
+    throw new AppError('Staff không được force cascade khi sửa kết quả', 403, 'FORBIDDEN');
+  }
 
   if (match.status !== ContestMatchStatus.COMPLETED) {
     throw new AppError('Chỉ sửa được match đã hoàn tất', 400, 'MATCH_NOT_COMPLETED');
@@ -680,7 +755,7 @@ export async function correctMatchResults(
 
 export async function advanceMatch(matchId: string, viewer: Viewer) {
   const { match, participants } = await loadMatchBundle(matchId);
-  await assertContestOwner(match.contestId, viewer);
+  await assertViewerCanOperateMatch(match, viewer);
 
   if (!match.nextMatchId) {
     throw new AppError('Match này không có round kế tiếp để advance', 400, 'MATCH_NO_NEXT_ROUND');
@@ -752,7 +827,7 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
     afterJson: { next_match_id: nextMatch.id, winners: winners.map((item) => item.registrationId) },
   });
 
-  return mapMatchesPayload(match.contestId);
+  return mapMatchesPayload(match.contestId, viewer);
 }
 
 type LeaderboardEntry = {
