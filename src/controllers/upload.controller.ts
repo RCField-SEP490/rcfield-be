@@ -29,11 +29,21 @@ export const uploadController = {
         .replace(/[^a-zA-Z0-9-_]/g, '-')
         .toLowerCase()
         .slice(0, 40);
-      const result = await uploadImage({
-        buffer: file.buffer,
-        folder: `rcfield/uploads/${safeUsage}/${req.user.userId}`,
-        publicIdPrefix: `${safeUsage}-${req.user.userId}`,
-      });
+      let result: { publicId: string; url: string };
+      try {
+        result = await uploadImage({
+          buffer: file.buffer,
+          folder: `rcfield/uploads/${safeUsage}/${req.user.userId}`,
+          publicIdPrefix: `${safeUsage}-${req.user.userId}`,
+        });
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(
+          'Không thể upload ảnh lên dịch vụ lưu trữ. Vui lòng thử lại.',
+          502,
+          'IMAGE_UPLOAD_FAILED',
+        );
+      }
 
       res.status(201).json({ success: true, data: result });
     } catch (err) {

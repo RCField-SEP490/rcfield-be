@@ -120,8 +120,8 @@ export async function purchasePackage(
       txnRef,
       orderInfo: `RCField package ${savedCp.id.substring(0, 8)}`,
       ipAddr,
-      bankCode: 'VNBANK',
       returnUrl: customReturnUrl,
+      bankCode: 'VNBANK',
     });
   }
 

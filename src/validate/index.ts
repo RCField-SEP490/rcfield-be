@@ -839,6 +839,25 @@ export const NotificationQuerySchema = z.object({
     .transform((v) => v === 'true'),
 });
 
+export const RegisterPushTokenSchema = z.object({
+  token: z
+    .string()
+    .min(10)
+    .max(500)
+    .refine(
+      (value) => value.startsWith('ExpoPushToken[') || value.startsWith('ExponentPushToken['),
+      'Expo push token không hợp lệ',
+    ),
+  platform: z.enum(['ios', 'android', 'web']).optional(),
+  device_id: z.string().max(255).nullable().optional(),
+  device_name: z.string().max(255).nullable().optional(),
+  app_version: z.string().max(50).nullable().optional(),
+});
+
+export const UnregisterPushTokenSchema = z.object({
+  token: z.string().min(10).max(500),
+});
+
 export const AdminPaymentRequestQuerySchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'REJECTED']).optional(),
   page: z.coerce.number().int().positive().optional().default(1),

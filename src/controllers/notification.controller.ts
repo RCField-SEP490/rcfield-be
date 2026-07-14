@@ -1,6 +1,10 @@
 import { Response, NextFunction } from 'express';
 import { AppError, AuthRequest } from '../types';
-import { NotificationQuerySchema } from '../validate';
+import {
+  NotificationQuerySchema,
+  RegisterPushTokenSchema,
+  UnregisterPushTokenSchema,
+} from '../validate';
 import * as notificationService from '../services/notification.service';
 
 // GET /api/v1/provider/notifications  [auth]
@@ -48,6 +52,52 @@ export async function markNotificationRead(
 ): Promise<void> {
   try {
     await notificationService.markRead(req.params.id, req.user!.userId);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/v1/notifications/push-tokens [auth]
+export async function registerPushToken(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const parsed = RegisterPushTokenSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return next(new AppError(parsed.error.errors[0].message, 400, 'VALIDATION_ERROR'));
+    }
+
+    const token = await notificationService.registerPushToken(req.user!.userId, parsed.data);
+    res.status(201).json({
+      success: true,
+      data: {
+        id: token.id,
+        token: token.token,
+        platform: token.platform,
+        lastSeenAt: token.lastSeenAt,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// DELETE /api/v1/notifications/push-tokens [auth]
+export async function unregisterPushToken(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const parsed = UnregisterPushTokenSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return next(new AppError(parsed.error.errors[0].message, 400, 'VALIDATION_ERROR'));
+    }
+
+    await notificationService.unregisterPushToken(req.user!.userId, parsed.data.token);
     res.json({ success: true });
   } catch (err) {
     next(err);

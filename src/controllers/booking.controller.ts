@@ -94,7 +94,11 @@ export const bookingController = {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
       }
 
-      const result = await createCheckoutAdditionalPaymentUrl(bookingId, ipAddr);
+      const result = await createCheckoutAdditionalPaymentUrl(
+        bookingId,
+        ipAddr,
+        req.body?.return_url,
+      );
       res.status(201).json({ success: true, data: result });
     } catch (err) {
       next(err);
