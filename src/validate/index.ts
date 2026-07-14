@@ -785,7 +785,9 @@ export const CheckAvailabilitySchema = z.object({
 
 // ── customer_packages ─────────────────────────────────────────────────────────
 
-export const PurchasePackageSchema = z.object({});
+export const PurchasePackageSchema = z.object({
+  return_url: z.string().url().optional(),
+});
 
 export const ListMyPackagesQuerySchema = z.object({
   status: z.nativeEnum(CustomerPackageStatus).optional(),

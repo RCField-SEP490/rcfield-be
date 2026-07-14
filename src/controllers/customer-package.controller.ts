@@ -37,6 +37,7 @@ export const customerPackageController = {
         req.params.packageId,
         viewer,
         ipAddr,
+        req.body?.return_url,
       );
       res.json({ success: true, data });
     } catch (err) {
