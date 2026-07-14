@@ -414,7 +414,7 @@ export const MyContestRegistrationsQuerySchema = z.object({
     .enum([
       'PENDING_APPROVAL',
       'APPROVED_WAITING_CHECKIN',
-      'READY_TO_RACE',
+      'CHECKED_IN_WAITING_BRACKET',
       'IN_BRACKET',
       'ADVANCED',
       'ELIMINATED',

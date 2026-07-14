@@ -37,6 +37,7 @@ import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
 import { getEffectiveMultiplier } from './pricing.service';
 import { validatePromoCode } from './promotion.service';
+import { assertBookingNotBlockedByContest } from './contest-lock.service';
 import type { Promotion } from '../models/promotion.entity';
 
 // ── State machine ─────────────────────────────────────────────────────────────
@@ -453,6 +454,14 @@ export async function createBooking(
       where: { id: resolvedTrackConfig.trackTypeId },
     });
   }
+
+  await assertBookingNotBlockedByContest({
+    cafeId: body.cafe_id,
+    slotStart,
+    slotEnd,
+    trackConfigId: resolvedTrackConfig?.id ?? null,
+    trackTypeId: resolvedTrackConfig?.trackTypeId ?? body.track_type_id ?? null,
+  });
 
   if (body.play_mode === BookingMode.BYOC) {
     const capacity = resolvedTrackConfig ? resolvedTrackConfig.byocCapacity : cafe.byocCapacity;
@@ -974,6 +983,14 @@ export async function createWalkInBooking(
 
   const trackTypeRepo = AppDataSource.getRepository(TrackType);
   const trackType = await trackTypeRepo.findOne({ where: { id: trackConfig.trackTypeId } });
+
+  await assertBookingNotBlockedByContest({
+    cafeId,
+    slotStart,
+    slotEnd,
+    trackConfigId: trackConfig.id,
+    trackTypeId: trackConfig.trackTypeId,
+  });
 
   // Dynamic pricing lookup
   const { multiplier: slotMultiplier, label: pricingLabel } = await getEffectiveMultiplier(

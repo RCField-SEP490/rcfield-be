@@ -23,6 +23,7 @@ import { redis } from '../config/redis';
 import { Cafe } from '../models/cafe.entity';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { findContestLockConflictForBooking } from '../services/contest-lock.service';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
@@ -230,6 +231,26 @@ export const cafeController = {
       }
 
       if (query.play_mode === BookingMode.BYOC) {
+        const contestLock = await findContestLockConflictForBooking({
+          cafeId,
+          slotStart,
+          slotEnd,
+          trackConfigId: trackConfig?.id ?? null,
+          trackTypeId: trackConfig?.trackTypeId ?? query.track_type_id ?? null,
+        });
+        if (contestLock) {
+          res.json({
+            success: true,
+            data: {
+              play_mode: 'BYOC',
+              available: false,
+              byoc_remaining: 0,
+              vehicles: [],
+            },
+          });
+          return;
+        }
+
         const capacity = trackConfig ? trackConfig.byocCapacity : cafe.byocCapacity;
 
         // Range-overlap query: bookings that overlap [slotStart, slotEnd)
@@ -269,6 +290,25 @@ export const cafeController = {
       // RENTAL: exclude vehicles already booked (DB) or in checkout (Redis) for this slot
       const vehicleRepo = AppDataSource.getRepository(Vehicle);
       const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+      const contestLock = await findContestLockConflictForBooking({
+        cafeId,
+        slotStart,
+        slotEnd,
+        trackConfigId: trackConfig?.id ?? null,
+        trackTypeId: trackConfig?.trackTypeId ?? query.track_type_id ?? null,
+      });
+
+      if (contestLock) {
+        res.json({
+          success: true,
+          data: {
+            play_mode: 'RENTAL',
+            available: false,
+            vehicles: [],
+          },
+        });
+        return;
+      }
 
       const vehicles = await vehicleRepo.find({
         where: { cafeId, status: VehicleStatus.AVAILABLE },

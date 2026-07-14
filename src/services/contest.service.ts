@@ -28,6 +28,11 @@ import {
   writeContestAudit,
 } from './contest.helpers';
 import { Viewer } from './cafe.service';
+import {
+  assertNoContestBookingConflicts,
+  mergeContestConfig,
+  resolveContestResourceLocks,
+} from './contest-lock.service';
 
 type ListContestsOptions = {
   page: number;
@@ -74,7 +79,7 @@ type MyContestRegistrationsQuery = {
   customer_journey_status?:
     | 'PENDING_APPROVAL'
     | 'APPROVED_WAITING_CHECKIN'
-    | 'READY_TO_RACE'
+    | 'CHECKED_IN_WAITING_BRACKET'
     | 'IN_BRACKET'
     | 'ADVANCED'
     | 'ELIMINATED'
@@ -332,7 +337,7 @@ function deriveCustomerJourneyStatus(
   if (registration.status === ContestRegistrationStatus.PENDING) return 'PENDING_APPROVAL';
   if (registration.status === ContestRegistrationStatus.CONFIRMED)
     return 'APPROVED_WAITING_CHECKIN';
-  if (!latestMatch) return 'READY_TO_RACE';
+  if (!latestMatch) return 'CHECKED_IN_WAITING_BRACKET';
 
   const matchStatus = String(latestMatch.status ?? '');
   const isWinner = Boolean(latestMatch.is_winner);
@@ -475,6 +480,18 @@ async function resolveProviderBranchesOrThrow(providerId: string, cafeIds: strin
   return cafes;
 }
 
+function getRuntimeFormatFromCatalog(contestFormatCode: string) {
+  return contestFormatCode === 'TIME_TRIAL' ? 'TIME_TRIAL' : 'KNOCKOUT';
+}
+
+function stripRuntimeManagedConfig(config: Record<string, unknown> | null | undefined) {
+  const nextConfig = { ...(config ?? {}) };
+  delete nextConfig.format;
+  delete nextConfig.runtime_format;
+  delete nextConfig.resource_locks;
+  return nextConfig;
+}
+
 export async function listContestTypes() {
   return AppDataSource.getRepository(ContestType).find({
     where: { isActive: true },
@@ -605,6 +622,14 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
     resolveCatalogOrThrow(body.contest_type_id, body.contest_format_id, body.contest_template_id),
   ]);
   if (!trackType) throw new AppError('Track type không hợp lệ', 400, 'TRACK_TYPE_INVALID');
+  const resourceLocks = await resolveContestResourceLocks(body.participating_cafe_ids, body.config);
+  await assertNoContestBookingConflicts({
+    startsAt: body.starts_at,
+    endsAt: body.ends_at,
+    trackTypeId: trackType.id,
+    resourceLocks,
+  });
+  const runtimeFormat = getRuntimeFormatFromCatalog(catalog.contestFormat.code);
 
   const repo = AppDataSource.getRepository(Contest);
   const contest = repo.create({
@@ -621,10 +646,14 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
     registrationClosesAt: body.registration_closes_at,
     vehicleRule: body.vehicle_rule,
     bannerImageUrl: body.banner_image_url ?? null,
-    config: {
-      ...(catalog.contestTemplate.defaultConfig ?? {}),
-      ...(body.config ?? {}),
-    },
+    config: mergeContestConfig(
+      {
+        ...(catalog.contestTemplate.defaultConfig ?? {}),
+        ...stripRuntimeManagedConfig(body.config),
+      },
+      runtimeFormat,
+      resourceLocks,
+    ),
     startsAt: body.starts_at,
     endsAt: body.ends_at,
     capacity: body.capacity,
@@ -685,6 +714,15 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
     catalog = await resolveCatalogOrThrow(nextTypeId, nextFormatId, nextTemplateId);
   }
 
+  const nextParticipatingCafeIds =
+    body.participating_cafe_ids ??
+    (
+      await AppDataSource.getRepository(ContestCafe).find({
+        where: { contestId: contest.id },
+        order: { displayOrder: 'ASC' },
+      })
+    ).map((item) => item.cafeId);
+
   if (body.participating_cafe_ids) {
     const branches = await resolveProviderBranchesOrThrow(
       viewer.userId,
@@ -727,16 +765,47 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
     contest.registrationClosesAt = body.registration_closes_at;
   if (body.vehicle_rule !== undefined) contest.vehicleRule = body.vehicle_rule;
   if (body.banner_image_url !== undefined) contest.bannerImageUrl = body.banner_image_url ?? null;
-  if (body.config !== undefined) {
-    contest.config = {
-      ...(catalog?.contestTemplate.defaultConfig ?? contest.config ?? {}),
-      ...body.config,
-    };
-  }
   if (body.starts_at !== undefined) contest.startsAt = body.starts_at;
   if (body.ends_at !== undefined) contest.endsAt = body.ends_at;
   if (body.capacity !== undefined) contest.capacity = body.capacity;
   if (body.entry_fee !== undefined) contest.entryFee = body.entry_fee;
+
+  const nextTrackTypeId = contest.trackTypeId;
+  if (!nextTrackTypeId) {
+    throw new AppError('Contest chưa có track type hợp lệ', 400, 'TRACK_TYPE_INVALID');
+  }
+  const nextRuntimeFormat = getRuntimeFormatFromCatalog(
+    catalog?.contestFormat.code ??
+      (
+        await AppDataSource.getRepository(ContestFormat).findOne({
+          where: { id: contest.contestFormatId ?? undefined },
+        })
+      )?.code ??
+      'KNOCKOUT',
+  );
+  const baseConfig =
+    body.config !== undefined
+      ? {
+          ...(catalog?.contestTemplate.defaultConfig ?? {}),
+          ...stripRuntimeManagedConfig(body.config),
+        }
+      : {
+          ...stripRuntimeManagedConfig(contest.config),
+        };
+  const resourceLocks = await resolveContestResourceLocks(nextParticipatingCafeIds, {
+    ...baseConfig,
+    resource_locks:
+      body.config && typeof body.config === 'object'
+        ? (body.config.resource_locks as unknown)
+        : contest.config?.resource_locks,
+  });
+  await assertNoContestBookingConflicts({
+    startsAt: contest.startsAt,
+    endsAt: contest.endsAt,
+    trackTypeId: nextTrackTypeId,
+    resourceLocks,
+  });
+  contest.config = mergeContestConfig(baseConfig, nextRuntimeFormat, resourceLocks);
 
   await AppDataSource.getRepository(Contest).save(contest);
   await writeContestAudit({

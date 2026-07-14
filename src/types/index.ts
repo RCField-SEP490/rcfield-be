@@ -194,6 +194,11 @@ export enum ContestStatus {
   CANCELLED = 'CANCELLED',
 }
 
+export enum ContestResourceScope {
+  FULL_BRANCH = 'FULL_BRANCH',
+  SELECTED_TRACKS = 'SELECTED_TRACKS',
+}
+
 export enum ContestRegistrationStatus {
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',

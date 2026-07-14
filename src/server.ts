@@ -15,6 +15,18 @@ import { fbChatWorker } from './workers/fb-chat.worker';
 async function bootstrap() {
   try {
     await AppDataSource.initialize();
+    const hasPendingMigrations = await AppDataSource.showMigrations();
+    if (hasPendingMigrations) {
+      if (!env.db.autoMigrate) {
+        throw new Error(
+          'Pending database migrations detected. Run `npm run migration:run` or enable DB_AUTO_MIGRATE.',
+        );
+      }
+
+      const appliedMigrations = await AppDataSource.runMigrations({ transaction: 'each' });
+      logger.database(`Applied ${appliedMigrations.length} pending migration(s)`);
+    }
+
     logger.database(`PostgreSQL connected on port ${env.db.port}`);
 
     // Note: Database notification type column was migrated to VARCHAR(255), so pg_enum checks are no longer required.

@@ -78,6 +78,61 @@ async function createContestFixture(
   return { contestId: contest.id, trackTypeId: trackType.id };
 }
 
+async function createContestPayload(
+  cafeId: string,
+  formatCode: 'TIME_TRIAL' | 'KNOCKOUT',
+  overrides?: Partial<{
+    starts_at: string;
+    ends_at: string;
+    registration_opens_at: string;
+    registration_closes_at: string;
+    config: Record<string, unknown>;
+  }>,
+) {
+  const [trackType] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM track_types ORDER BY created_at ASC LIMIT 1`,
+  );
+  const [contestType] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM contest_types WHERE code = 'PROVIDER_STANDARD' LIMIT 1`,
+  );
+  const [contestFormat] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM contest_formats WHERE code = $1 LIMIT 1`,
+    [formatCode],
+  );
+  const [contestTemplate] = await AppDataSource.query<
+    { id: string; default_config: Record<string, unknown> }[]
+  >(`SELECT id, default_config FROM contest_templates WHERE contest_format_id = $1 LIMIT 1`, [
+    contestFormat.id,
+  ]);
+
+  const startsAt = overrides?.starts_at ?? new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+  const endsAt = overrides?.ends_at ?? new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
+
+  return {
+    name: `Contest ${formatCode}`,
+    description: `Contest test cho ${formatCode}`,
+    contest_type_id: contestType.id,
+    contest_format_id: contestFormat.id,
+    contest_template_id: contestTemplate.id,
+    track_type_id: trackType.id,
+    participating_cafe_ids: [cafeId],
+    starts_at: startsAt,
+    ends_at: endsAt,
+    registration_opens_at:
+      overrides?.registration_opens_at ?? new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    registration_closes_at:
+      overrides?.registration_closes_at ?? new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+    capacity: 32,
+    entry_fee: 0,
+    banner_image_url: null,
+    vehicle_rule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
+    config: {
+      ...(contestTemplate.default_config ?? {}),
+      ...(overrides?.config ?? {}),
+    },
+  };
+}
+
 async function createRegistrationFixture(
   contestId: string,
   status: 'CONFIRMED' | 'CHECKED_IN' = 'CHECKED_IN',
@@ -311,5 +366,76 @@ describe('Contest runtime routes', () => {
     );
     expect(updatedFinal.participants).toHaveLength(1);
     expect(updatedFinal.participants[0].registration_id).toBe(semifinalLoser);
+  });
+
+  it('không cho tạo runtime từ registration chưa check-in', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const token = generateToken(provider);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL');
+    const registration = await createRegistrationFixture(contestId, 'CONFIRMED');
+
+    const res = await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        cafe_id: cafe.id,
+        registration_ids: [registration.id],
+      })
+      .expect(400);
+
+    expect(res.body.code).toBe('REGISTRATION_NOT_RUNTIME_READY');
+  });
+
+  it('chặn tạo contest khi trùng booking đã có', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const token = generateToken(provider);
+    const payload = await createContestPayload(cafe.id, 'KNOCKOUT');
+
+    await AppDataSource.query(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES
+         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', $4, $5, 1, NOW() + INTERVAL '30 minutes', 0)`,
+      [customer.id, cafe.id, payload.track_type_id, payload.starts_at, payload.ends_at],
+    );
+
+    const res = await request(app)
+      .post('/api/v1/contests')
+      .set('Authorization', `Bearer ${token}`)
+      .send(payload)
+      .expect(409);
+
+    expect(res.body.code).toBe('CONTEST_BOOKING_CONFLICT');
+  });
+
+  it('availability báo hết chỗ khi khung giờ đã bị contest giữ', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const token = generateToken(provider);
+    const payload = await createContestPayload(cafe.id, 'TIME_TRIAL');
+
+    await request(app)
+      .post('/api/v1/contests')
+      .set('Authorization', `Bearer ${token}`)
+      .send(payload)
+      .expect(201);
+
+    const res = await request(app)
+      .get(`/api/v1/cafes/${cafe.id}/availability`)
+      .query({
+        slot_start: payload.starts_at,
+        slot_end: payload.ends_at,
+        play_mode: 'RENTAL',
+      })
+      .expect(200);
+
+    expect(res.body.data.available).toBe(false);
+    expect(res.body.data.vehicles).toHaveLength(0);
   });
 });

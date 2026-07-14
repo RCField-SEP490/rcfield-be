@@ -91,6 +91,12 @@ function getLeaderboardMode(contest: Contest): 'BEST_LAP' | 'TOTAL_TIME' | 'KNOC
   return 'BEST_LAP';
 }
 
+function getRuntimeFormat(contest: Contest): 'TIME_TRIAL' | 'KNOCKOUT' {
+  return contest.config?.runtime_format === 'TIME_TRIAL' || contest.config?.format === 'TIME_TRIAL'
+    ? 'TIME_TRIAL'
+    : 'KNOCKOUT';
+}
+
 async function validateContestCafe(contestId: string, cafeId: string): Promise<ContestCafe> {
   const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
     where: { contestId, cafeId },
@@ -110,13 +116,9 @@ async function loadEligibleRegistrations(contestId: string, registrationIds: str
     throw new AppError('Có registration không thuộc contest', 400, 'REGISTRATION_CONTEST_MISMATCH');
   }
   for (const registration of registrations) {
-    if (
-      ![ContestRegistrationStatus.CONFIRMED, ContestRegistrationStatus.CHECKED_IN].includes(
-        registration.status,
-      )
-    ) {
+    if (registration.status !== ContestRegistrationStatus.CHECKED_IN) {
       throw new AppError(
-        'Chỉ registration CONFIRMED hoặc CHECKED_IN mới được đưa vào runtime',
+        'Chỉ người chơi đã check-in mới được đưa vào thi đấu',
         400,
         'REGISTRATION_NOT_RUNTIME_READY',
       );
@@ -474,9 +476,8 @@ export async function generateContestMatches(
 
   await clearExistingRuntime(contestId);
 
-  const format = contest.config?.format ?? contest.config?.leaderboard_mode;
-  const isTimeTrial =
-    contest.config?.format === 'TIME_TRIAL' || contest.config?.leaderboard_mode === 'BEST_LAP';
+  const format = getRuntimeFormat(contest);
+  const isTimeTrial = format === 'TIME_TRIAL';
   const driversPerMatch = Math.max(1, getDriversPerMatch(contest, body.drivers_per_match));
   const createdMatches: ContestMatch[] = [];
 
@@ -489,7 +490,7 @@ export async function generateContestMatches(
           trackConfigId: body.track_config_id ?? null,
           roundNo: 1,
           matchNo: index + 1,
-          name: `Time Trial ${index + 1}`,
+          name: `Lượt thi đấu ${index + 1}`,
           matchType: ContestMatchType.TIME_ATTACK,
           status: ContestMatchStatus.READY,
           scheduledAt: new Date(contest.startsAt.getTime() + index * 5 * 60 * 1000),
@@ -532,7 +533,9 @@ export async function generateContestMatches(
             roundNo,
             matchNo,
             name:
-              roundNo === totalRounds ? `Final ${matchNo}` : `Round ${roundNo} Match ${matchNo}`,
+              roundNo === totalRounds
+                ? `Chung kết ${matchNo}`
+                : `Vòng ${roundNo} · Trận ${matchNo}`,
             matchType:
               roundNo === totalRounds ? ContestMatchType.FINAL : ContestMatchType.HEAD_TO_HEAD,
             status: roundNo === 1 ? ContestMatchStatus.READY : ContestMatchStatus.DRAFT,
@@ -573,7 +576,9 @@ export async function generateContestMatches(
     }
   }
 
-  contest.status = ContestStatus.RUNNING;
+  if (contest.status === ContestStatus.OPEN) {
+    contest.status = ContestStatus.CLOSED;
+  }
   await AppDataSource.getRepository(Contest).save(contest);
 
   await writeContestAudit({
@@ -584,7 +589,7 @@ export async function generateContestMatches(
     afterJson: {
       generated_match_count: createdMatches.length,
       registration_count: orderedRegistrations.length,
-      format: contest.config?.format ?? null,
+      format,
     },
     metadata: {
       cafe_id: body.cafe_id,
@@ -720,6 +725,11 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
       ? buildTimeTrialResultSummary(contest, refreshedParticipants)
       : buildKnockoutResultSummary(refreshedParticipants);
   await AppDataSource.getRepository(ContestMatch).save(match);
+
+  if (contest.status !== ContestStatus.RUNNING) {
+    contest.status = ContestStatus.RUNNING;
+    await AppDataSource.getRepository(Contest).save(contest);
+  }
 
   await writeContestAudit({
     contestId: match.contestId,
