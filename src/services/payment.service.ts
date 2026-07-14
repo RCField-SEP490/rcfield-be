@@ -10,6 +10,7 @@ import { PaymentComponent } from '../models/payment-component.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
 import {
   AppError,
+  BookingStatus,
   FnbOrderType,
   PaymentComponentStatus,
   PaymentComponentType,
@@ -22,6 +23,7 @@ import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { activateCustomerPackage, deductSlots } from './customer-package.service';
+import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 
@@ -32,11 +34,13 @@ async function pushBookingNew(booking: Booking): Promise<void> {
       select: ['providerId', 'name'],
     });
     if (!cafe) return;
-    wsService.pushToUser(cafe.providerId, 'booking.new', {
+    const payload = {
       bookingId: booking.id,
       cafeName: cafe.name,
       slotStart: booking.slotStart,
-    });
+    };
+    wsService.pushToUser(cafe.providerId, 'booking.new', payload);
+    wsService.pushToCafe(booking.cafeId, 'NEW_BOOKING', payload);
   } catch (err) {
     logger.error('PaymentService', 'pushBookingNew failed', err);
   }
@@ -144,6 +148,7 @@ export interface CheckoutResult {
 export async function createCheckoutUrl(
   bookingId: string,
   ipAddr: string,
+  customReturnUrl?: string,
 ): Promise<CheckoutResult> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
@@ -195,8 +200,8 @@ export async function createCheckoutUrl(
 
   // Read the pricing multiplier frozen at booking creation (snapshot-first principle).
   // Do NOT recalculate from live pricing rules — the multiplier may have changed.
-  const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
-  const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
+  const creationSnapshot = booking.snapshot as unknown as Record<string, unknown> | null;
+  const slotMultiplier = (creationSnapshot?.slot_fee_multiplier as number | undefined) ?? 1;
   const rawSlotFee = Math.round(
     Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier,
   );
@@ -205,7 +210,9 @@ export async function createCheckoutUrl(
   const packageUsed = (booking.snapshot as unknown as BookingSnapshot | null)?.package_used;
   const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
 
-  const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const grossTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const discountAmount = Number(booking.discountAmount) || 0;
+  const totalCharged = Math.max(0, grossTotal - discountAmount);
 
   logger.info('PaymentService', 'checkout totals', {
     bookingId,
@@ -213,11 +220,25 @@ export async function createCheckoutUrl(
     rentalFeeTotal,
     depositTotal,
     fnbTotal,
+    discountAmount,
     totalCharged,
     playerCount,
     slotCount,
     slotMultiplier,
   });
+
+  // Preserve creation-time fields so PaymentResultPage and invoice can still read them
+  const preservedCreationFields: Record<string, unknown> = {};
+  for (const key of [
+    'pricing_rule_label',
+    'slot_fee_multiplier',
+    'promotion_applied',
+    'track_type_id',
+    'track_type_code',
+    'track_type_name',
+  ]) {
+    if (creationSnapshot?.[key] !== undefined) preservedCreationFields[key] = creationSnapshot[key];
+  }
 
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
@@ -226,17 +247,18 @@ export async function createCheckoutUrl(
       security_deposit: Number(v.securityDepositSnapshot),
     })),
     fnb_total: fnbTotal,
-    discount_amount: Number(booking.discountAmount),
+    discount_amount: discountAmount,
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
     ...(packageUsed ? { package_used: packageUsed } : {}),
-  };
+    ...preservedCreationFields,
+  } as BookingSnapshot;
 
   await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
 
   // Zero-total bypass: skip VNPay, confirm inline (D3 from research.md)
-  if (totalCharged === 0 && booking.customerPackageId) {
+  if (totalCharged === 0 && (booking.customerPackageId || booking.promotionId)) {
     const txnRef = `pkg_${bookingId.replace(/-/g, '').substring(0, 28)}`;
     const txRepo = AppDataSource.getRepository(PaymentTransaction);
     const existingTx = await txRepo.findOne({ where: { txnRef } });
@@ -257,6 +279,7 @@ export async function createCheckoutUrl(
 
     await transition(bookingId, 'PAYMENT_CONFIRMED');
     await createPaymentComponents(booking, snapshot, bookingVehicles);
+    await incrementPromoUsesCount(bookingId).catch(() => {}); // best-effort
 
     let slotsRemainingAfter = 0;
     if (snapshot.package_used) {
@@ -287,6 +310,14 @@ export async function createCheckoutUrl(
       }
     }
 
+    Promise.all([
+      emailService.sendBookingConfirmation(bookingId),
+      emailService.sendBookingInvoice(bookingId),
+      pushBookingNew(booking),
+    ]).catch((err) => {
+      logger.error('PaymentService', 'post-payment email failed (zero-total)', err);
+    });
+
     logger.info('PaymentService', `zero-total confirmed bookingId=${bookingId}`);
     return {
       payment_url: null,
@@ -298,14 +329,15 @@ export async function createCheckoutUrl(
     };
   }
 
-  // txnRef = bookingId without dashes, max 32 chars
-  const txnRef = bookingId.replace(/-/g, '').substring(0, 32);
+  // Tạo txnRef duy nhất cho lần thanh toán này để cho phép thanh toán lại khi bị lỗi/hủy (giới hạn tối đa 30 ký tự của VNPay)
+  const txnRef = `${bookingId.replace(/-/g, '').substring(0, 20)}_${Date.now().toString().slice(-4)}`;
 
   const vnpayPaymentUrl = createPaymentUrl({
     amount: totalCharged,
     txnRef,
     orderInfo: `RCField booking ${bookingId.substring(0, 8)}`,
     ipAddr,
+    returnUrl: customReturnUrl,
     bankCode: 'VNBANK',
   });
 
@@ -378,13 +410,15 @@ export async function createPaymentComponents(
       amount: Number(bv.rentalFeeSnapshot ?? 0),
       status: PaymentComponentStatus.HELD,
     });
-    components.push({
-      bookingId: booking.id,
-      bookingVehicleId: bv.id,
-      type: PaymentComponentType.SECURITY_DEPOSIT,
-      amount: Number(bv.securityDepositSnapshot ?? 0),
-      status: PaymentComponentStatus.HELD,
-    });
+    if (Number(bv.securityDepositSnapshot ?? 0) > 0) {
+      components.push({
+        bookingId: booking.id,
+        bookingVehicleId: bv.id,
+        type: PaymentComponentType.SECURITY_DEPOSIT,
+        amount: Number(bv.securityDepositSnapshot ?? 0),
+        status: PaymentComponentStatus.HELD,
+      });
+    }
   }
 
   const fnbTotal = Number(
@@ -499,6 +533,10 @@ export async function processConfirmation(
             totalCounterBill: tx.amount,
           });
         }
+
+        if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+          await transition(booking.id, 'PAYMENT_SETTLED');
+        }
       }
     } catch (err) {
       logger.error('PaymentService', 'Failed to notify on checkout payment confirmation', err);
@@ -530,6 +568,7 @@ export async function processConfirmation(
 
   // Transition booking to CONFIRMED
   const booking = await transition(confirmedBookingId, 'PAYMENT_CONFIRMED');
+  await incrementPromoUsesCount(confirmedBookingId).catch(() => {}); // best-effort
 
   // Create payment components
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
@@ -643,6 +682,10 @@ export async function processMockConfirmation(
             totalCounterBill: tx.amount,
           });
         }
+
+        if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+          await transition(booking.id, 'PAYMENT_SETTLED');
+        }
       }
     } catch (err) {
       logger.error('PaymentService', 'Failed to notify on mock checkout payment confirmation', err);
@@ -669,6 +712,7 @@ export async function processMockConfirmation(
   const mockBookingId = tx.bookingId;
 
   const booking = await transition(mockBookingId, 'PAYMENT_CONFIRMED');
+  await incrementPromoUsesCount(mockBookingId).catch(() => {}); // best-effort
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
   const bookingVehicles = await bvRepo.find({ where: { bookingId: mockBookingId } });
   const snapshot = booking.snapshot as unknown as BookingSnapshot | null;
@@ -748,10 +792,25 @@ export async function mockConfirmPayment(
   const slotMinutes = (booking.slotEnd.getTime() - booking.slotStart.getTime()) / 60_000;
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
 
-  const creationSnapshot = booking.snapshot as unknown as { slot_fee_multiplier?: number } | null;
-  const slotMultiplier = creationSnapshot?.slot_fee_multiplier ?? 1;
+  const mockCreationSnapshot = booking.snapshot as unknown as Record<string, unknown> | null;
+  const slotMultiplier = (mockCreationSnapshot?.slot_fee_multiplier as number | undefined) ?? 1;
   const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier);
-  const totalCharged = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const grossMockTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const mockDiscountAmount = Number(booking.discountAmount) || 0;
+  const totalCharged = Math.max(0, grossMockTotal - mockDiscountAmount);
+
+  const mockPreservedFields: Record<string, unknown> = {};
+  for (const key of [
+    'pricing_rule_label',
+    'slot_fee_multiplier',
+    'promotion_applied',
+    'track_type_id',
+    'track_type_code',
+    'track_type_name',
+  ]) {
+    if (mockCreationSnapshot?.[key] !== undefined)
+      mockPreservedFields[key] = mockCreationSnapshot[key];
+  }
 
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
@@ -760,11 +819,12 @@ export async function mockConfirmPayment(
       security_deposit: Number(v.securityDepositSnapshot),
     })),
     fnb_total: fnbTotal,
-    discount_amount: Number(booking.discountAmount),
+    discount_amount: mockDiscountAmount,
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
-  };
+    ...mockPreservedFields,
+  } as BookingSnapshot;
 
   await bookingRepo.update(bookingId, { snapshot: snapshot as unknown as object });
 
@@ -783,7 +843,16 @@ export async function mockConfirmPayment(
   await txRepo.save(tx);
 
   await transition(bookingId, 'PAYMENT_CONFIRMED');
+  await incrementPromoUsesCount(bookingId).catch(() => {}); // best-effort
   await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+  Promise.all([
+    emailService.sendBookingConfirmation(bookingId),
+    emailService.sendBookingInvoice(bookingId),
+    pushBookingNew(booking),
+  ]).catch((err) => {
+    logger.error('PaymentService', 'post-payment email failed (mock-checkout)', err);
+  });
 
   logger.info('PaymentService', `mock payment confirmed bookingId=${bookingId}`);
 

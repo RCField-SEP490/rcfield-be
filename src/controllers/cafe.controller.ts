@@ -23,12 +23,26 @@ import { redis } from '../config/redis';
 import { Cafe } from '../models/cafe.entity';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { findContestLockConflictForBooking } from '../services/contest-lock.service';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 
 function viewerFromRequest(req: AuthRequest) {
   return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
+}
+
+function normalizeCafeListQuery(query: Request['query']) {
+  const normalized: Record<string, unknown> = { ...query };
+
+  if (normalized.amenities === undefined && normalized['amenities[]'] !== undefined) {
+    normalized.amenities = normalized['amenities[]'];
+  }
+  if (normalized.popular_filters === undefined && normalized['popular_filters[]'] !== undefined) {
+    normalized.popular_filters = normalized['popular_filters[]'];
+  }
+
+  return normalized;
 }
 
 export const cafeController = {
@@ -47,8 +61,23 @@ export const cafeController = {
   // GET /api/v1/cafes
   async listCafes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { page, limit, scope, slug, district, city, track_type, status } =
-        CafeListQuerySchema.parse(req.query);
+      const {
+        page,
+        limit,
+        scope,
+        query,
+        slug,
+        district,
+        city,
+        track_type,
+        price_min,
+        price_max,
+        amenities,
+        vehicle_type,
+        sort_by,
+        popular_filters,
+        status,
+      } = CafeListQuerySchema.parse(normalizeCafeListQuery(req.query));
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
       const visibleStatus = canFilterStatus ? (status as CafeStatus | undefined) : undefined;
@@ -57,10 +86,17 @@ export const cafeController = {
         page,
         limit,
         scope,
+        query,
         slug,
         district,
         city,
         track_type,
+        price_min,
+        price_max,
+        amenities,
+        vehicle_type,
+        sort_by,
+        popular_filters,
         status: visibleStatus,
         viewer: viewerFromRequest(req),
       });
@@ -195,6 +231,26 @@ export const cafeController = {
       }
 
       if (query.play_mode === BookingMode.BYOC) {
+        const contestLock = await findContestLockConflictForBooking({
+          cafeId,
+          slotStart,
+          slotEnd,
+          trackConfigId: trackConfig?.id ?? null,
+          trackTypeId: trackConfig?.trackTypeId ?? query.track_type_id ?? null,
+        });
+        if (contestLock) {
+          res.json({
+            success: true,
+            data: {
+              play_mode: 'BYOC',
+              available: false,
+              byoc_remaining: 0,
+              vehicles: [],
+            },
+          });
+          return;
+        }
+
         const capacity = trackConfig ? trackConfig.byocCapacity : cafe.byocCapacity;
 
         // Range-overlap query: bookings that overlap [slotStart, slotEnd)
@@ -234,6 +290,25 @@ export const cafeController = {
       // RENTAL: exclude vehicles already booked (DB) or in checkout (Redis) for this slot
       const vehicleRepo = AppDataSource.getRepository(Vehicle);
       const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+      const contestLock = await findContestLockConflictForBooking({
+        cafeId,
+        slotStart,
+        slotEnd,
+        trackConfigId: trackConfig?.id ?? null,
+        trackTypeId: trackConfig?.trackTypeId ?? query.track_type_id ?? null,
+      });
+
+      if (contestLock) {
+        res.json({
+          success: true,
+          data: {
+            play_mode: 'RENTAL',
+            available: false,
+            vehicles: [],
+          },
+        });
+        return;
+      }
 
       const vehicles = await vehicleRepo.find({
         where: { cafeId, status: VehicleStatus.AVAILABLE },

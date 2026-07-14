@@ -6,13 +6,18 @@ import {
   BookingMode,
   BookingStatus,
   CafeStatus,
+  ContestParticipantStatus,
+  ContestStatus,
   CustomerPackageStatus,
   DiscountType,
+  FnbCategory,
   FnbOrderStatus,
   PackageBillingPeriod,
   PromotionScheduleMode,
   PromoApplicableTo,
+  ReviewStatus,
   VehicleStatus,
+  VehicleSource,
 } from '../types';
 
 extendZodWithOpenApi(z);
@@ -63,6 +68,33 @@ export const ChangePasswordSchema = z.object({
   new_password: z.string().min(6, 'Mật khẩu mới tối thiểu 6 ký tự').max(100),
 });
 
+export const UpdateDriverPassportSchema = z
+  .object({
+    driver_handle: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(
+        /^[a-zA-Z0-9._-]+$/,
+        'driver_handle chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang',
+      )
+      .optional(),
+    display_name: z.string().trim().min(2).max(120).optional(),
+    home_cafe_id: z.string().uuid().nullable().optional(),
+    public_profile_enabled: z.boolean().optional(),
+    leaderboard_opt_in: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
+
+export const GlobalLeaderboardQuerySchema = z.object({
+  period: z.enum(['daily', 'weekly', 'monthly', 'all_time']).optional().default('all_time'),
+  city: z.string().trim().min(1).max(100).optional(),
+  cafe_id: z.string().uuid().optional(),
+  vehicle_source: z.nativeEnum(VehicleSource).optional(),
+  limit: z.coerce.number().int().positive().max(100).optional().default(50),
+});
+
 export const CreateStaffSchema = z.object({
   cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
   full_name: z.string().trim().min(2).max(255),
@@ -82,80 +114,6 @@ export const ActivateStaffSchema = z.object({
 export const TransferStaffSchema = z.object({
   cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
 });
-
-// ── ai-chat ───────────────────────────────────────────────────────────────────
-
-export const CreateShiftPositionSchema = z.object({
-  name: z.string().trim().min(2, 'Ten vi tri toi thieu 2 ky tu').max(120),
-});
-
-export const UpdateShiftPositionSchema = z.object({
-  name: z.string().trim().min(2, 'Ten vi tri toi thieu 2 ky tu').max(120),
-});
-
-export const WeekShiftQuerySchema = z.object({
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'start_date phai co dinh dang YYYY-MM-DD'),
-  cafe_id: z.string().uuid('cafe_id phai la UUID hop le'),
-});
-
-export const AssignShiftSchema = z.object({
-  cafe_id: z.string().uuid('cafe_id phai la UUID hop le'),
-  position_id: z.string().uuid('position_id phai la UUID hop le'),
-  staff_id: z.string().uuid('staff_id phai la UUID hop le'),
-  shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const UpdateShiftTimeSchema = z.object({
-  shift_id: z.string().uuid('shift_id phai la UUID hop le'),
-  shift_label: z.string().trim().min(1).max(120),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/, 'start_time phai co dinh dang HH:mm'),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/, 'end_time phai co dinh dang HH:mm'),
-});
-
-export const MoveShiftSchema = z.object({
-  shift_id: z.string().uuid('shift_id phai la UUID hop le'),
-  new_position_id: z.string().uuid('new_position_id phai la UUID hop le'),
-  new_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'new_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const CloneShiftSchema = z.object({
-  source_shift_id: z.string().uuid('source_shift_id phai la UUID hop le'),
-  position_id: z.string().uuid('position_id phai la UUID hop le'),
-  shift_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const BulkCloneShiftSchema = z.object({
-  source_shift_ids: z.array(z.string().uuid('source_shift_id phai la UUID hop le')).min(1),
-  target_cells: z
-    .array(
-      z.object({
-        position_id: z.string().uuid('position_id phai la UUID hop le'),
-        shift_date: z
-          .string()
-          .regex(/^\d{4}-\d{2}-\d{2}$/, 'shift_date phai co dinh dang YYYY-MM-DD'),
-      }),
-    )
-    .min(1),
-});
-
-export const BulkDeleteShiftSchema = z.object({
-  shift_ids: z.array(z.string().uuid('shift_id phai la UUID hop le')).min(1),
-});
-
-export const ClearEmployeeWeekShiftSchema = z.object({
-  employee_id: z.string().uuid('employee_id phai la UUID hop le'),
-  week_start_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'week_start_date phai co dinh dang YYYY-MM-DD'),
-});
-
-export const CreateShiftTimePresetSchema = z.object({
-  label: z.string().trim().min(1).max(120),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/, 'start_time phai co dinh dang HH:mm'),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/, 'end_time phai co dinh dang HH:mm'),
-});
-
-export const UpdateShiftTimePresetSchema = CreateShiftTimePresetSchema;
 
 export const ForgotPasswordSchema = z.object({
   email: z.string().email('Email không hợp lệ').max(255),
@@ -235,6 +193,7 @@ export const CafeListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
+  query: z.string().trim().min(1).max(200).optional().openapi({ example: 'Ho Chi Minh' }),
   scope: z.enum(['managed']).optional().openapi({ example: 'managed' }),
   slug: z.string().min(1).max(120).optional().openapi({ example: 'rc-arena-sai-gon' }),
   district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
@@ -242,10 +201,52 @@ export const CafeListQuerySchema = z.object({
   track_type: TrackTypeSchema.optional().openapi({
     example: '550e8400-e29b-41d4-a716-446655440000',
   }),
+  price_min: z.coerce.number().nonnegative().optional().openapi({ example: 50000 }),
+  price_max: z.coerce.number().nonnegative().optional().openapi({ example: 200000 }),
+  amenities: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return Array.isArray(value)
+        ? value.flatMap((item) =>
+            item
+              .split(',')
+              .map((part) => part.trim())
+              .filter(Boolean),
+          )
+        : value
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean);
+    })
+    .openapi({ example: ['Serious Inspection', 'Mát lạnh Điều hòa'] }),
+  vehicle_type: z.string().min(1).max(120).optional().openapi({ example: 'Drift' }),
+  sort_by: z
+    .enum(['popularity', 'price_asc', 'price_desc', 'rating'])
+    .optional()
+    .openapi({ example: 'popularity' }),
+  popular_filters: z
+    .union([z.string(), z.array(z.string())])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return Array.isArray(value)
+        ? value.flatMap((item) =>
+            item
+              .split(',')
+              .map((part) => part.trim())
+              .filter(Boolean),
+          )
+        : value
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean);
+    }),
   status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
 });
 
-export const CreateCafeSchema = z.object({
+const CafeUpsertBaseSchema = z.object({
   name: z.string().min(2).max(255).openapi({ example: 'RC Arena Sai Gon' }),
   description: z
     .string()
@@ -275,7 +276,7 @@ export const CreateCafeSchema = z.object({
   slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60).openapi({
     example: 60,
   }),
-  slot_fee_rate: z.number().nonnegative().openapi({ example: 50000 }),
+  slot_fee_rate: z.number().positive().openapi({ example: 50000 }),
   max_concurrent_bookings: z.number().int().positive().optional().default(10).openapi({
     example: 8,
   }),
@@ -287,7 +288,21 @@ export const CreateCafeSchema = z.object({
   rules: z.array(z.string().min(1).max(500)).optional().default([]),
 });
 
-export const UpdateCafeSchema = CreateCafeSchema.partial().refine(
+export const CreateCafeSchema = CafeUpsertBaseSchema.refine(
+  (value) =>
+    value.latitude !== undefined &&
+    value.latitude !== null &&
+    value.longitude !== undefined &&
+    value.longitude !== null &&
+    value.latitude !== 0 &&
+    value.longitude !== 0,
+  {
+    message: 'Tọa độ latitude/longitude là bắt buộc và không được bằng 0',
+    path: ['latitude'],
+  },
+);
+
+export const UpdateCafeSchema = CafeUpsertBaseSchema.partial().refine(
   (value) => Object.keys(value).length > 0,
   'Cần ít nhất một trường để cập nhật',
 );
@@ -329,6 +344,7 @@ const PromotionBaseSchema = z.object({
     .optional()
     .default([]),
   is_active: z.boolean().optional().default(true),
+  show_on_cafe_page: z.boolean().optional().default(true),
 });
 
 export const CreatePromotionSchema = PromotionBaseSchema.refine(
@@ -372,8 +388,177 @@ export const UpdatePromotionSchema = PromotionBaseSchema.partial()
     'Vui lòng chọn ít nhất một ngày trong tuần',
   );
 
+// ── contests ────────────────────────────────────────────────────────────────
+
+export const ContestCatalogTemplateQuerySchema = z.object({
+  contest_type_id: z.string().uuid().optional(),
+  contest_format_id: z.string().uuid().optional(),
+  active_only: z.coerce.boolean().optional().default(true),
+});
+
+export const ContestListQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(100).optional().default(20),
+  scope: z.enum(['managed']).optional(),
+  status: z.nativeEnum(ContestStatus).optional(),
+  contest_type_id: z.string().uuid().optional(),
+  contest_format_id: z.string().uuid().optional(),
+  cafe_id: z.string().uuid().optional(),
+  query: z.string().trim().min(1).max(200).optional(),
+});
+
+export const MyContestRegistrationsQuerySchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  contest_status: z.nativeEnum(ContestStatus).optional(),
+  customer_journey_status: z
+    .enum([
+      'PENDING_APPROVAL',
+      'APPROVED_WAITING_CHECKIN',
+      'CHECKED_IN_WAITING_BRACKET',
+      'IN_BRACKET',
+      'ADVANCED',
+      'ELIMINATED',
+      'FINISHED',
+      'CANCELLED',
+    ])
+    .optional(),
+});
+
+export const ContestRegistrationsQuerySchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  status: z.enum(['PENDING', 'CONFIRMED', 'CANCELLED', 'CHECKED_IN']).optional(),
+  payment_status: z
+    .enum(['NOT_REQUIRED', 'PENDING_PAYMENT', 'PENDING_REVIEW', 'WAIVED', 'MARKED_PAID'])
+    .optional(),
+});
+
+export const ContestMatchesQuerySchema = z.object({
+  round_no: z.coerce.number().int().positive().optional(),
+  status: z.enum(['DRAFT', 'READY', 'RUNNING', 'COMPLETED', 'CANCELLED']).optional(),
+  cafe_id: z.string().uuid().optional(),
+  participant_query: z.string().trim().min(1).max(200).optional(),
+});
+
+const ContestVehicleRuleSchema = z.object({
+  vehicle_policy: z.enum(['RENTAL_ONLY', 'BYOC_ONLY', 'MIXED']),
+  assignment_policy: z.enum(['AT_CHECK_IN', 'PRE_ASSIGNED']).optional().default('AT_CHECK_IN'),
+});
+
+const ContestUpsertBaseSchema = z.object({
+  name: z.string().trim().min(3).max(255),
+  description: z.string().trim().max(5000).nullable().optional(),
+  contest_type_id: z.string().uuid(),
+  contest_format_id: z.string().uuid(),
+  contest_template_id: z.string().uuid(),
+  track_type_id: z.string().uuid(),
+  participating_cafe_ids: z.array(z.string().uuid()).min(1).max(20),
+  starts_at: z.coerce.date(),
+  ends_at: z.coerce.date(),
+  registration_opens_at: z.coerce.date(),
+  registration_closes_at: z.coerce.date(),
+  capacity: z.number().int().positive(),
+  entry_fee: z.coerce.number().nonnegative().optional().default(0),
+  banner_image_url: z.string().url().nullable().optional(),
+  vehicle_rule: ContestVehicleRuleSchema,
+  config: z.record(z.string(), z.unknown()).optional().default({}),
+});
+
+export const CreateContestSchema = ContestUpsertBaseSchema.refine(
+  (value) => value.ends_at > value.starts_at,
+  {
+    message: 'ends_at phải sau starts_at',
+    path: ['ends_at'],
+  },
+)
+  .refine((value) => value.registration_opens_at < value.registration_closes_at, {
+    message: 'registration_closes_at phải sau registration_opens_at',
+    path: ['registration_closes_at'],
+  })
+  .refine((value) => value.registration_closes_at <= value.starts_at, {
+    message: 'registration_closes_at phải trước hoặc bằng starts_at',
+    path: ['registration_closes_at'],
+  });
+
+export const UpdateContestSchema = ContestUpsertBaseSchema.partial().refine(
+  (value: Record<string, unknown>) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const CreateContestRegistrationSchema = z.object({
+  booking_id: z.string().uuid(),
+  vehicle_id: z.string().uuid(),
+  vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
+});
+
+export const ContestRegistrationActionSchema = z.object({
+  reason: z.string().trim().max(1000).optional(),
+});
+
+export const ContestMarkFeePaidSchema = z.object({
+  note: z.string().trim().max(1000).optional(),
+});
+
+export const ContestCheckInSchema = z.object({
+  checked_in_cafe_id: z.string().uuid(),
+});
+
+export const ContestGenerateMatchesSchema = z.object({
+  cafe_id: z.string().uuid(),
+  track_config_id: z.string().uuid().nullable().optional(),
+  registration_ids: z.array(z.string().uuid()).min(1),
+  drivers_per_match: z.number().int().positive().max(64).optional(),
+  seeding_mode: z.enum(['MANUAL', 'CHECK_IN_ORDER']).optional(),
+});
+
+export const ContestMatchParticipantsUpdateSchema = z.object({
+  participants: z
+    .array(
+      z.object({
+        registration_id: z.string().uuid(),
+        slot_no: z.number().int().positive(),
+        lane: z.string().trim().max(20).nullable().optional(),
+        grid_position: z.number().int().positive().nullable().optional(),
+        seed_no: z.number().int().positive().nullable().optional(),
+      }),
+    )
+    .min(1),
+});
+
+export const ContestSubmitResultsSchema = z.object({
+  results: z
+    .array(
+      z.object({
+        registration_id: z.string().uuid(),
+        finish_position: z.number().int().positive().nullable().optional(),
+        score: z.coerce.number().nullable().optional(),
+        best_lap_ms: z.number().int().positive().nullable().optional(),
+        total_time_ms: z.number().int().positive().nullable().optional(),
+        is_winner: z.boolean().optional().default(false),
+        result_note: z.string().trim().max(1000).nullable().optional(),
+        status: z.nativeEnum(ContestParticipantStatus).optional(),
+      }),
+    )
+    .min(1),
+  reason: z.string().trim().min(1).max(1000),
+});
+
+export const ContestCorrectResultsSchema = ContestSubmitResultsSchema.extend({
+  force_cascade: z.boolean().optional().default(false),
+});
+
 export const PromotionIdParamsSchema = z.object({
   promotionId: z.string().uuid(),
+});
+
+export const PreviewPromoSchema = z.object({
+  code: z
+    .string()
+    .min(1)
+    .max(50)
+    .transform((v) => v.trim().toUpperCase()),
+  play_mode: z.enum(['RENTAL', 'BYOC']),
+  slot_start: z.string().datetime({ offset: true }),
+  subtotal: z.coerce.number().nonnegative(),
 });
 
 const PackageBaseSchema = z.object({
@@ -426,6 +611,26 @@ export const CafeImageUploadSchema = z.object({
   sort_order: z.coerce.number().int().min(0).optional().default(0).openapi({ example: 0 }),
 });
 
+const CafePromotionSummarySchema = z.object({
+  code: z.string().openapi({ example: 'SUMMER25' }),
+  description: z.string().nullable().openapi({ example: 'Giảm 25% cho slot đầu tiên' }),
+  discount_type: z.nativeEnum(DiscountType).openapi({ example: DiscountType.PERCENT }),
+  discount_value: z.number().openapi({ example: 25 }),
+  max_discount_amount: z.number().nullable().openapi({ example: 50000 }),
+  min_order_amount: z.number().nullable().openapi({ example: 100000 }),
+  applicable_to: z.nativeEnum(PromoApplicableTo).openapi({ example: PromoApplicableTo.ALL }),
+  expires_at: z.string().datetime().nullable().openapi({ example: '2026-08-01T00:00:00.000Z' }),
+});
+
+const TrackTypeResponseSchema = z.object({
+  id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+  code: z.string().openapi({ example: 'DRIFT' }),
+  name: z.string().openapi({ example: 'Drift' }),
+  description: z.string().nullable().openapi({ example: 'Đường đua drift' }),
+  sortOrder: z.number().int().openapi({ example: 0 }),
+  isActive: z.boolean().openapi({ example: true }),
+});
+
 export const CafeResponseSchema = z.object({
   id: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
   providerId: z.string().uuid().openapi({ example: '7f8d1fd7-5334-47e5-94a8-a8f69a70d001' }),
@@ -445,14 +650,31 @@ export const CafeResponseSchema = z.object({
   latitude: z.number().nullable().openapi({ example: 10.7403 }),
   longitude: z.number().nullable().openapi({ example: 106.712 }),
   operatingHours: z.record(OperatingHourSchema),
-  trackTypes: z.array(TrackTypeSchema).openapi({
-    example: ['550e8400-e29b-41d4-a716-446655440000', '550e8400-e29b-41d4-a716-446655440001'],
-  }),
+  trackTypes: z.array(TrackTypeResponseSchema).openapi({ example: [] }),
   slotDurationMinutes: z.number().int().openapi({ example: 60 }),
   slotFeeRate: z.string().openapi({ example: '50000.00' }),
   maxConcurrentBookings: z.number().int().openapi({ example: 8 }),
   minBookingNoticeMinutes: z.number().int().openapi({ example: 30 }),
   byocCapacity: z.number().int().openapi({ example: 4 }),
+  amenityIds: z.array(z.string().uuid()).openapi({ example: [] }),
+  amenities: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        title: z.string(),
+        description: z.string().nullable(),
+        icon: z.string(),
+        sortOrder: z.number().int(),
+        createdAt: z.string().datetime(),
+        updatedAt: z.string().datetime(),
+      }),
+    )
+    .openapi({ example: [] }),
+  rating: z.number().openapi({ example: 4.8 }),
+  reviewsCount: z.number().int().openapi({ example: 124 }),
+  minPrice: z.number().openapi({ example: 50000 }),
+  activePromotions: z.array(CafePromotionSummarySchema).openapi({ example: [] }),
+  rules: z.array(z.string()).openapi({ example: [] }),
   createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   deletedAt: z.string().datetime().nullable().openapi({ example: null }),
@@ -487,7 +709,7 @@ export const MenuListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
-  category: z.string().min(1).max(100).optional().openapi({ example: 'Do uong' }),
+  category: z.nativeEnum(FnbCategory).optional().openapi({ example: FnbCategory.DRINK }),
   available: z
     .enum(['true', 'false'])
     .optional()
@@ -505,7 +727,7 @@ export const CreateMenuItemSchema = z.object({
     .optional()
     .openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
   price: z.coerce.number().nonnegative().openapi({ example: 55000 }),
-  category: z.string().trim().max(100).nullable().optional().openapi({ example: 'Do uong' }),
+  category: z.nativeEnum(FnbCategory).nullable().optional().openapi({ example: FnbCategory.DRINK }),
   image_url: z
     .string()
     .trim()
@@ -517,6 +739,27 @@ export const CreateMenuItemSchema = z.object({
 });
 
 export const UpdateMenuItemSchema = CreateMenuItemSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  'Cần ít nhất một trường để cập nhật',
+);
+
+export const CreateComboSchema = z.object({
+  name: z.string().trim().min(2).max(255),
+  description: z.string().trim().max(2000).nullable().optional(),
+  price: z.coerce.number().nonnegative(),
+  image_url: z.string().trim().url().nullable().optional(),
+  is_available: z.boolean().optional().default(true),
+  components: z
+    .array(
+      z.object({
+        item_id: z.string().uuid(),
+        quantity: z.number().int().positive().max(99),
+      }),
+    )
+    .min(2, 'Combo phải có ít nhất 2 món'),
+});
+
+export const UpdateComboSchema = CreateComboSchema.partial().refine(
   (value) => Object.keys(value).length > 0,
   'Cần ít nhất một trường để cập nhật',
 );
@@ -539,20 +782,6 @@ export const MenuItemResponseSchema = z.object({
   updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   deletedAt: z.string().datetime().nullable().openapi({ example: null }),
 });
-
-const TimeSchema = z.string().regex(/^\d{2}:\d{2}$/, 'Thời gian phải có định dạng HH:mm');
-
-export const CafeClosureCreateSchema = z.object({
-  closed_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải có định dạng YYYY-MM-DD'),
-  start_time: TimeSchema,
-  end_time: TimeSchema,
-  reason: z.string().min(1).max(255),
-});
-
-export const CafeClosureUpdateSchema = CafeClosureCreateSchema.partial().refine(
-  (value) => Object.keys(value).length > 0,
-  'Cần ít nhất một trường để cập nhật',
-);
 
 // ── fb-channel ────────────────────────────────────────────────────────────────
 
@@ -579,6 +808,9 @@ export const RegisterProviderSchema = z.object({
   phone: z.string().min(9).max(20).optional(),
   business_name: z.string().min(2).max(255),
   business_description: z.string().max(1000).optional(),
+  business_type: z.enum(['INDIVIDUAL', 'BUSINESS'], {
+    errorMap: () => ({ message: 'business_type phải là INDIVIDUAL hoặc BUSINESS' }),
+  }),
 });
 
 export const SubmitPaymentRequestSchema = z.object({
@@ -656,7 +888,7 @@ export const CreateVehicleCatalogSchema = z.object({
     .openapi({ example: 'Phù hợp cho người mới bắt đầu chơi drift.' }),
   tier: AssetTierSchema.openapi({ example: AssetTier.STANDARD }),
   hourly_rate: z.number().nonnegative().openapi({ example: 40000 }),
-  security_deposit: z.number().nonnegative().openapi({ example: 200000 }),
+  security_deposit: z.number().nonnegative().optional().default(0).openapi({ example: 0 }),
   damage_multiplier: z
     .number()
     .min(0.1)
@@ -731,6 +963,10 @@ export const ListVehicleUnitsQuerySchema = z.object({
   status: z.nativeEnum(VehicleStatus).optional(),
   catalog_id: z.string().uuid().optional(),
   search: z.string().optional(),
+  exclude_retired: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 // ── cafe widget config ────────────────────────────────────────────────────────
@@ -831,7 +1067,9 @@ export const CheckAvailabilitySchema = z.object({
 
 // ── customer_packages ─────────────────────────────────────────────────────────
 
-export const PurchasePackageSchema = z.object({});
+export const PurchasePackageSchema = z.object({
+  return_url: z.string().url().optional(),
+});
 
 export const ListMyPackagesQuerySchema = z.object({
   status: z.nativeEnum(CustomerPackageStatus).optional(),
@@ -891,3 +1129,56 @@ export const UpdateHolidaySchema = z.object({
 export const ListHolidaysQuerySchema = z.object({
   year: z.coerce.number().int().min(2024).max(2099).optional(),
 });
+
+// ── reviews ───────────────────────────────────────────────────────────────────
+
+export const CreateReviewSchema = z.object({
+  booking_id: z.string().uuid(),
+  overall_score: z.number().int().min(1).max(5),
+  vehicle_score: z.number().int().min(1).max(5).nullable().optional(),
+  staff_score: z.number().int().min(1).max(5).nullable().optional(),
+  facility_score: z.number().int().min(1).max(5).nullable().optional(),
+  note: z.string().max(500).nullable().optional(),
+});
+
+export const UpdateReviewVisibilitySchema = z.object({
+  status: z.nativeEnum(ReviewStatus),
+});
+
+export const CreateWalkInBookingSchema = z
+  .object({
+    play_mode: z.nativeEnum(BookingMode),
+    track_type_id: z.string().uuid(),
+    slot_start: z.string().datetime({ offset: true }),
+    slot_end: z.string().datetime({ offset: true }),
+    payment_method: z.enum(['CASH', 'BANK_TRANSFER']),
+    vehicle_ids: z.array(z.string().uuid()).default([]),
+    participants: z
+      .array(
+        z.object({
+          guest_name: z.string().trim().min(1, 'Tên người chơi không được để trống'),
+          guest_phone: z
+            .string()
+            .trim()
+            .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ'),
+          participant_type: z.literal(BookingParticipantType.WALK_IN_GUEST),
+        }),
+      )
+      .min(1, 'Phải có ít nhất 1 người chơi tham gia'),
+  })
+  .superRefine((data, ctx) => {
+    if (data.play_mode === BookingMode.RENTAL && data.vehicle_ids.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicle_ids'],
+        message: 'Chế độ chơi RENTAL yêu cầu chọn ít nhất 1 xe thuê',
+      });
+    }
+    if (data.play_mode === BookingMode.BYOC && data.vehicle_ids.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['vehicle_ids'],
+        message: 'Chế độ chơi BYOC không được chọn xe của cửa hàng',
+      });
+    }
+  });

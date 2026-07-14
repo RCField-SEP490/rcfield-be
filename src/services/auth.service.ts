@@ -6,7 +6,7 @@ import { IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
-import { AppError, UserRole, AuthProvider, ProviderStatus } from '../types';
+import { AppError, UserRole, AuthProvider, ProviderStatus, CafeStatus } from '../types';
 import { User } from '../models/user.entity';
 import { RefreshToken } from '../models/refresh-token.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
@@ -34,6 +34,7 @@ export interface UserProfile {
   avatarUrl: string | null;
   role: UserRole;
   assignedCafeId?: string | null;
+  trustScore?: number;
 }
 
 export interface RegisterInput {
@@ -73,13 +74,20 @@ class AuthService {
       phone: user.phone,
       avatarUrl: user.avatar_url,
       role: user.role,
+      trustScore: Number(user.trust_score),
     };
   }
 
   private async getAssignedCafeId(userId: string): Promise<string | null> {
-    const [assignment] = await AppDataSource.query(
-      `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
-      [userId],
+    const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+      `SELECT sca.cafe_id
+         FROM staff_cafe_assignments sca
+         JOIN cafes c ON c.id = sca.cafe_id
+        WHERE sca.staff_id = $1
+          AND c.deleted_at IS NULL
+          AND c.status = $2
+        LIMIT 1`,
+      [userId, CafeStatus.ACTIVE],
     );
     return assignment ? assignment.cafe_id : null;
   }
@@ -98,7 +106,7 @@ class AuthService {
     const access_token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role, ...(cafeId && { cafeId }) },
       env.jwt.secret,
-      { expiresIn: '1h' },
+      { expiresIn: env.jwt.expiresIn as jwt.SignOptions['expiresIn'] },
     );
 
     const raw = crypto.randomBytes(32).toString('hex');
@@ -166,26 +174,61 @@ class AuthService {
       throw new AppError('Email đã được sử dụng', 409, 'EMAIL_ALREADY_EXISTS');
     }
 
+    // Check if there is an existing guest user with the same phone number
+    let guestUser: User | null = null;
+    if (input.phone) {
+      const trimmedPhone = input.phone.trim();
+      guestUser = await this.userRepo.findOne({
+        where: {
+          phone: trimmedPhone,
+          email: `${trimmedPhone}@guest.rcfield.local`,
+          password_hash: IsNull(),
+        },
+      });
+    }
+
     const password_hash = await bcrypt.hash(input.password, 10);
-    const user = await this.userRepo.save(
-      this.userRepo.create({
-        email,
-        full_name: input.full_name.trim(),
-        phone: input.phone ?? null,
-        password_hash,
-        role: input.role,
-        auth_provider: AuthProvider.LOCAL,
-        is_active: true,
-      }),
-    );
+    const user = await AppDataSource.transaction(async (manager) => {
+      let saved: User;
+      if (guestUser) {
+        // Upgrade the existing guest user
+        guestUser.email = email;
+        guestUser.full_name = input.full_name.trim();
+        guestUser.password_hash = password_hash;
+        guestUser.role = input.role;
+        guestUser.auth_provider = AuthProvider.LOCAL;
+        guestUser.is_active = true;
+        saved = await manager.save(User, guestUser);
+      } else {
+        saved = await manager.save(
+          manager.create(User, {
+            email,
+            full_name: input.full_name.trim(),
+            phone: input.phone ?? null,
+            password_hash,
+            role: input.role,
+            auth_provider: AuthProvider.LOCAL,
+            is_active: true,
+          }),
+        );
+      }
+
+      if (input.role === UserRole.PROVIDER) {
+        await manager.save(
+          manager.create(ProviderProfile, {
+            userId: saved.id,
+            businessName: input.full_name.trim(),
+            registrationStatus: ProviderStatus.PENDING,
+          }),
+        );
+      }
+      return saved;
+    });
 
     const tokens = await this.issueTokenPair(user);
     let regStatus: string | undefined;
     if (user.role === UserRole.PROVIDER) {
-      const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
-        where: { userId: user.id },
-      });
-      regStatus = profile?.registrationStatus ?? ProviderStatus.PENDING;
+      regStatus = ProviderStatus.PENDING;
     }
     return {
       ...tokens,

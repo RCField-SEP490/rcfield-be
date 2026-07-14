@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { FnbCategory } from '../types';
 
 @Entity('menu_items')
 @Index(['cafeId'])
@@ -27,8 +28,11 @@ export class MenuItem {
   @Column({ type: 'numeric', precision: 15, scale: 2 })
   price: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  category: string | null;
+  @Column({ type: 'enum', enum: FnbCategory, nullable: true })
+  category: FnbCategory | null;
+
+  @Column({ name: 'is_combo', type: 'boolean', default: false })
+  isCombo: boolean;
 
   @Column({ name: 'image_url', type: 'text', nullable: true })
   imageUrl: string | null;

@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { upsertWidgetConfig } from '../services/chat.service';
-import { UserRole } from '../types';
+import { UserRole, WidgetConfigData } from '../types';
 
 const router = Router();
 
@@ -12,8 +12,8 @@ router.get('/widget-config', async (_req: Request, res: Response, next: NextFunc
   try {
     const ds = AppDataSource;
 
-    const [cafe] = await ds.query<{ id: string; slug: string }[]>(
-      `SELECT id, slug FROM cafes WHERE slug = 'rcfield-system' AND status = 'ACTIVE' LIMIT 1`,
+    const [cafe] = await ds.query<{ id: string; slug: string; widget_config: WidgetConfigData }[]>(
+      `SELECT id, slug, widget_config FROM cafes WHERE slug = 'rcfield-system' AND status = 'ACTIVE' LIMIT 1`,
     );
 
     if (!cafe) {
@@ -21,34 +21,20 @@ router.get('/widget-config', async (_req: Request, res: Response, next: NextFunc
       return;
     }
 
-    const [config] = await ds.query<
-      {
-        greeting_message: string;
-        position: string;
-        primary_color: string;
-        quick_replies: string[];
-        system_prompt: string | null;
-        is_enabled: boolean;
-        full_page_enabled: boolean;
-      }[]
-    >(
-      `SELECT greeting_message, position, primary_color, quick_replies, system_prompt, is_enabled, full_page_enabled
-       FROM cafe_widget_configs WHERE cafe_id = $1`,
-      [cafe.id],
-    );
+    const config = cafe.widget_config;
 
     res.json({
       success: true,
       data: {
         cafeId: cafe.id,
         cafeSlug: cafe.slug,
-        greetingMessage: config?.greeting_message ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
+        greetingMessage: config?.greetingMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
         position: config?.position ?? 'BOTTOM_RIGHT',
-        primaryColor: config?.primary_color ?? '#EA580C',
-        quickReplies: config?.quick_replies ?? [],
-        systemPrompt: config?.system_prompt ?? null,
-        isEnabled: config?.is_enabled ?? false,
-        fullPageEnabled: config?.full_page_enabled ?? false,
+        primaryColor: config?.primaryColor ?? '#EA580C',
+        quickReplies: config?.quickReplies ?? [],
+        systemPrompt: config?.systemPrompt ?? null,
+        isEnabled: config?.isEnabled ?? false,
+        fullPageEnabled: config?.fullPageEnabled ?? false,
       },
     });
   } catch (err) {

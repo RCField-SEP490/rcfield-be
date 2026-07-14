@@ -86,6 +86,19 @@ class EmailService {
     const slotStart = new Date(r.slot_start);
     const slotEnd = new Date(r.slot_end);
 
+    const QRCode = await import('qrcode');
+    const qrBuffer = await QRCode.toBuffer(bookingId, {
+      errorCorrectionLevel: 'M',
+      width: 220,
+      margin: 2,
+    });
+    const { uploadImage } = await import('./cloudinary.service');
+    const { url: qrImageUrl } = await uploadImage({
+      buffer: qrBuffer,
+      folder: 'qr-checkin',
+      publicIdPrefix: `qr-${bookingId.substring(0, 8)}`,
+    });
+
     const slotLabel = slotStart.toLocaleString('vi-VN', {
       weekday: 'long',
       day: '2-digit',
@@ -115,12 +128,6 @@ class EmailService {
             <h2 style="margin:0 0 8px">Đặt sân thành công</h2>
             <p style="color:#6b7280;margin:0 0 24px">Cảm ơn bạn đã đặt sân tại <strong>${r.cafe_name}</strong>.</p>
 
-            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:20px;margin-bottom:24px">
-              <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#059669;letter-spacing:0.05em">MÃ ĐẶT SÂN</p>
-              <p style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.15em;color:#111827">#${shortRef}</p>
-              <p style="margin:4px 0 0;font-size:12px;color:#6b7280">Xuất trình mã này khi check-in tại quán</p>
-            </div>
-
             <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
               <tr>
                 <td style="padding:8px 0;color:#6b7280;font-size:13px;width:130px">Chi nhánh</td>
@@ -140,8 +147,17 @@ class EmailService {
               </tr>
             </table>
 
+            <div style="text-align:center;border:1px solid #e5e7eb;border-radius:12px;padding:24px;margin-bottom:24px">
+              <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#111827">Mã check-in của bạn</p>
+              <p style="margin:0 0 16px;font-size:12px;color:#6b7280">Xuất trình mã này khi đến quán để nhân viên kích hoạt phiên chơi</p>
+              <img src="${qrImageUrl}" width="180" height="180"
+                   alt="QR Check-in #${shortRef}"
+                   style="display:block;margin:0 auto 12px;border:6px solid #fff;box-shadow:0 0 0 1px #e5e7eb;border-radius:8px" />
+              <p style="margin:0;font-size:20px;font-weight:700;letter-spacing:0.15em;color:#111827">#${shortRef}</p>
+            </div>
+
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
-              Hóa đơn chi tiết đã được gửi kèm trong email riêng. Mọi thắc mắc vui lòng liên hệ chi nhánh trực tiếp.
+              Hóa đơn chi tiết đã được gửi kèm trong email riêng. Nếu ảnh QR không hiển thị, dùng mã <strong>#${shortRef}</strong> để nhân viên tra cứu thủ công.
             </p>
           </div>
         </div>
@@ -189,12 +205,22 @@ class EmailService {
     if (!rows.length) return;
     const r = rows[0];
 
-    const snapshot = r.snapshot as BookingSnapshot | null;
+    const snapshot = r.snapshot as (BookingSnapshot & Record<string, unknown>) | null;
     if (!snapshot) return;
 
     const shortRef = bookingId.substring(0, 8).toUpperCase();
+    const slotStart = new Date(r.slot_start);
+    const slotEnd = new Date(r.slot_end);
 
-    // Lấy danh sách người chơi: ưu tiên user có tài khoản, fallback sang guest
+    // Extract creation-time fields preserved in snapshot
+    const trackTypeName = snapshot.track_type_name as string | null | undefined;
+    const pricingLabel = snapshot.pricing_rule_label as string | null | undefined;
+    const slotMultiplier = (snapshot.slot_fee_multiplier as number | undefined) ?? 1;
+    const promoApplied = snapshot.promotion_applied as
+      | { code: string; discount_type: string; discount_amount: number }
+      | undefined;
+
+    // Participants
     type ParticipantRow = {
       participant_type: string;
       is_primary_responsible: boolean;
@@ -203,7 +229,6 @@ class EmailService {
       user_full_name: string | null;
       user_phone: string | null;
     };
-
     const participantRows = (await ds.query(
       `SELECT bp.participant_type, bp.is_primary_responsible,
               bp.guest_name, bp.guest_phone,
@@ -214,36 +239,58 @@ class EmailService {
         ORDER BY bp.is_primary_responsible DESC, bp.created_at ASC`,
       [bookingId],
     )) as ParticipantRow[];
-
     const participants: InvoiceParticipant[] = participantRows.map((p) => ({
       name: p.user_full_name ?? p.guest_name ?? 'Khách',
       phone: p.user_phone ?? p.guest_phone ?? null,
       isPrimary: p.is_primary_responsible,
     }));
 
-    // Build line items from snapshot
+    // Vehicle catalog names for richer line item descriptions
+    type VehicleRow = {
+      catalog_name: string | null;
+      tier: string | null;
+      identifier: string | null;
+      color: string | null;
+      rental_fee_snapshot: string;
+      security_deposit_snapshot: string;
+    };
+    const vehicleRows = (await ds.query(
+      `SELECT vc.name AS catalog_name, vc.tier, v.identifier, v.color,
+              bv.rental_fee_snapshot, bv.security_deposit_snapshot
+         FROM booking_vehicles bv
+         LEFT JOIN vehicles v ON v.id = bv.vehicle_id
+         LEFT JOIN vehicle_catalogs vc ON vc.id = v.catalog_id
+        WHERE bv.booking_id = $1
+        ORDER BY bv.created_at ASC`,
+      [bookingId],
+    )) as VehicleRow[];
+
+    // Build line items
     const lineItems: Array<{ description: string; qty: number; unitPrice: number; total: number }> =
       [];
 
-    // Slot fee
     if (snapshot.slot_fee_total > 0) {
-      const slotStart = new Date(r.slot_start);
-      const slotEnd = new Date(r.slot_end);
       const hours = Math.round((slotEnd.getTime() - slotStart.getTime()) / 3_600_000);
+      const pricingSuffix =
+        pricingLabel && slotMultiplier > 1 ? ` · ${pricingLabel} ×${slotMultiplier}` : '';
       lineItems.push({
-        description: `Phí sân (${hours}h)`,
+        description: `Phí sân (${hours}h)${pricingSuffix}`,
         qty: 1,
         unitPrice: snapshot.slot_fee_total,
         total: snapshot.slot_fee_total,
       });
     }
 
-    // Vehicle fees (rental + deposit per vehicle)
-    for (let i = 0; i < snapshot.vehicles.length; i++) {
-      const v = snapshot.vehicles[i];
+    const vehicleSnapshots = snapshot.vehicles;
+    for (let i = 0; i < vehicleSnapshots.length; i++) {
+      const v = vehicleSnapshots[i];
+      const vr = vehicleRows[i];
+      const vehicleName = vr?.catalog_name
+        ? `${vr.catalog_name}${vr.identifier ? ` (${vr.identifier})` : ''}${vr.color ? ` · ${vr.color}` : ''}`
+        : `Xe #${i + 1}`;
       if (v.rental_fee > 0) {
         lineItems.push({
-          description: `Phí thuê xe #${i + 1}`,
+          description: `Phí thuê — ${vehicleName}`,
           qty: 1,
           unitPrice: v.rental_fee,
           total: v.rental_fee,
@@ -251,7 +298,7 @@ class EmailService {
       }
       if (v.security_deposit > 0) {
         lineItems.push({
-          description: `Tiền cọc xe #${i + 1}`,
+          description: `Cọc xe — ${vehicleName}`,
           qty: 1,
           unitPrice: v.security_deposit,
           total: v.security_deposit,
@@ -259,30 +306,23 @@ class EmailService {
       }
     }
 
-    // FnB pre-order
     if (snapshot.fnb_total > 0) {
       const fnbOrders = await ds.getRepository(FnbOrder).find({
         where: { bookingId, orderType: FnbOrderType.PRE_ORDER },
       });
-      if (fnbOrders.length) {
-        const fnbSum = fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
-        lineItems.push({
-          description: 'Đồ ăn/uống đặt trước (F&B)',
-          qty: 1,
-          unitPrice: fnbSum,
-          total: fnbSum,
-        });
-      } else {
-        lineItems.push({
-          description: 'Đồ ăn/uống đặt trước (F&B)',
-          qty: 1,
-          unitPrice: snapshot.fnb_total,
-          total: snapshot.fnb_total,
-        });
-      }
+      const fnbSum = fnbOrders.length
+        ? fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0)
+        : snapshot.fnb_total;
+      lineItems.push({
+        description: 'Đồ ăn/uống đặt trước (F&B)',
+        qty: 1,
+        unitPrice: fnbSum,
+        total: fnbSum,
+      });
     }
 
-    const depositAmount = snapshot.vehicles.reduce((sum, v) => sum + v.security_deposit, 0);
+    const discountAmount = snapshot.discount_amount ?? 0;
+    const depositAmount = vehicleSnapshots.reduce((sum, v) => sum + v.security_deposit, 0);
 
     const pdfBuffer = await generateInvoicePdf({
       invoiceNumber: shortRef,
@@ -294,16 +334,36 @@ class EmailService {
       customerName: r.customer_name,
       customerEmail: r.customer_email,
       participants,
-      slotStart: new Date(r.slot_start),
-      slotEnd: new Date(r.slot_end),
+      slotStart,
+      slotEnd,
       playMode: r.play_mode,
-      bookingMode: r.play_mode,
+      trackTypeName,
+      pricingLabel,
+      slotMultiplier,
       lineItems,
+      discountAmount,
+      promoCode: promoApplied?.code ?? null,
       totalAmount: snapshot.total_charged,
       depositAmount,
     });
 
     const pdfBase64 = pdfBuffer.toString('base64');
+
+    const slotLabel = slotStart.toLocaleString('vi-VN', {
+      weekday: 'long',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    const endTime = slotEnd.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    const modeLabel = r.play_mode === 'RENTAL' ? 'Thuê xe tại quán' : 'Mang xe cá nhân (BYOC)';
 
     await this.brevoSend({
       sender: { email: env.email.fromEmail, name: env.email.fromName },
@@ -319,16 +379,74 @@ class EmailService {
             <p style="color:#6b7280;margin:0 0 24px">
               Hóa đơn <strong>#${shortRef}</strong> đính kèm bên dưới (file PDF).
             </p>
-            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
               <tr>
                 <td style="padding:8px 0;color:#6b7280;font-size:13px;width:130px">Chi nhánh</td>
                 <td style="padding:8px 0;font-size:13px;font-weight:600">${r.cafe_name}</td>
               </tr>
               <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Tổng thanh toán</td>
-                <td style="padding:8px 0;font-size:13px;font-weight:600">${snapshot.total_charged.toLocaleString('vi-VN')} ₫</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Địa chỉ</td>
+                <td style="padding:8px 0;font-size:13px">${r.cafe_address}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Thời gian</td>
+                <td style="padding:8px 0;font-size:13px">${slotLabel} – ${endTime}</td>
+              </tr>
+              ${
+                trackTypeName
+                  ? `<tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Loại sân</td>
+                <td style="padding:8px 0;font-size:13px">${trackTypeName}</td>
+              </tr>`
+                  : ''
+              }
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chế độ</td>
+                <td style="padding:8px 0;font-size:13px">${modeLabel}</td>
+              </tr>
+              ${
+                pricingLabel && slotMultiplier > 1
+                  ? `<tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Giá áp dụng</td>
+                <td style="padding:8px 0;font-size:13px;color:#92400e;font-weight:600">${pricingLabel} ×${slotMultiplier}</td>
+              </tr>`
+                  : ''
+              }
+            </table>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:20px;border-radius:8px;overflow:hidden">
+              ${lineItems
+                .map(
+                  (item, i) => `
+              <tr style="background:${i % 2 === 0 ? '#f9fafb' : '#ffffff'}">
+                <td style="padding:8px 12px;font-size:13px;color:#374151;border-top:1px solid #f3f4f6">${item.description}</td>
+                <td style="padding:8px 12px;font-size:13px;text-align:right;white-space:nowrap;border-top:1px solid #f3f4f6">${item.total.toLocaleString('vi-VN')} ₫</td>
+              </tr>`,
+                )
+                .join('')}
+              ${
+                discountAmount > 0
+                  ? `<tr style="border-top:1px solid #d1fae5;background:#f0fdf4">
+                <td style="padding:8px 12px;font-size:13px;color:#059669">Mã ưu đãi${promoApplied?.code ? ` (${promoApplied.code})` : ''}</td>
+                <td style="padding:8px 12px;font-size:13px;text-align:right;color:#059669;font-weight:600">−${discountAmount.toLocaleString('vi-VN')} ₫</td>
+              </tr>`
+                  : ''
+              }
+              <tr style="border-top:2px solid #e5e7eb;background:#f3f4f6">
+                <td style="padding:10px 12px;font-size:14px;font-weight:700">Tổng thanh toán</td>
+                <td style="padding:10px 12px;font-size:14px;font-weight:700;text-align:right">${snapshot.total_charged.toLocaleString('vi-VN')} ₫</td>
               </tr>
             </table>
+
+            ${
+              depositAmount > 0
+                ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e">
+              ⚠ Tiền cọc xe <strong>${depositAmount.toLocaleString('vi-VN')} ₫</strong> sẽ được hoàn trả sau khi check-out thành công.
+            </div>`
+                : ''
+            }
+
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
               Vui lòng lưu hóa đơn này để đối chiếu khi cần. Mọi thắc mắc liên hệ chi nhánh trực tiếp.
             </p>

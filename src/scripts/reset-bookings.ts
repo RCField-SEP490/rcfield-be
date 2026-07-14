@@ -29,10 +29,10 @@ async function resetBookings() {
   await q(`DELETE FROM incidents`);
   await q(`DELETE FROM inspections`);
   await q(`DELETE FROM extension_proposals`);
-  await q(`DELETE FROM session_vehicles`);
-  await q(`DELETE FROM sessions`);
   await q(`DELETE FROM fnb_order_items`);
   await q(`DELETE FROM fnb_orders`);
+  await q(`DELETE FROM session_vehicles`);
+  await q(`DELETE FROM sessions`);
   await q(`DELETE FROM booking_vehicles`);
   await q(`DELETE FROM booking_participants`);
   await q(`DELETE FROM payment_transactions`);

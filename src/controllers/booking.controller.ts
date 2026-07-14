@@ -1,4 +1,4 @@
-import type { Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { In, Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { AppError, AuthRequest, UserRole, SessionStatus } from '../types';
@@ -30,6 +30,7 @@ import { User } from '../models/user.entity';
 import { MenuItem } from '../models/menu-item.entity';
 import { TrackType } from '../models/track-type.entity';
 import { Session } from '../models/session.entity';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
 
 export const bookingController = {
   // POST /api/v1/bookings  [auth CUSTOMER]
@@ -63,7 +64,7 @@ export const bookingController = {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
       }
 
-      const result = await createCheckoutUrl(bookingId, ipAddr);
+      const result = await createCheckoutUrl(bookingId, ipAddr, req.body?.return_url);
       res.status(201).json({ success: true, data: result });
     } catch (err) {
       next(err);
@@ -116,14 +117,19 @@ export const bookingController = {
       }
 
       // Load related records
-      const [rawParticipants, vehicles, components, fnbOrders, cafe, session] = await Promise.all([
-        AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
-        AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
-        AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
-        AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
-        AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
-        AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
-      ]);
+      const [rawParticipants, vehicles, components, fnbOrders, cafe, session, transactions] =
+        await Promise.all([
+          AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
+          AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
+          AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
+          AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
+          AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
+          AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
+          AppDataSource.getRepository(PaymentTransaction).find({
+            where: { bookingId },
+            order: { createdAt: 'ASC' },
+          }),
+        ]);
 
       // Enrich participants: resolve name/phone for registered users
       const userIds = rawParticipants.map((p) => p.userId).filter(Boolean) as string[];
@@ -225,6 +231,14 @@ export const bookingController = {
           participants,
           vehicles: enrichedVehicles,
           payment_components: components,
+          payment_transactions: transactions.map((t) => ({
+            id: t.id,
+            type: t.type,
+            gateway: t.gateway,
+            amount: Number(t.amount),
+            status: t.status,
+            createdAt: t.createdAt,
+          })),
           fnb_order: mergedFnbOrder,
           cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
           track_type_name: trackTypeName,
@@ -248,10 +262,25 @@ export const bookingController = {
   async listMyBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const query = ListMyBookingsSchema.parse(req.query);
-      let qb = AppDataSource.createQueryBuilder(Booking, 'b')
+      let qb = AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .leftJoin(Cafe, 'c', 'c.id = b.cafeId')
+        .select([
+          'b.id',
+          'b.customerId',
+          'b.cafeId',
+          'b.playMode',
+          'b.status',
+          'b.slotStart',
+          'b.slotEnd',
+          'b.paymentExpiresAt',
+          'b.snapshot',
+          'b.createdAt',
+          'b.updatedAt',
+        ])
+        .addSelect('c.name', 'cafeName')
         .where('b.customer_id = :customerId', { customerId: req.user!.userId })
-        .andWhere('b.deleted_at IS NULL')
-        .orderBy('b.slot_start', 'DESC')
+        .orderBy('b.slotStart', 'DESC')
         .skip((query.page - 1) * query.limit)
         .take(query.limit);
 
@@ -259,7 +288,21 @@ export const bookingController = {
         qb = qb.andWhere('b.status = :status', { status: query.status });
       }
 
-      const [bookings, total] = await Promise.all([qb.getMany(), qb.getCount()]);
+      // Tạo câu query đếm tổng số lượng phù hợp với filter status
+      let countQb = AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .where('b.customer_id = :customerId', { customerId: req.user!.userId });
+      if (query.status) {
+        countQb = countQb.andWhere('b.status = :status', { status: query.status });
+      }
+
+      const [rawAndEntities, total] = await Promise.all([
+        qb.getRawAndEntities(),
+        countQb.getCount(),
+      ]);
+
+      const bookings = rawAndEntities.entities;
+      const rawResults = rawAndEntities.raw;
 
       // Batch-fetch active sessions for these bookings
       const bookingIds = bookings.map((b) => b.id);
@@ -275,10 +318,12 @@ export const bookingController = {
           : [];
 
       const sessionByBookingId = new Map(activeSessions.map((s) => [s.bookingId, s]));
-      const data = bookings.map((b) => {
+      const data = bookings.map((b, idx) => {
         const sess = sessionByBookingId.get(b.id);
+        const raw = rawResults[idx];
         return {
           ...b,
+          cafe: raw?.cafeName ? { name: raw.cafeName } : null,
           session: sess
             ? {
                 id: sess.id,
@@ -328,7 +373,30 @@ export const bookingController = {
       const cafeId = req.params.cafeId;
       const query = ListCafeBookingsSchema.parse(req.query) as bookingService.ListCafeBookingsQuery;
       const result = await bookingService.listCafeBookings(cafeId, query);
-      res.json({ success: true, ...result });
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings/:id/qr  [public]
+  async getBookingQr(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(id)) {
+        return next(new AppError('Invalid booking ID format', 400, 'VALIDATION_ERROR'));
+      }
+      const QRCode = await import('qrcode');
+      const buffer = await QRCode.toBuffer(id, {
+        errorCorrectionLevel: 'M',
+        width: 256,
+        margin: 2,
+      });
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.send(buffer);
     } catch (err) {
       next(err);
     }

@@ -4,9 +4,11 @@ import * as menuService from '../services/menu.service';
 import { AppError, AuthRequest } from '../types';
 import {
   CafeIdParamsSchema,
+  CreateComboSchema,
   CreateMenuItemSchema,
   MenuItemParamsSchema,
   MenuListQuerySchema,
+  UpdateComboSchema,
   UpdateMenuItemSchema,
 } from '../validate';
 
@@ -78,6 +80,32 @@ export const menuController = {
       await menuService.deleteMenuItem(cafeId, itemId, viewerFromRequest(req));
       logger.info('Menu', 'deleted item', { cafeId, itemId });
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/cafes/:cafeId/menu/combos  [auth]
+  async createCombo(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId } = CafeIdParamsSchema.parse(req.params);
+      const body = CreateComboSchema.parse(req.body);
+      const combo = await menuService.createCombo(cafeId, viewerFromRequest(req), body);
+      logger.info('Menu', 'created combo', { cafeId, comboId: combo.id });
+      res.status(201).json({ success: true, data: combo });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/cafes/:cafeId/menu/combos/:itemId  [auth]
+  async updateCombo(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId, itemId } = MenuItemParamsSchema.parse(req.params);
+      const body = UpdateComboSchema.parse(req.body);
+      const combo = await menuService.updateCombo(cafeId, itemId, viewerFromRequest(req), body);
+      logger.info('Menu', 'updated combo', { cafeId, comboId: itemId });
+      res.json({ success: true, data: combo });
     } catch (err) {
       next(err);
     }

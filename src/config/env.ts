@@ -5,6 +5,15 @@ function parseBoolean(value: string | undefined, fallback = false): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+function getSafeFrontendUrl(): string {
+  let url = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
+  url = url.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'http://' + url;
+  }
+  return url;
+}
+
 export const env = {
   NODE_ENV: process.env.NODE_ENV ?? 'development',
   PORT: parseInt(process.env.PORT ?? '3000', 10),
@@ -18,6 +27,7 @@ export const env = {
     password: process.env.DB_PASSWORD ?? 'postgres',
     ssl: parseBoolean(process.env.DB_SSL),
     sslRejectUnauthorized: parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, true),
+    autoMigrate: parseBoolean(process.env.DB_AUTO_MIGRATE, true),
   },
 
   jwt: {
@@ -86,7 +96,8 @@ export const env = {
     supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.0-flash',
   },
 
-  frontendUrl: process.env.FRONTEND_URL ?? process.env.CLIENT_URL ?? 'http://localhost:5173',
+  frontendUrl: getSafeFrontendUrl(),
+  apiBaseUrl: (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
 
   facebook: {
     appId: process.env.FB_APP_ID ?? '',

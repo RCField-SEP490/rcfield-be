@@ -43,6 +43,15 @@ export class User {
   @Column({ type: 'boolean', default: true })
   is_active: boolean;
 
+  @Column({ name: 'last_active_at', type: 'timestamptz', nullable: true })
+  last_active_at: Date | null;
+
+  @Column({ name: 'favorite_cafe_ids', type: 'uuid', array: true, default: [] })
+  favorite_cafe_ids: string[];
+
+  @Column({ name: 'racing_profile', type: 'jsonb', default: {} })
+  racing_profile: Record<string, unknown>;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at: Date;
 

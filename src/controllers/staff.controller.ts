@@ -1,7 +1,12 @@
 import type { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { logger } from '../config/logger';
-import { CreateStaffSchema, TransferStaffSchema, UpdateFnbOrderStatusSchema } from '../validate';
+import {
+  CreateStaffSchema,
+  TransferStaffSchema,
+  UpdateFnbOrderStatusSchema,
+  CreateWalkInBookingSchema,
+} from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
 import { confirmRefund } from '../services/payment.service';
@@ -135,6 +140,51 @@ export const staffController = {
     }
   },
 
+  // GET /api/v1/provider/staff/:staffId  [auth]
+  async getStaffDetail(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.getStaffDetail(req.user.userId, req.params.staffId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/staff/:staffId/kpi  [auth]
+  async getStaffKpi(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const periodRaw = req.query.period;
+      const VALID_PERIODS = ['7d', '30d', '90d'] as const;
+      const period = VALID_PERIODS.includes(periodRaw as (typeof VALID_PERIODS)[number])
+        ? (periodRaw as (typeof VALID_PERIODS)[number])
+        : '30d';
+      const data = await staffService.getStaffKpi(req.user.userId, req.params.staffId, period);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/staff/:staffId/activity  [auth]
+  async getStaffActivity(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const limit = Math.min(Math.max(1, parseInt(String(req.query.limit ?? '20'), 10) || 20), 50);
+      const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
+      const data = await staffService.getStaffActivity(
+        req.user.userId,
+        req.params.staffId,
+        limit,
+        offset,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /api/v1/staff/today-bookings  [auth]
   async todayBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -143,6 +193,20 @@ export const staffController = {
         throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
       const data = await staffService.getTodayBookings(req.user.cafeId);
       res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/bookings  [auth]
+  async createWalkInBooking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const body = CreateWalkInBookingSchema.parse(req.body);
+      const data = await staffService.createWalkInBooking(req.user.userId, req.user.cafeId, body);
+      res.status(201).json({ success: true, data });
     } catch (err) {
       next(err);
     }
@@ -310,7 +374,7 @@ export const staffController = {
   async settlePendingPayments(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const data = await staffService.settlePendingPayments(req.params.bookingId);
+      const data = await staffService.settlePendingPayments(req.params.bookingId, req.user.userId);
       res.json({ success: true, data });
     } catch (err) {
       next(err);

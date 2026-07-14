@@ -4,8 +4,9 @@ import { UserRole } from '../types';
 import { paymentRequestController } from '../controllers/payment-request.controller';
 import { providerOnboardingController } from '../controllers/provider-onboarding.controller';
 import { staffController } from '../controllers/staff.controller';
-import { shiftController } from '../controllers/shift.controller';
 import { providerDashboardController } from '../controllers/provider-dashboard.controller';
+import { aiRevenueAnalyticsController } from '../controllers/ai-revenue-analytics.controller';
+import { kycUpload } from '../config/multer.config';
 
 export const providerSubscriptionRouter = Router();
 
@@ -13,70 +14,37 @@ providerSubscriptionRouter.use(authenticate, authorize(UserRole.PROVIDER));
 
 providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe);
 
+// KYC routes — no requireActiveProvider (used by REJECTED/PENDING providers)
+const kycFields = kycUpload.fields([
+  { name: 'cccd_front', maxCount: 1 },
+  { name: 'cccd_back', maxCount: 1 },
+  { name: 'gpkd', maxCount: 1 },
+  { name: 'representative_id', maxCount: 1 },
+  { name: 'venue_photo', maxCount: 1 },
+]);
+providerSubscriptionRouter.post(
+  '/kyc/resubmit',
+  kycFields,
+  providerOnboardingController.resubmitKyc,
+);
+providerSubscriptionRouter.get('/kyc/status', providerOnboardingController.getKycStatus);
+
 providerSubscriptionRouter.post('/staff', requireActiveProvider, staffController.createStaff);
 providerSubscriptionRouter.get('/staff', requireActiveProvider, staffController.listStaff);
-providerSubscriptionRouter.post(
-  '/positions',
+providerSubscriptionRouter.get(
+  '/staff/:staffId',
   requireActiveProvider,
-  shiftController.createPosition,
-);
-providerSubscriptionRouter.patch(
-  '/positions/:positionId',
-  requireActiveProvider,
-  shiftController.updatePosition,
-);
-providerSubscriptionRouter.delete(
-  '/positions/:positionId',
-  requireActiveProvider,
-  shiftController.deletePosition,
+  staffController.getStaffDetail,
 );
 providerSubscriptionRouter.get(
-  '/shift-time-presets',
+  '/staff/:staffId/kpi',
   requireActiveProvider,
-  shiftController.listShiftTimePresets,
+  staffController.getStaffKpi,
 );
-providerSubscriptionRouter.post(
-  '/shift-time-presets',
+providerSubscriptionRouter.get(
+  '/staff/:staffId/activity',
   requireActiveProvider,
-  shiftController.createShiftTimePreset,
-);
-providerSubscriptionRouter.patch(
-  '/shift-time-presets/:presetId',
-  requireActiveProvider,
-  shiftController.updateShiftTimePreset,
-);
-providerSubscriptionRouter.delete(
-  '/shift-time-presets/:presetId',
-  requireActiveProvider,
-  shiftController.deleteShiftTimePreset,
-);
-providerSubscriptionRouter.get('/shifts/week', requireActiveProvider, shiftController.getWeek);
-providerSubscriptionRouter.post(
-  '/shifts/assign',
-  requireActiveProvider,
-  shiftController.assignShift,
-);
-providerSubscriptionRouter.put(
-  '/shifts/update-time',
-  requireActiveProvider,
-  shiftController.updateShiftTime,
-);
-providerSubscriptionRouter.put('/shifts/move', requireActiveProvider, shiftController.moveShift);
-providerSubscriptionRouter.post('/shifts/clone', requireActiveProvider, shiftController.cloneShift);
-providerSubscriptionRouter.post(
-  '/shifts/bulk-clone',
-  requireActiveProvider,
-  shiftController.bulkCloneShifts,
-);
-providerSubscriptionRouter.delete(
-  '/shifts/bulk',
-  requireActiveProvider,
-  shiftController.bulkDeleteShifts,
-);
-providerSubscriptionRouter.delete(
-  '/shifts/clear-employee-week',
-  requireActiveProvider,
-  shiftController.clearEmployeeWeek,
+  staffController.getStaffActivity,
 );
 providerSubscriptionRouter.patch(
   '/staff/:staffId/deactivate',
@@ -145,4 +113,18 @@ providerSubscriptionRouter.get(
   '/dashboard/recent-bookings',
   requireActiveProvider,
   providerDashboardController.getRecentBookings,
+);
+providerSubscriptionRouter.get(
+  '/dashboard/top-stats',
+  requireActiveProvider,
+  providerDashboardController.getTopStats,
+);
+providerSubscriptionRouter.post(
+  '/dashboard/ai-insights',
+  requireActiveProvider,
+  aiRevenueAnalyticsController.generateInsights,
+);
+providerSubscriptionRouter.get(
+  '/dashboard/feature-flags',
+  aiRevenueAnalyticsController.getProviderFeatureFlags,
 );

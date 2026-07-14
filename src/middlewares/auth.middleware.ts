@@ -17,6 +17,12 @@ export function authenticate(req: AuthRequest, _res: Response, next: NextFunctio
       return next(new AppError('Token role invalid', 401, 'TOKEN_INVALID'));
     }
     req.user = payload;
+    // Fire-and-forget: track last active time for staff presence
+    if (payload.role === UserRole.STAFF) {
+      AppDataSource.query(`UPDATE users SET last_active_at = NOW() WHERE id = $1`, [
+        payload.userId,
+      ]).catch(() => {});
+    }
     next();
   } catch {
     next(new AppError('Token invalid or expired', 401, 'TOKEN_INVALID'));

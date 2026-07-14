@@ -50,6 +50,40 @@ export async function uploadImage(options: {
   });
 }
 
+export async function uploadFile(options: {
+  buffer: Buffer;
+  folder: string;
+  publicIdPrefix: string;
+}): Promise<{ publicId: string; url: string }> {
+  ensureConfigured();
+
+  const publicId = `${options.publicIdPrefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: options.folder,
+        public_id: publicId,
+        resource_type: 'auto',
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        if (!result?.secure_url || !result.public_id) {
+          return reject(new Error('Cloudinary upload failed'));
+        }
+        resolve({ publicId: result.public_id, url: result.secure_url });
+      },
+    );
+
+    Readable.from(options.buffer).pipe(stream);
+  });
+}
+
+export async function deleteFile(publicId: string): Promise<void> {
+  ensureConfigured();
+  await cloudinary.uploader.destroy(publicId, { resource_type: 'auto' });
+}
+
 export async function deleteImage(publicId: string): Promise<void> {
   ensureConfigured();
   await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });

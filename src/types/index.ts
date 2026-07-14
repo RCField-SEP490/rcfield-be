@@ -76,6 +76,7 @@ export enum BookingStatus {
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',
   NO_SHOW = 'NO_SHOW',
+  AWAITING_PAYMENT = 'AWAITING_PAYMENT',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
 }
@@ -182,6 +183,74 @@ export enum VehicleSource {
   BYOC = 'BYOC',
 }
 
+// ── Contest ──────────────────────────────────────────────────────────────────
+
+export enum ContestStatus {
+  DRAFT = 'DRAFT',
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestResourceScope {
+  FULL_BRANCH = 'FULL_BRANCH',
+  SELECTED_TRACKS = 'SELECTED_TRACKS',
+}
+
+export enum ContestRegistrationStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  CANCELLED = 'CANCELLED',
+  CHECKED_IN = 'CHECKED_IN',
+}
+
+export enum ContestEntryFeePaymentStatus {
+  NOT_REQUIRED = 'NOT_REQUIRED',
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  WAIVED = 'WAIVED',
+  MARKED_PAID = 'MARKED_PAID',
+}
+
+export enum ContestMatchType {
+  HEAD_TO_HEAD = 'HEAD_TO_HEAD',
+  MULTI_DRIVER = 'MULTI_DRIVER',
+  TIME_ATTACK = 'TIME_ATTACK',
+  FINAL = 'FINAL',
+}
+
+export enum ContestMatchStatus {
+  DRAFT = 'DRAFT',
+  READY = 'READY',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestParticipantStatus {
+  READY = 'READY',
+  STARTED = 'STARTED',
+  FINISHED = 'FINISHED',
+  DNS = 'DNS',
+  DNF = 'DNF',
+  DQ = 'DQ',
+}
+
+export enum RaceRecordSourceType {
+  CONTEST = 'CONTEST',
+  SESSION_TIME_ATTACK = 'SESSION_TIME_ATTACK',
+  ADMIN_IMPORT = 'ADMIN_IMPORT',
+}
+
+export enum RaceRecordVerificationStatus {
+  PENDING = 'PENDING',
+  VERIFIED = 'VERIFIED',
+  REJECTED = 'REJECTED',
+  SUPERSEDED = 'SUPERSEDED',
+}
+
 export enum SessionVehicleStatus {
   ASSIGNED = 'ASSIGNED',
   IN_USE = 'IN_USE',
@@ -232,6 +301,15 @@ export enum DisputeStatus {
 
 // ── F&B ───────────────────────────────────────────────────────────────────────
 
+export enum FnbCategory {
+  FOOD = 'FOOD',
+  DRINK = 'DRINK',
+  SNACK = 'SNACK',
+  DESSERT = 'DESSERT',
+  COMBO = 'COMBO',
+  OTHER = 'OTHER',
+}
+
 export enum FnbOrderType {
   PRE_ORDER = 'PRE_ORDER',
   ON_SITE = 'ON_SITE',
@@ -250,6 +328,28 @@ export enum NotificationChannel {
   PUSH = 'PUSH',
   SMS = 'SMS',
   EMAIL = 'EMAIL',
+}
+
+// ── Provider KYC ─────────────────────────────────────────────────────────────
+
+export enum KycBusinessType {
+  INDIVIDUAL = 'INDIVIDUAL',
+  BUSINESS = 'BUSINESS',
+}
+
+export enum KycDocumentType {
+  CCCD_FRONT = 'CCCD_FRONT',
+  CCCD_BACK = 'CCCD_BACK',
+  GPKD = 'GPKD',
+  REPRESENTATIVE_ID = 'REPRESENTATIVE_ID',
+  VENUE_PHOTO = 'VENUE_PHOTO',
+}
+
+export interface KycDocumentItem {
+  documentType: KycDocumentType;
+  cloudinaryUrl: string;
+  cloudinaryPublicId: string;
+  originalFilename: string | null;
 }
 
 // ── Provider Onboarding & Subscription ───────────────────────────────────────
@@ -302,6 +402,14 @@ export enum NotificationType {
   CUSTOMER_EXTENSION_APPROVED = 'CUSTOMER_EXTENSION_APPROVED',
   CUSTOMER_EXTENSION_REJECTED = 'CUSTOMER_EXTENSION_REJECTED',
   CUSTOMER_PAYMENT_CONFIRMED = 'CUSTOMER_PAYMENT_CONFIRMED',
+  BOOKING_REVIEW_REQUEST = 'BOOKING_REVIEW_REQUEST',
+}
+
+// ── Review ────────────────────────────────────────────────────────────────────
+
+export enum ReviewStatus {
+  VISIBLE = 'VISIBLE',
+  HIDDEN = 'HIDDEN',
 }
 
 // ── Pricing ───────────────────────────────────────────────────────────────────
@@ -330,6 +438,20 @@ export interface AuthPayload {
 
 export interface AuthRequest extends Request {
   user?: AuthPayload;
+}
+
+// ── Widget Config ─────────────────────────────────────────────────────────────
+
+export interface WidgetConfigData {
+  greetingMessage: string;
+  welcomeMessage: string;
+  position: string;
+  primaryColor: string;
+  avatarUrl: string | null;
+  quickReplies: string[];
+  systemPrompt: string | null;
+  isEnabled: boolean;
+  fullPageEnabled: boolean;
 }
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────

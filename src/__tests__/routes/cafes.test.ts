@@ -2,7 +2,13 @@ import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import { CafeStatus, ProviderStatus, SubscriptionStatus, UserRole } from '../../types';
-import { createTestCafe, createTestUser, generateToken } from '../helpers';
+import {
+  createTestAmenity,
+  createTestCafe,
+  createTestUser,
+  createTestVehicle,
+  generateToken,
+} from '../helpers';
 
 async function activateProvider(providerId: string): Promise<void> {
   await AppDataSource.query(
@@ -40,10 +46,12 @@ function cafeBody(overrides: Record<string, unknown> = {}) {
   return {
     name: 'RC Test Track',
     description: 'Indoor RC track',
-    phone: '0901234567',
+    phone: '0931234567',
     address: '123 Nguyen Van Linh',
     district: 'Quan 7',
     city: 'Ho Chi Minh',
+    latitude: 10.7403,
+    longitude: 106.712,
     operating_hours: {
       mon: { open: '09:00', close: '22:00', is_closed: false },
     },
@@ -54,6 +62,75 @@ function cafeBody(overrides: Record<string, unknown> = {}) {
     byoc_capacity: 5,
     ...overrides,
   };
+}
+
+async function addReview(cafeId: string, rating: number) {
+  const [customer] = await AppDataSource.query(
+    `INSERT INTO users (email, full_name, password_hash, role, is_active, auth_provider)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [
+      `reviewer_${Date.now()}_${Math.random().toString(36).slice(2)}@test.com`,
+      'Reviewer',
+      'hash',
+      UserRole.CUSTOMER,
+      true,
+      'LOCAL',
+    ],
+  );
+
+  const [trackType] = await AppDataSource.query(`SELECT id FROM track_types LIMIT 1`);
+
+  const [booking] = await AppDataSource.query(
+    `INSERT INTO bookings
+       (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, payment_expires_at)
+     VALUES ($1, $2, $3, 'BYOC', 'APP', 'COMPLETED', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour', NOW() + INTERVAL '15 minutes')
+     RETURNING *`,
+    [customer.id, cafeId, trackType.id],
+  );
+
+  await AppDataSource.query(
+    `INSERT INTO reviews (booking_id, cafe_id, customer_id, rating, status, created_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [booking.id, cafeId, customer.id, rating, 'VISIBLE'],
+  );
+}
+
+async function addPromotion(cafeId: string) {
+  const admin = await createTestUser({ role: UserRole.ADMIN });
+  const startsAt = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+  await AppDataSource.query(
+    `INSERT INTO promotions
+       (code, description, discount_type, discount_value, max_discount_amount,
+        min_order_amount, max_uses, max_uses_per_user, uses_count, applicable_to,
+        cafe_id, starts_at, expires_at, schedule_mode, schedule_start_time,
+        schedule_end_time, schedule_weekdays, is_active, show_on_cafe_page, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+    [
+      'EXPO25',
+      'Explore promo',
+      'PERCENT',
+      25,
+      50000,
+      100000,
+      null,
+      1,
+      0,
+      'ALL',
+      cafeId,
+      startsAt,
+      expiresAt,
+      'ONCE',
+      null,
+      null,
+      [],
+      true,
+      true,
+      admin.id,
+    ],
+  );
 }
 
 describe('Cafe routes', () => {
@@ -247,5 +324,76 @@ describe('Cafe routes', () => {
 
     expect(active.status).toBe(200);
     expect(active.body.data.status).toBe(CafeStatus.ACTIVE);
+  });
+
+  it('public list lọc theo khoảng giá, tiện ích, loại xe và sắp xếp từ BE', async () => {
+    const amenity = await createTestAmenity({ title: 'Serious Inspection', icon: 'shield' });
+    const lowPriceCafe = await createTestCafe({
+      status: CafeStatus.ACTIVE,
+      slot_fee_rate: 90000,
+      amenity_ids: [amenity.id],
+    });
+    const highPriceCafe = await createTestCafe({
+      status: CafeStatus.ACTIVE,
+      slot_fee_rate: 220000,
+    });
+    await createTestVehicle({ cafe_id: lowPriceCafe.id, compatible_track_types: ['DRIFT'] });
+    await createTestVehicle({ cafe_id: highPriceCafe.id, compatible_track_types: ['OBSTACLE'] });
+    await addReview(lowPriceCafe.id, 5);
+    await addReview(highPriceCafe.id, 3);
+    await addPromotion(lowPriceCafe.id);
+
+    const priceRes = await request(app).get('/api/v1/cafes?price_min=80000&price_max=100000');
+    expect(priceRes.status).toBe(200);
+    expect(priceRes.body.data).toHaveLength(1);
+    expect(priceRes.body.data[0].id).toBe(lowPriceCafe.id);
+
+    const amenityRes = await request(app).get(
+      `/api/v1/cafes?amenities=${encodeURIComponent(amenity.title)}`,
+    );
+    expect(amenityRes.status).toBe(200);
+    expect(amenityRes.body.data).toHaveLength(1);
+    expect(amenityRes.body.data[0].id).toBe(lowPriceCafe.id);
+
+    const vehicleRes = await request(app).get('/api/v1/cafes?vehicle_type=Traxxas');
+    expect(vehicleRes.status).toBe(200);
+    expect(vehicleRes.body.data).toHaveLength(2);
+
+    const ratingRes = await request(app).get('/api/v1/cafes?sort_by=rating');
+    expect(ratingRes.status).toBe(200);
+    expect(ratingRes.body.data[0].id).toBe(lowPriceCafe.id);
+
+    const popularityRes = await request(app).get('/api/v1/cafes?sort_by=popularity');
+    expect(popularityRes.status).toBe(200);
+    expect(popularityRes.body.data[0].id).toBe(lowPriceCafe.id);
+
+    expect(priceRes.body.data[0]).toMatchObject({
+      rating: 5,
+      reviewsCount: 1,
+      minPrice: 90000,
+    });
+    expect(priceRes.body.data[0].activePromotions).toHaveLength(1);
+    expect(priceRes.body.data[0].amenities).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: amenity.id, title: amenity.title })]),
+    );
+  });
+
+  it('tạo cafe thiếu tọa độ hoặc tọa độ bằng 0 bị từ chối', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+
+    const missingCoordinates = await request(app)
+      .post('/api/v1/cafes')
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send(cafeBody({ latitude: null, longitude: null }));
+
+    expect(missingCoordinates.status).toBe(400);
+
+    const zeroCoordinates = await request(app)
+      .post('/api/v1/cafes')
+      .set('Authorization', `Bearer ${generateToken(provider)}`)
+      .send(cafeBody({ latitude: 0, longitude: 0 }));
+
+    expect(zeroCoordinates.status).toBe(400);
   });
 });

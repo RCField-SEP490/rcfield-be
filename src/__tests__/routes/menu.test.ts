@@ -32,7 +32,7 @@ async function createMenuItem(
     name: 'Cold Brew Nitro',
     description: 'Ca phe lanh nitro',
     price: 55000,
-    category: 'Do uong',
+    category: 'DRINK',
     image_url: null,
     is_available: true,
     ...overrides,
@@ -64,7 +64,7 @@ describe('Menu routes', () => {
     await createMenuItem(cafe.id, { name: 'Bac xiu', is_available: true });
     await createMenuItem(cafe.id, {
       name: 'Snack bo cay',
-      category: 'An vat',
+      category: 'SNACK',
       is_available: false,
     });
 
@@ -103,7 +103,7 @@ describe('Menu routes', () => {
         name: 'Matcha Latte',
         description: 'Matcha sua tuoi',
         price: 49000,
-        category: 'Do uong',
+        category: 'DRINK',
         image_url: 'https://cdn.rcfield.vn/menu/matcha.jpg',
       });
 

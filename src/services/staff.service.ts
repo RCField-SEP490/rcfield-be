@@ -1,12 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
-import { IsNull } from 'typeorm';
+import { IsNull, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import {
   AppError,
   AuthProvider,
+  BookingMode,
+  BookingSource,
   BookingStatus,
   UserRole,
   SessionStatus,
@@ -26,6 +28,8 @@ import {
   PaymentComponentStatus,
   PaymentTransactionType,
   PaymentTransactionStatus,
+  BookingParticipantType,
+  CafeOperatingHours,
 } from '../types';
 import { User } from '../models/user.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
@@ -37,6 +41,8 @@ import { SessionVehicle } from '../models/session-vehicle.entity';
 import { Booking } from '../models/booking.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { Cafe } from '../models/cafe.entity';
+import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { Inspection } from '../models/inspection.entity';
 import { InspectionPhoto } from '../models/inspection-photo.entity';
@@ -47,9 +53,11 @@ import { FnbOrderItem } from '../models/fnb-order-item.entity';
 import { MenuItem } from '../models/menu-item.entity';
 import { emailService } from './email.service';
 import { authService } from './auth.service';
+import { transition } from './booking.service';
 import { env } from '../config/env';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
+import { createWalkInBooking as createWalkInBookingService } from './booking.service';
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -80,22 +88,38 @@ export interface StaffListItem {
   createdAt: string;
   activatedAt: string | null;
   inviteExpiresAt: string | null;
+  lastActiveAt: string | null;
 }
 
 export interface TodayBookingItem {
-  id: string;
-  customerName: string;
-  customerPhone: string | null;
-  startTime: string;
-  endTime: string;
-  createdAt: string;
-  status: string;
-  mode: string;
-  vehicleName: string | null;
-  trackTypeName: string | null;
-  participantCount: number;
-  vehicleCount: number;
-  fnbPreorderAmount: number;
+  bookingId: string;
+  shortCode: string;
+  cafeId: string;
+  cafeName: string;
+  cafeAddress: string;
+  cafePhone: string;
+  trackName: string;
+  trackType: string;
+  bookingMode: 'SINGLE' | 'PACKAGE' | 'SUBSCRIPTION';
+  playMode: BookingMode;
+  source: BookingSource;
+  status: BookingStatus;
+  slotStart: string;
+  slotEnd: string;
+  slotCount: number;
+  depositAmount: number;
+  slotFee: number;
+  rentalFee: number;
+  fnbPreorderFee: number;
+  fnbOnsiteFee: number;
+  discountAmount: number;
+  totalAmount: number;
+  paymentStatus: 'UNPAID' | 'PAID';
+  payment_components: PaymentComponent[];
+  plannedParticipants: string[];
+  participantDetails: { name: string; phone?: string; isBooker: boolean }[];
+  plannedVehicles: string[];
+  sessions: any[];
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -234,6 +258,7 @@ export async function listStaffForProvider(
       activated_at: Date | null;
       has_active_token: boolean;
       invite_expires_at: Date | null;
+      last_active_at: Date | null;
     }[]
   >(
     `SELECT
@@ -246,6 +271,7 @@ export async function listStaffForProvider(
        u.is_active,
        u.created_at,
        u.updated_at AS activated_at,
+       u.last_active_at,
        EXISTS(
          SELECT 1 FROM staff_invite_tokens t
          WHERE t.user_id = u.id
@@ -291,6 +317,7 @@ export async function listStaffForProvider(
       activatedAt: status === 'ACTIVE' && row.activated_at ? row.activated_at.toISOString() : null,
       inviteExpiresAt:
         status === 'PENDING' && row.invite_expires_at ? row.invite_expires_at.toISOString() : null,
+      lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
     };
   });
 }
@@ -462,12 +489,13 @@ export async function activateStaffAccount(
   };
 }
 
-export async function getTodayBookings(cafeId: string): Promise<any[]> {
+export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem[]> {
   const rows = await AppDataSource.query<any[]>(
     `SELECT
        b.id,
        b.status,
        b.play_mode,
+       b.source,
        b.slot_start,
        b.slot_end,
        b.slot_count,
@@ -481,13 +509,13 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
      JOIN cafes c ON c.id = b.cafe_id
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
      WHERE b.cafe_id = $1
-       AND b.slot_start::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+       AND (b.slot_start AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
        AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'COMPLETED', 'CANCELLED')
      ORDER BY b.slot_start ASC`,
     [cafeId],
   );
 
-  const bookingsList = [];
+  const bookingsList: TodayBookingItem[] = [];
 
   for (const row of rows) {
     // 1. Fetch planned participants
@@ -495,13 +523,24 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
       where: { bookingId: row.id },
     });
     const plannedParticipants = [];
+    const participantDetails: { name: string; phone?: string; isBooker: boolean }[] = [];
     for (const bp of bpList) {
+      let name: string;
+      let phone: string | undefined;
       if (bp.userId) {
         const user = await AppDataSource.getRepository(User).findOne({ where: { id: bp.userId } });
-        plannedParticipants.push(user?.full_name || bp.guestName || 'Người chơi');
+        name = user?.full_name || bp.guestName || 'Người chơi';
+        phone = user?.phone || bp.guestPhone || undefined;
       } else {
-        plannedParticipants.push(bp.guestName || 'Người chơi');
+        name = bp.guestName || 'Người chơi';
+        phone = bp.guestPhone || undefined;
       }
+      plannedParticipants.push(name);
+      participantDetails.push({
+        name,
+        phone,
+        isBooker: bp.participantType === BookingParticipantType.BOOKER,
+      });
     }
 
     // 2. Fetch planned vehicles
@@ -535,21 +574,24 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
     const depositComp = comps.find((c) => c.type === PaymentComponentType.SECURITY_DEPOSIT);
     const slotComp = comps.find((c) => c.type === PaymentComponentType.SLOT_FEE);
     const rentalComps = comps.filter((c) => c.type === PaymentComponentType.RENTAL_FEE);
-    const preorderFnbComp = comps.find(
-      (c) =>
-        c.type === PaymentComponentType.FB_PREORDER &&
-        (c.status === PaymentComponentStatus.HELD ||
-          c.status === PaymentComponentStatus.REFUNDED ||
-          c.status === PaymentComponentStatus.DISBURSED),
-    );
 
-    const depositAmount = depositComp ? Number(depositComp.amount) : 150000;
+    const depositAmount = depositComp ? Number(depositComp.amount) : 0;
     const slotFee = slotComp ? Number(slotComp.amount) : 120000;
     const rentalFee =
       rentalComps.length > 0
         ? rentalComps.reduce((sum, c) => sum + Number(c.amount), 0)
         : bvList.length * 100000;
-    const fnbPreorderFee = preorderFnbComp ? Number(preorderFnbComp.amount) : 0;
+    const fnbOrders = await AppDataSource.getRepository(FnbOrder).find({
+      where: { bookingId: row.id },
+    });
+    const fnbPreorderFee = fnbOrders
+      .filter(
+        (o) => o.orderType === FnbOrderType.PRE_ORDER && o.status !== FnbOrderStatus.CANCELLED,
+      )
+      .reduce((sum, o) => sum + Number(o.totalAmount), 0);
+    const fnbOnsiteFee = fnbOrders
+      .filter((o) => o.orderType === FnbOrderType.ON_SITE && o.status !== FnbOrderStatus.CANCELLED)
+      .reduce((sum, o) => sum + Number(o.totalAmount), 0);
     const totalAmount = slotFee + rentalFee + fnbPreorderFee;
 
     bookingsList.push({
@@ -563,6 +605,7 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
       trackType: row.play_mode === 'BYOC' ? 'DRIFT_ASPHALT' : 'DRIFT_CARPET',
       bookingMode: 'SINGLE',
       playMode: row.play_mode,
+      source: row.source,
       status: row.status,
       slotStart: row.slot_start.toISOString(),
       slotEnd: row.slot_end.toISOString(),
@@ -571,11 +614,21 @@ export async function getTodayBookings(cafeId: string): Promise<any[]> {
       slotFee,
       rentalFee,
       fnbPreorderFee,
+      fnbOnsiteFee,
       discountAmount: Number(row.discount_amount) || 0,
       totalAmount,
-      paymentStatus: row.status === 'PENDING' ? 'UNPAID' : 'PAID',
+      paymentStatus:
+        row.status === 'PENDING' ||
+        comps.some(
+          (c) =>
+            c.status === PaymentComponentStatus.PENDING ||
+            c.status === PaymentComponentStatus.PENDING_REFUND,
+        )
+          ? 'UNPAID'
+          : 'PAID',
       payment_components: comps,
       plannedParticipants,
+      participantDetails,
       plannedVehicles,
       sessions: sessionsList,
     });
@@ -734,6 +787,266 @@ export async function transferStaff(
   logger.info('Staff', 'staff transferred', { providerId, staffId, newCafeId });
 }
 
+export interface StaffDetailProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string | null;
+  cafeName: string;
+  cafeId: string;
+  status: 'PENDING' | 'ACTIVE' | 'DISABLED';
+  createdAt: string;
+  activatedAt: string | null;
+  lastActiveAt: string | null;
+}
+
+export interface StaffKpiSummary {
+  staffId: string;
+  period: '7d' | '30d' | '90d';
+  totalCheckIns: number;
+  totalFnbOrdersHandled: number;
+  totalExtensionsApproved: number;
+  onTimeCheckInRate: number | null;
+  activeDaysCount: number;
+}
+
+export interface StaffActivityEvent {
+  id: string;
+  type: 'CHECK_IN' | 'CHECK_OUT' | 'FNB_ORDER' | 'EXTENSION_APPROVED';
+  eventTime: string;
+  label: string;
+  bookingId: string;
+  bookingSource: 'APP' | 'STAFF_MANUAL';
+}
+
+export interface StaffActivityPage {
+  events: StaffActivityEvent[];
+  total: number;
+  hasMore: boolean;
+}
+
+export async function getStaffDetail(
+  providerId: string,
+  staffId: string,
+): Promise<StaffDetailProfile> {
+  const [row] = await AppDataSource.query<
+    {
+      id: string;
+      full_name: string;
+      email: string;
+      phone: string | null;
+      cafe_id: string;
+      cafe_name: string;
+      is_active: boolean;
+      created_at: Date;
+      activated_at: Date | null;
+      invite_expires_at: Date | null;
+      has_active_token: boolean;
+      last_active_at: Date | null;
+    }[]
+  >(
+    `SELECT
+       u.id, u.full_name, u.email, u.phone, u.is_active, u.created_at, u.last_active_at,
+       u.updated_at AS activated_at,
+       c.id AS cafe_id, c.name AS cafe_name,
+       EXISTS(
+         SELECT 1 FROM staff_invite_tokens t
+         WHERE t.user_id = u.id AND t.used_at IS NULL AND t.expires_at > NOW()
+       ) AS has_active_token,
+       (
+         SELECT t.expires_at FROM staff_invite_tokens t
+         WHERE t.user_id = u.id AND t.used_at IS NULL
+         ORDER BY t.created_at DESC LIMIT 1
+       ) AS invite_expires_at
+     FROM users u
+     JOIN staff_cafe_assignments a ON a.staff_id = u.id
+     JOIN cafes c ON c.id = a.cafe_id
+     WHERE u.id = $1 AND c.provider_id = $2 AND u.deleted_at IS NULL`,
+    [staffId, providerId],
+  );
+
+  if (!row) {
+    throw new AppError(
+      'Nhân viên không tồn tại hoặc không thuộc Provider này',
+      404,
+      'STAFF_NOT_FOUND',
+    );
+  }
+
+  let status: 'PENDING' | 'ACTIVE' | 'DISABLED';
+  if (row.is_active) {
+    status = 'ACTIVE';
+  } else if (row.has_active_token) {
+    status = 'PENDING';
+  } else {
+    status = 'DISABLED';
+  }
+
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email,
+    phone: row.phone,
+    cafeName: row.cafe_name,
+    cafeId: row.cafe_id,
+    status,
+    createdAt: row.created_at.toISOString(),
+    activatedAt: status === 'ACTIVE' && row.activated_at ? row.activated_at.toISOString() : null,
+    lastActiveAt: row.last_active_at ? row.last_active_at.toISOString() : null,
+  };
+}
+
+export async function getStaffKpi(
+  providerId: string,
+  staffId: string,
+  period: '7d' | '30d' | '90d',
+): Promise<StaffKpiSummary> {
+  await getStaffOwnedByProvider(providerId, staffId);
+
+  const days = period === '7d' ? 7 : period === '30d' ? 30 : 90;
+
+  const [checkInsRow, fnbRow, extensionsRow, onTimeRow, activeDaysRow] = await Promise.all([
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM sessions
+       WHERE checked_in_by = $1 AND created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM fnb_orders
+       WHERE created_by = $1 AND status = 'DELIVERED'
+       AND created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM extension_proposals
+       WHERE proposed_by = $1 AND status = 'APPROVED'
+       AND created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ rate: string | null }]>(
+      `SELECT
+         COUNT(*) FILTER (
+           WHERE s.created_at BETWEEN b.slot_start - INTERVAL '15 minutes'
+                                  AND b.slot_start + INTERVAL '15 minutes'
+         )::float / NULLIF(COUNT(*), 0) * 100 AS rate
+       FROM sessions s
+       JOIN bookings b ON b.id = s.booking_id
+       WHERE s.checked_in_by = $1
+       AND s.created_at >= NOW() - INTERVAL '${days} days'`,
+      [staffId],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(DISTINCT DATE(event_time))::int AS count FROM (
+         SELECT created_at AS event_time FROM sessions WHERE checked_in_by = $1
+           AND created_at >= NOW() - INTERVAL '${days} days'
+         UNION ALL
+         SELECT created_at FROM fnb_orders WHERE created_by = $1
+           AND created_at >= NOW() - INTERVAL '${days} days'
+         UNION ALL
+         SELECT created_at FROM extension_proposals WHERE proposed_by = $1
+           AND created_at >= NOW() - INTERVAL '${days} days'
+       ) sub`,
+      [staffId],
+    ),
+  ]);
+
+  const rate = onTimeRow[0]?.rate;
+
+  return {
+    staffId,
+    period,
+    totalCheckIns: Number(checkInsRow[0]?.count ?? 0),
+    totalFnbOrdersHandled: Number(fnbRow[0]?.count ?? 0),
+    totalExtensionsApproved: Number(extensionsRow[0]?.count ?? 0),
+    onTimeCheckInRate: rate != null ? Math.round(Number(rate) * 10) / 10 : null,
+    activeDaysCount: Number(activeDaysRow[0]?.count ?? 0),
+  };
+}
+
+export async function getStaffActivity(
+  providerId: string,
+  staffId: string,
+  limit: number,
+  offset: number,
+): Promise<StaffActivityPage> {
+  await getStaffOwnedByProvider(providerId, staffId);
+
+  const [events, totalRow] = await Promise.all([
+    AppDataSource.query<
+      {
+        id: string;
+        type: string;
+        event_time: Date;
+        label: string;
+        booking_id: string;
+        booking_source: string;
+      }[]
+    >(
+      `SELECT type, ref_id AS id, event_time, label, booking_id, booking_source FROM (
+         SELECT 'CHECK_IN' AS type, s.id AS ref_id, s.created_at AS event_time,
+                'Check-in' AS label,
+                s.booking_id,
+                b.source AS booking_source
+         FROM sessions s JOIN bookings b ON b.id = s.booking_id
+         WHERE s.checked_in_by = $1
+         UNION ALL
+         SELECT 'FNB_ORDER', fo.id, fo.created_at,
+                'Order #' || UPPER(SUBSTRING(fo.id::text, 1, 4)),
+                fo.booking_id,
+                b.source
+         FROM fnb_orders fo JOIN bookings b ON b.id = fo.booking_id
+         WHERE fo.created_by = $1
+         UNION ALL
+         SELECT 'EXTENSION_APPROVED', ep.id, ep.created_at,
+                'Gia hạn +' || ep.duration_minutes || ' phút',
+                s.booking_id,
+                b.source
+         FROM extension_proposals ep
+         JOIN sessions s ON s.id = ep.session_id
+         JOIN bookings b ON b.id = s.booking_id
+         WHERE ep.proposed_by = $1 AND ep.status = 'APPROVED'
+         UNION ALL
+         SELECT 'CHECK_OUT', s.id, s.actual_end_at,
+                'Check-out',
+                s.booking_id,
+                b.source
+         FROM sessions s JOIN bookings b ON b.id = s.booking_id
+         WHERE s.checked_out_by = $1 AND s.actual_end_at IS NOT NULL
+       ) events
+       ORDER BY event_time DESC
+       LIMIT $2 OFFSET $3`,
+      [staffId, limit, offset],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*)::int AS count FROM (
+         SELECT id FROM sessions WHERE checked_in_by = $1
+         UNION ALL
+         SELECT id FROM fnb_orders WHERE created_by = $1
+         UNION ALL
+         SELECT id FROM extension_proposals WHERE proposed_by = $1 AND status = 'APPROVED'
+         UNION ALL
+         SELECT id FROM sessions WHERE checked_out_by = $1 AND actual_end_at IS NOT NULL
+       ) sub`,
+      [staffId],
+    ),
+  ]);
+
+  const total = Number(totalRow[0]?.count ?? 0);
+
+  return {
+    events: events.map((e) => ({
+      id: e.id,
+      type: e.type as StaffActivityEvent['type'],
+      eventTime: e.event_time.toISOString(),
+      label: e.label,
+      bookingId: e.booking_id,
+      bookingSource: e.booking_source as StaffActivityEvent['bookingSource'],
+    })),
+    total,
+    hasMore: offset + events.length < total,
+  };
+}
+
 async function getStaffOwnedByProvider(providerId: string, staffId: string): Promise<User> {
   const [row] = await AppDataSource.query<{ id: string }[]>(
     `SELECT u.id
@@ -880,11 +1193,19 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
       await AppDataSource.getRepository(SessionVehicle).save(sv);
     }
   } else if (booking.playMode === 'BYOC') {
-    const sv = new SessionVehicle();
-    sv.sessionId = session.id;
-    sv.vehicleSource = VehicleSource.BYOC;
-    sv.status = SessionVehicleStatus.ASSIGNED;
-    await AppDataSource.getRepository(SessionVehicle).save(sv);
+    // One BYOC vehicle slot per participant — link via assigned_to_participant_id for labeling
+    const sessionParticipants = await AppDataSource.getRepository(SessionParticipant).find({
+      where: { sessionId: session.id },
+    });
+    const slots = sessionParticipants.length > 0 ? sessionParticipants : [null];
+    for (const sp of slots) {
+      const sv = new SessionVehicle();
+      sv.sessionId = session.id;
+      sv.vehicleSource = VehicleSource.BYOC;
+      sv.status = SessionVehicleStatus.ASSIGNED;
+      if (sp) sv.assignedToParticipantId = sp.id;
+      await AppDataSource.getRepository(SessionVehicle).save(sv);
+    }
   }
 
   return session;
@@ -905,6 +1226,10 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   });
   if (!booking) {
     throw new AppError('Không tìm thấy đơn đặt lịch gốc của phiên này', 404, 'BOOKING_NOT_FOUND');
+  }
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
+  if (!cafe) {
+    throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
   }
 
   const participants = await AppDataSource.getRepository(SessionParticipant).find({
@@ -927,6 +1252,9 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
         name = vehicle.catalog?.name || vehicle.identifier || 'Xe thuê';
         imageUrl = vehicle.distinctiveImageUrl || undefined;
       }
+    } else if (sv.vehicleSource === VehicleSource.BYOC && sv.assignedToParticipantId) {
+      const sp = participants.find((p) => p.id === sv.assignedToParticipantId);
+      if (sp?.displayName) name = `Xe của ${sp.displayName} (BYOC)`;
     }
     vehiclesList.push({
       vehicleId: sv.vehicleId || sv.id,
@@ -1037,6 +1365,25 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     where: { sessionId },
     order: { createdAt: 'DESC' },
   });
+  const approvedExtensions = await AppDataSource.getRepository(ExtensionProposal).find({
+    where: { sessionId, status: ExtensionProposalStatus.APPROVED },
+  });
+  const approvedExtensionFee = approvedExtensions.reduce(
+    (sum, ext) => sum + Number(ext.feeAmount),
+    0,
+  );
+  const approvedExtensionMinutes = approvedExtensions.reduce(
+    (sum, ext) => sum + Number(ext.durationMinutes),
+    0,
+  );
+  const mappedApprovedExtensions = approvedExtensions
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((ext) => ({
+      proposalId: ext.id,
+      extraMinutes: ext.durationMinutes,
+      additionalFee: Number(ext.feeAmount),
+      approvedAt: ext.respondedAt?.toISOString() ?? ext.updatedAt.toISOString(),
+    }));
 
   let extensionProposal = undefined;
   if (latestProposal) {
@@ -1051,6 +1398,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       status: latestProposal.status,
     };
   }
+  const extensionPricingOptions = await buildExtensionPricingOptions(booking, session, cafe);
 
   return {
     sessionId: session.id,
@@ -1068,6 +1416,10 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     inspections: mappedInspections,
     damageClaim,
     extensionProposal,
+    approvedExtensionFee,
+    approvedExtensionMinutes,
+    approvedExtensions: mappedApprovedExtensions,
+    extensionPricingOptions,
     fnbOrders: mappedFnbOrders,
   };
 }
@@ -1110,17 +1462,33 @@ export async function submitInspection(
     sessionVehicleId = activeSVs[0].id;
   }
 
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: session.bookingId },
+  });
+
   const inspection = new Inspection();
   inspection.sessionId = sessionId;
   inspection.sessionVehicleId = sessionVehicleId;
   inspection.type = type === 'CHECK_IN' ? InspectionType.CHECK_IN : InspectionType.CHECK_OUT;
-  inspection.subjectType = InspectionSubjectType.RENTAL_VEHICLE;
+  const isByoc =
+    booking?.playMode === 'BYOC' ||
+    (activeSVs.length > 0 && activeSVs[0].vehicleSource === VehicleSource.BYOC);
+  inspection.subjectType = isByoc
+    ? InspectionSubjectType.BYOC_VEHICLE
+    : InspectionSubjectType.RENTAL_VEHICLE;
   inspection.performedBy = staffUserId;
   inspection.preExistingFlag = type === 'CHECK_IN' ? false : true;
   inspection.damageNoted = !!damageFlagged;
   inspection.damageDescription = staffNotes || (damageDetails ? damageDetails.description : null);
   inspection.damageCostEstimate = damageDetails ? damageDetails.estimatedCost : null;
-  inspection.customerConfirmed = false;
+
+  if (booking && booking.source === BookingSource.STAFF_MANUAL) {
+    inspection.customerConfirmed = true;
+    inspection.customerConfirmedAt = new Date();
+  } else {
+    inspection.customerConfirmed = false;
+  }
+
   await AppDataSource.getRepository(Inspection).save(inspection);
 
   if (photos && Array.isArray(photos)) {
@@ -1147,22 +1515,85 @@ export async function submitInspection(
     }
   }
 
-  if (inspection.type === InspectionType.CHECK_OUT) {
-    session.status = SessionStatus.CHECKING_OUT;
+  if (inspection.type === InspectionType.CHECK_IN) {
+    // Auto-confirm CHECK_IN — staff and customer are co-located, no async confirmation needed
+    inspection.customerConfirmed = true;
+    inspection.customerConfirmedAt = new Date();
+    await AppDataSource.getRepository(Inspection).save(inspection);
+
+    session.status = SessionStatus.ACTIVE;
+    session.actualStartAt = new Date();
     await AppDataSource.getRepository(Session).save(session);
 
-    if (activeSVs.length > 0) {
-      for (const sv of activeSVs) {
-        sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
-        await svRepo.save(sv);
+    for (const sv of activeSVs) {
+      sv.status = SessionVehicleStatus.IN_USE;
+      await svRepo.save(sv);
+      if (sv.vehicleId) {
+        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+          status: VehicleStatus.IN_USE,
+        });
+      }
+    }
+
+    if (session.checkedInBy) {
+      await createNotification(
+        session.checkedInBy,
+        NotificationType.CUSTOMER_CHECKIN_CONFIRMED,
+        'Xe đã được bàn giao',
+        `Biên bản bàn giao xe phiên chơi ${session.id.substring(0, 8)} đã được xác nhận.`,
+      );
+      wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKIN_CONFIRMED', {
+        sessionId,
+        inspectionId: inspection.id,
+        sessionStatus: session.status,
+      });
+    }
+  } else {
+    // CHECK_OUT
+    if (booking && booking.source === BookingSource.STAFF_MANUAL) {
+      session.status = SessionStatus.COMPLETED;
+      session.actualEndAt = new Date();
+      session.checkedOutBy = staffUserId;
+      await AppDataSource.getRepository(Session).save(session);
+
+      if (activeSVs.length > 0) {
+        const vehicleRepo = AppDataSource.getRepository(Vehicle);
+        for (const sv of activeSVs) {
+          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+          sv.returnedAt = new Date();
+          await svRepo.save(sv);
+
+          if (sv.vehicleSource === VehicleSource.RENTAL && sv.vehicleId) {
+            const veh = await vehicleRepo.findOne({ where: { id: sv.vehicleId } });
+            if (veh) {
+              veh.status = damageFlagged ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
+              await vehicleRepo.save(veh);
+            }
+          }
+        }
+      }
+
+      booking.status = BookingStatus.COMPLETED;
+      booking.completedAt = new Date();
+      await AppDataSource.getRepository(Booking).save(booking);
+
+      await settleSessionCheckoutBilling(sessionId, inspection);
+    } else {
+      // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
+      session.status = SessionStatus.CHECKING_OUT;
+      session.checkedOutBy = staffUserId;
+      await AppDataSource.getRepository(Session).save(session);
+
+      if (activeSVs.length > 0) {
+        for (const sv of activeSVs) {
+          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+          await svRepo.save(sv);
+        }
       }
     }
   }
 
   // Notify customer via WebSocket and save in DB
-  const booking = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
   if (booking?.customerId) {
     const eventType =
       inspection.type === InspectionType.CHECK_IN
@@ -1189,6 +1620,178 @@ export async function submitInspection(
   return inspection;
 }
 
+function getSnapshotTrackConfigId(snapshot: object | null): string | null {
+  const value = (snapshot as { track_config_id?: unknown } | null)?.track_config_id;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+async function resolveBookingTrackConfig(booking: Booking): Promise<CafeTrackConfig | null> {
+  const trackConfigRepo = AppDataSource.getRepository(CafeTrackConfig);
+  const trackConfigId = booking.trackConfigId ?? getSnapshotTrackConfigId(booking.snapshot);
+
+  if (trackConfigId) {
+    const trackConfig = await trackConfigRepo.findOne({
+      where: { id: trackConfigId, cafeId: booking.cafeId, isActive: true },
+    });
+    if (trackConfig) return trackConfig;
+  }
+
+  return trackConfigRepo.findOne({
+    where: { cafeId: booking.cafeId, trackTypeId: booking.trackTypeId, isActive: true },
+  });
+}
+
+function formatSlotTime(value: Date | string): string {
+  return new Date(value).toLocaleTimeString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
+}
+
+const VN_TZ_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function getLocalDateStartUtcMs(value: Date): number {
+  const local = new Date(value.getTime() + VN_TZ_OFFSET_MS);
+  return (
+    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - VN_TZ_OFFSET_MS
+  );
+}
+
+function getDayKeyForLocalStart(localStartUtcMs: number): string {
+  const local = new Date(localStartUtcMs + VN_TZ_OFFSET_MS);
+  return DAY_KEYS[local.getUTCDay()];
+}
+
+function parseOperatingTimeToMinutes(value?: string): number | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours === 24 && minutes === 0) return 24 * 60;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function buildOperatingWindow(
+  operatingHours: CafeOperatingHours | null | undefined,
+  localStartUtcMs: number,
+): { openAt: Date; closeAt: Date } | null {
+  const dayKey = getDayKeyForLocalStart(localStartUtcMs);
+  const schedule = operatingHours?.[dayKey];
+  if (!schedule || schedule.is_closed) return null;
+
+  const openMinutes = parseOperatingTimeToMinutes(schedule.open);
+  const closeMinutes = parseOperatingTimeToMinutes(schedule.close);
+  if (openMinutes === null || closeMinutes === null) return null;
+
+  let closeOffsetMinutes = closeMinutes;
+  if (closeOffsetMinutes <= openMinutes) closeOffsetMinutes += 24 * 60;
+
+  return {
+    openAt: new Date(localStartUtcMs + openMinutes * 60000),
+    closeAt: new Date(localStartUtcMs + closeOffsetMinutes * 60000),
+  };
+}
+
+function resolveOperatingWindowForBooking(
+  cafe: Cafe,
+  booking: Booking,
+): {
+  openAt: Date;
+  closeAt: Date;
+} | null {
+  const localStart = getLocalDateStartUtcMs(booking.slotStart);
+  const candidates = [localStart, localStart - 24 * 60 * 60000];
+
+  for (const candidate of candidates) {
+    const window = buildOperatingWindow(cafe.operatingHours, candidate);
+    if (
+      window &&
+      booking.slotStart.getTime() >= window.openAt.getTime() &&
+      booking.slotStart.getTime() <= window.closeAt.getTime()
+    ) {
+      return window;
+    }
+  }
+
+  return buildOperatingWindow(cafe.operatingHours, localStart);
+}
+
+function getExtensionBlockedReason(cafe: Cafe, booking: Booking, proposedEnd: Date): string | null {
+  const operatingWindow = resolveOperatingWindowForBooking(cafe, booking);
+  if (!operatingWindow) return null;
+  if (proposedEnd.getTime() <= operatingWindow.closeAt.getTime()) return null;
+  return `Vượt giờ đóng cửa (${formatSlotTime(operatingWindow.closeAt)})`;
+}
+
+async function getApprovedExtensionMinutes(sessionId: string): Promise<number> {
+  const approvedExtensions = await AppDataSource.getRepository(ExtensionProposal).find({
+    where: { sessionId, status: ExtensionProposalStatus.APPROVED },
+  });
+  return approvedExtensions.reduce((sum, ext) => sum + Number(ext.durationMinutes), 0);
+}
+
+async function getExtensionSlotRatePerMinute(booking: Booking, session: Session): Promise<number> {
+  const slotComp = await AppDataSource.getRepository(PaymentComponent).findOne({
+    where: { bookingId: booking.id, type: PaymentComponentType.SLOT_FEE },
+  });
+  const slotFee = slotComp ? Number(slotComp.amount) : 0;
+  if (slotFee <= 0) return 0;
+
+  const approvedExtensionMinutes = await getApprovedExtensionMinutes(session.id);
+  const currentEndMs = Math.max(booking.slotEnd.getTime(), session.plannedEndAt.getTime());
+  const currentDurationMinutes = (currentEndMs - booking.slotStart.getTime()) / 60000;
+  const originalDurationMinutes = Math.max(currentDurationMinutes - approvedExtensionMinutes, 1);
+
+  return slotFee / originalDurationMinutes;
+}
+
+function roundExtensionFee(ratePerMinute: number, extraMinutes: number): number {
+  if (ratePerMinute <= 0 || extraMinutes <= 0) return 0;
+  return Math.round((ratePerMinute * extraMinutes) / 1000) * 1000;
+}
+
+async function calculateExtensionFee(
+  booking: Booking,
+  session: Session,
+  extraMinutes: number,
+): Promise<number> {
+  const ratePerMinute = await getExtensionSlotRatePerMinute(booking, session);
+  return roundExtensionFee(ratePerMinute, extraMinutes);
+}
+
+async function buildExtensionPricingOptions(
+  booking: Booking,
+  session: Session,
+  cafe: Cafe,
+): Promise<
+  Array<{
+    extraMinutes: number;
+    additionalFee: number;
+    newPlannedEnd: string;
+    available: boolean;
+    blockedReason?: string;
+  }>
+> {
+  const options = [15, 30, 60] as const;
+  const ratePerMinute = await getExtensionSlotRatePerMinute(booking, session);
+  return options.map((extraMinutes) => {
+    const proposedEnd = new Date(session.plannedEndAt.getTime() + extraMinutes * 60000);
+    const blockedReason = getExtensionBlockedReason(cafe, booking, proposedEnd);
+
+    return {
+      extraMinutes,
+      additionalFee: roundExtensionFee(ratePerMinute, extraMinutes),
+      newPlannedEnd: proposedEnd.toISOString(),
+      available: !blockedReason,
+      ...(blockedReason ? { blockedReason } : {}),
+    };
+  });
+}
+
 export async function proposeExtension(
   sessionId: string,
   staffUserId: string,
@@ -1199,13 +1802,199 @@ export async function proposeExtension(
     throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
   }
 
-  const { extraMinutes, additionalFee } = data;
+  const extraMinutes = Number(data.extraMinutes);
+  const direct = Boolean(data.direct);
+  if (!Number.isFinite(extraMinutes) || extraMinutes <= 0) {
+    throw new AppError('Thời lượng gia hạn không hợp lệ', 400, 'INVALID_EXTENSION_DURATION');
+  }
+  if (session.status !== SessionStatus.ACTIVE) {
+    throw new AppError('Chỉ có thể gia hạn phiên đang ACTIVE', 400, 'EXTENSION_NOT_ALLOWED');
+  }
+
+  const booking = await AppDataSource.getRepository(Booking)
+    .createQueryBuilder('booking')
+    .addSelect('booking.trackConfigId')
+    .where('booking.id = :bookingId', { bookingId: session.bookingId })
+    .getOne();
+  if (!booking) {
+    throw new AppError('Không tìm thấy đơn đặt lịch gốc của phiên này', 404, 'BOOKING_NOT_FOUND');
+  }
+  if (direct && booking.source !== BookingSource.STAFF_MANUAL) {
+    throw new AppError(
+      'Đơn đặt trước cần khách xác nhận gia hạn qua app',
+      400,
+      'DIRECT_EXTENSION_NOT_ALLOWED',
+    );
+  }
+
+  const additionalFee = await calculateExtensionFee(booking, session, extraMinutes);
+  const extensionStart = session.plannedEndAt;
+  const proposedEnd = new Date(extensionStart.getTime() + extraMinutes * 60 * 1000);
+  const activeStatuses = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
+  if (!cafe) {
+    throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
+  }
+  const operatingHoursBlockedReason = getExtensionBlockedReason(cafe, booking, proposedEnd);
+  if (operatingHoursBlockedReason) {
+    throw new AppError(
+      `Không thể gia hạn thêm ${extraMinutes} phút vì ${operatingHoursBlockedReason.toLowerCase()}.`,
+      409,
+      'OPERATING_HOURS_EXCEEDED',
+    );
+  }
+  const trackConfig = await resolveBookingTrackConfig(booking);
+
+  const applyTrackScope = (query: SelectQueryBuilder<Booking>) => {
+    if (trackConfig) {
+      query.andWhere(
+        '(b.track_config_id = :trackConfigId OR (b.track_config_id IS NULL AND b.track_type_id = :trackTypeId))',
+        { trackConfigId: trackConfig.id, trackTypeId: booking.trackTypeId },
+      );
+    } else {
+      query.andWhere('b.track_type_id = :trackTypeId', { trackTypeId: booking.trackTypeId });
+    }
+    return query;
+  };
+
+  const buildOverlapQuery = () =>
+    applyTrackScope(
+      AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .where('b.cafe_id = :cafeId', { cafeId: booking.cafeId })
+        .andWhere('b.id != :bookingId', { bookingId: booking.id })
+        .andWhere('b.play_mode = :playMode', { playMode: booking.playMode })
+        .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
+        .andWhere('b.slot_start < :proposedEnd', { proposedEnd })
+        .andWhere('b.slot_end > :extensionStart', { extensionStart }),
+    );
+
+  if (booking.playMode === BookingMode.RENTAL) {
+    const sessionVehicleRows = await AppDataSource.getRepository(SessionVehicle).find({
+      where: {
+        sessionId,
+        vehicleSource: VehicleSource.RENTAL,
+        returnedAt: IsNull(),
+      },
+    });
+    let currentVehicleIds = sessionVehicleRows
+      .map((sv) => sv.vehicleId)
+      .filter((vehicleId): vehicleId is string => Boolean(vehicleId));
+
+    if (currentVehicleIds.length === 0) {
+      const bookingVehicles = await AppDataSource.getRepository(BookingVehicle).find({
+        where: { bookingId: booking.id },
+      });
+      currentVehicleIds = bookingVehicles.map((bv) => bv.vehicleId);
+    }
+
+    if (currentVehicleIds.length > 0) {
+      const vehicleConflict = await AppDataSource.getRepository(BookingVehicle)
+        .createQueryBuilder('bv')
+        .innerJoin(Booking, 'b', 'b.id = bv.booking_id')
+        .where('bv.vehicle_id IN (:...vehicleIds)', { vehicleIds: currentVehicleIds })
+        .andWhere('b.cafe_id = :cafeId', { cafeId: booking.cafeId })
+        .andWhere('b.id != :bookingId', { bookingId: booking.id })
+        .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
+        .andWhere('b.slot_start < :proposedEnd', { proposedEnd })
+        .andWhere('b.slot_end > :extensionStart', { extensionStart })
+        .select('b.slot_start', 'slotStart')
+        .orderBy('b.slot_start', 'ASC')
+        .getRawOne<{ slotStart: Date }>();
+
+      if (vehicleConflict) {
+        throw new AppError(
+          `Xe đang dùng đã có đơn đặt lịch lúc ${formatSlotTime(vehicleConflict.slotStart)}. Không thể gia hạn thêm ${extraMinutes} phút.`,
+          409,
+          'SLOT_CONFLICT',
+        );
+      }
+    }
+
+    const capacity = Number(trackConfig?.maxConcurrent ?? cafe.maxConcurrentBookings);
+    const overlaps = await buildOverlapQuery()
+      .select('b.id', 'bookingId')
+      .addSelect('b.slot_start', 'slotStart')
+      .orderBy('b.slot_start', 'ASC')
+      .getRawMany<{ bookingId: string; slotStart: Date }>();
+
+    if (overlaps.length + 1 > capacity) {
+      const firstConflictTime = overlaps[0]?.slotStart ?? extensionStart;
+      throw new AppError(
+        `Slot tiếp theo đã hết chỗ (${formatSlotTime(firstConflictTime)}). Không thể gia hạn thêm ${extraMinutes} phút.`,
+        409,
+        'SLOT_CONFLICT',
+      );
+    }
+  } else {
+    const capacity = Number(trackConfig?.byocCapacity ?? cafe.byocCapacity);
+    const overlapRows = await buildOverlapQuery()
+      .leftJoin(BookingParticipant, 'bp', 'bp.booking_id = b.id')
+      .select('b.id', 'bookingId')
+      .addSelect('b.slot_start', 'slotStart')
+      .addSelect('COUNT(bp.id)', 'participantCount')
+      .groupBy('b.id')
+      .addGroupBy('b.slot_start')
+      .orderBy('b.slot_start', 'ASC')
+      .getRawMany<{ bookingId: string; slotStart: Date; participantCount: string }>();
+
+    const occupiedPlayers = overlapRows.reduce(
+      (sum, row) => sum + Math.max(Number(row.participantCount) || 0, 1),
+      0,
+    );
+    const currentPlayers = Math.max(
+      await AppDataSource.getRepository(BookingParticipant).count({
+        where: { bookingId: booking.id },
+      }),
+      1,
+    );
+
+    if (occupiedPlayers + currentPlayers > capacity) {
+      const firstConflictTime = overlapRows[0]?.slotStart ?? extensionStart;
+      throw new AppError(
+        `Slot tiếp theo đã hết chỗ (${formatSlotTime(firstConflictTime)}). Không thể gia hạn thêm ${extraMinutes} phút.`,
+        409,
+        'SLOT_CONFLICT',
+      );
+    }
+  }
 
   const proposal = new ExtensionProposal();
   proposal.sessionId = sessionId;
   proposal.proposedBy = staffUserId;
   proposal.durationMinutes = extraMinutes;
   proposal.feeAmount = additionalFee;
+
+  if (direct) {
+    // Staff directly approves — customer physically present and agreed at the counter
+    proposal.status = ExtensionProposalStatus.APPROVED;
+    proposal.respondedBy = staffUserId;
+    proposal.respondedAt = new Date();
+    await AppDataSource.getRepository(ExtensionProposal).save(proposal);
+
+    session.plannedEndAt = new Date(session.plannedEndAt.getTime() + extraMinutes * 60000);
+    session.actualTotalAmount = Number(session.actualTotalAmount) + Number(additionalFee);
+    session.status = SessionStatus.ACTIVE;
+    await AppDataSource.getRepository(Session).save(session);
+
+    if (booking) {
+      booking.slotCount = Number(booking.slotCount) + Math.ceil(extraMinutes / 30);
+      booking.slotEnd = session.plannedEndAt;
+      await AppDataSource.getRepository(Booking).save(booking);
+
+      if (booking.customerId) {
+        await createNotification(
+          booking.customerId,
+          'SESSION_EXTENSION_PROPOSED' as any,
+          'Ca chơi đã được gia hạn',
+          `Ca chơi của bạn đã được gia hạn thêm ${extraMinutes} phút bởi nhân viên.`,
+        );
+      }
+    }
+
+    return proposal;
+  }
+
   proposal.status = ExtensionProposalStatus.PENDING;
   await AppDataSource.getRepository(ExtensionProposal).save(proposal);
   const expiresAt = new Date((proposal.createdAt ?? new Date()).getTime() + 10 * 60000);
@@ -1214,18 +2003,15 @@ export async function proposeExtension(
   await AppDataSource.getRepository(Session).save(session);
 
   // Notify customer via WebSocket and save in DB
-  const booking2 = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
-  if (booking2?.customerId) {
+  if (booking?.customerId) {
     await createNotification(
-      booking2.customerId,
+      booking.customerId,
       'SESSION_EXTENSION_PROPOSED' as any,
       'Yêu cầu xác nhận gia hạn',
       `Nhân viên trực ca đề xuất gia hạn thêm ${proposal.durationMinutes} phút. Vui lòng bấm vào để xem và phản hồi.`,
     );
 
-    wsService.pushToUser(booking2.customerId, 'SESSION_EXTENSION_PROPOSED', {
+    wsService.pushToUser(booking.customerId, 'SESSION_EXTENSION_PROPOSED', {
       sessionId,
       proposalId: proposal.id,
       extraMinutes: proposal.durationMinutes,
@@ -1468,14 +2254,25 @@ export async function simulateClientCheckOutResponse(sessionId: string): Promise
     where: { id: session.bookingId },
   });
   if (booking) {
-    booking.status = 'COMPLETED' as any;
+    booking.status = BookingStatus.COMPLETED;
+    booking.completedAt = new Date();
     await AppDataSource.getRepository(Booking).save(booking);
+    if (booking.source !== BookingSource.STAFF_MANUAL) {
+      await createNotification(
+        booking.customerId,
+        NotificationType.BOOKING_REVIEW_REQUEST,
+        'Đánh giá trải nghiệm của bạn',
+        'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+      );
+      wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
+        bookingId: booking.id,
+      });
+    }
   }
 
-  // Settle invoice at checkout
-  if (checkOutInspection) {
-    await settleSessionCheckoutBilling(sessionId, checkOutInspection);
-  }
+  // Settle invoice at checkout — called unconditionally so BYOC sessions
+  // (no checkOutInspection) still get extension fees and on-site F&B billed
+  await settleSessionCheckoutBilling(sessionId, checkOutInspection ?? null);
 
   return session;
 }
@@ -1525,6 +2322,7 @@ export async function simulateClientExtensionResponse(
     if (booking) {
       booking.slotCount =
         Number(booking.slotCount) + Math.ceil(latestProposal.durationMinutes / 30);
+      booking.slotEnd = session.plannedEndAt;
       await AppDataSource.getRepository(Booking).save(booking);
     }
   }
@@ -1561,6 +2359,15 @@ export async function customerConfirmInspection(
   if (!inspection)
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
 
+  // CHECK_IN is auto-confirmed by staff submission — customer action not needed
+  if (inspection.type === InspectionType.CHECK_IN) {
+    throw new AppError(
+      'Biên bản bàn giao xe đã được xác nhận tự động khi nhân viên gửi',
+      400,
+      'ALREADY_CONFIRMED',
+    );
+  }
+
   inspection.customerConfirmed = agreed;
   inspection.customerConfirmedAt = new Date();
   if (!agreed && disagreementNote) {
@@ -1570,99 +2377,76 @@ export async function customerConfirmInspection(
   await inspRepo.save(inspection);
 
   if (agreed) {
-    if (inspection.type === InspectionType.CHECK_IN) {
-      // Start session
-      session.status = SessionStatus.ACTIVE;
-      session.actualStartAt = new Date();
-      await AppDataSource.getRepository(Session).save(session);
-
-      // Mark vehicles as IN_USE
-      const svRepo = AppDataSource.getRepository(SessionVehicle);
-      const svs = await svRepo.find({ where: { sessionId } });
-      for (const sv of svs) {
-        sv.status = SessionVehicleStatus.IN_USE;
-        await svRepo.save(sv);
-        if (sv.vehicleId) {
-          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-            status: VehicleStatus.IN_USE,
-          });
-        }
-      }
-
-      // Notify staff via WS
-      if (session.checkedInBy) {
-        await createNotification(
-          session.checkedInBy,
-          NotificationType.CUSTOMER_CHECKIN_CONFIRMED,
-          'Khách hàng đã nhận xe',
-          `Khách hàng vừa xác nhận biên bản bàn giao xe của phiên chơi ${session.id.substring(0, 8)}.`,
-        );
-
-        wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKIN_CONFIRMED', {
-          sessionId,
-          inspectionId,
-          sessionStatus: session.status,
-        });
-      }
-    } else if (inspection.type === InspectionType.CHECK_OUT) {
-      session.status = SessionStatus.COMPLETED;
-      session.actualEndAt = new Date();
-      await AppDataSource.getRepository(Session).save(session);
-
-      // Mark vehicles as AVAILABLE or MAINTENANCE depending on damage
-      const svRepo = AppDataSource.getRepository(SessionVehicle);
-      const svs = await svRepo.find({ where: { sessionId } });
-      for (const sv of svs) {
-        const newVehicleStatus = inspection.damageNoted
-          ? VehicleStatus.MAINTENANCE
-          : VehicleStatus.AVAILABLE;
-        if (sv.vehicleId) {
-          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-            status: newVehicleStatus,
-          });
-        }
-      }
-
-      // Settle invoice at checkout
-      await settleSessionCheckoutBilling(sessionId, inspection);
-
-      // Mark booking completed if all sessions done
-      const allSessions = await AppDataSource.getRepository(Session).find({
-        where: { bookingId: session.bookingId },
-      });
-      const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
-      if (allDone) {
-        await AppDataSource.getRepository(Booking).update(session.bookingId, {
-          status: BookingStatus.COMPLETED,
-        });
-      }
-
-      // Notify staff
-      if (session.checkedInBy) {
-        await createNotification(
-          session.checkedInBy,
-          NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
-          'Khách hàng đã trả xe',
-          `Khách hàng vừa xác nhận biên bản trả xe của phiên chơi ${session.id.substring(0, 8)}.`,
-        );
-
-        wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKOUT_CONFIRMED', {
-          sessionId,
-          inspectionId,
-          sessionStatus: session.status,
-        });
-      }
-    }
-  } else {
-    // Customer disputed — reset session status to let staff re-inspect
-    if (inspection.type === InspectionType.CHECK_IN) {
-      session.status = SessionStatus.CHECKED_IN;
-    } else {
-      session.status = SessionStatus.ACTIVE;
-    }
+    session.status = SessionStatus.COMPLETED;
+    session.actualEndAt = new Date();
     await AppDataSource.getRepository(Session).save(session);
 
-    // Notify staff of dispute
+    const svRepo = AppDataSource.getRepository(SessionVehicle);
+    const svs = await svRepo.find({ where: { sessionId } });
+    for (const sv of svs) {
+      const newVehicleStatus = inspection.damageNoted
+        ? VehicleStatus.MAINTENANCE
+        : VehicleStatus.AVAILABLE;
+      if (sv.vehicleId) {
+        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+          status: newVehicleStatus,
+        });
+      }
+    }
+
+    await settleSessionCheckoutBilling(sessionId, inspection);
+
+    const allSessions = await AppDataSource.getRepository(Session).find({
+      where: { bookingId: session.bookingId },
+    });
+    const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
+    if (allDone) {
+      const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
+        where: { bookingId: session.bookingId, status: PaymentComponentStatus.PENDING },
+      });
+      if (pendingCount > 0) {
+        await AppDataSource.getRepository(Booking).update(session.bookingId, {
+          status: BookingStatus.AWAITING_PAYMENT,
+        });
+      } else {
+        const completedAt = new Date();
+        await AppDataSource.getRepository(Booking).update(session.bookingId, {
+          status: BookingStatus.COMPLETED,
+          completedAt,
+        });
+        if (booking.source !== BookingSource.STAFF_MANUAL) {
+          await createNotification(
+            booking.customerId,
+            NotificationType.BOOKING_REVIEW_REQUEST,
+            'Đánh giá trải nghiệm của bạn',
+            'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+          );
+          wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
+            bookingId: booking.id,
+          });
+        }
+      }
+    }
+
+    if (session.checkedInBy) {
+      await createNotification(
+        session.checkedInBy,
+        NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
+        'Khách hàng đã trả xe',
+        `Khách hàng vừa xác nhận biên bản trả xe của phiên chơi ${session.id.substring(0, 8)}.`,
+      );
+
+      wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKOUT_CONFIRMED', {
+        sessionId,
+        inspectionId,
+        sessionStatus: session.status,
+      });
+    }
+  } else {
+    // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
+    session.status = SessionStatus.ACTIVE;
+    await AppDataSource.getRepository(Session).save(session);
+
     if (session.checkedInBy) {
       await createNotification(
         session.checkedInBy,
@@ -1734,6 +2518,7 @@ export async function customerRespondExtension(
     session.actualTotalAmount =
       Number(session.actualTotalAmount) + Number(latestProposal.feeAmount);
     booking.slotCount = Number(booking.slotCount) + Math.ceil(latestProposal.durationMinutes / 30);
+    booking.slotEnd = session.plannedEndAt;
     await AppDataSource.getRepository(Booking).save(booking);
   }
   await AppDataSource.getRepository(Session).save(session);
@@ -1773,7 +2558,7 @@ export async function customerRespondExtension(
 
 export async function settleSessionCheckoutBilling(
   sessionId: string,
-  inspection: Inspection,
+  inspection: Inspection | null,
 ): Promise<void> {
   const sessionRepo = AppDataSource.getRepository(Session);
   const session = await sessionRepo.findOne({ where: { id: sessionId } });
@@ -1846,8 +2631,16 @@ export async function settleSessionCheckoutBilling(
   const newComponents: Partial<PaymentComponent>[] = [];
 
   if (totalExtensionFee > 0) {
-    const exists = existingComponents.some((c) => c.type === PaymentComponentType.EXTENSION_FEE);
-    if (!exists) {
+    const existingExtensionComp = existingComponents.find(
+      (c) => c.type === PaymentComponentType.EXTENSION_FEE,
+    );
+    if (existingExtensionComp) {
+      existingExtensionComp.amount = totalExtensionFee;
+      if (existingExtensionComp.status !== PaymentComponentStatus.DISBURSED) {
+        existingExtensionComp.status = PaymentComponentStatus.PENDING;
+      }
+      await compRepo.save(existingExtensionComp);
+    } else {
       newComponents.push({
         bookingId: booking.id,
         type: PaymentComponentType.EXTENSION_FEE,
@@ -1858,11 +2651,14 @@ export async function settleSessionCheckoutBilling(
   }
 
   if (totalOnsiteFnb > 0) {
-    const exists = existingComponents.some(
+    const existingOnsiteFnbComp = existingComponents.find(
       (c) =>
         c.type === PaymentComponentType.FB_PREORDER && c.status === PaymentComponentStatus.PENDING,
     );
-    if (!exists) {
+    if (existingOnsiteFnbComp) {
+      existingOnsiteFnbComp.amount = totalOnsiteFnb;
+      await compRepo.save(existingOnsiteFnbComp);
+    } else {
       newComponents.push({
         bookingId: booking.id,
         type: PaymentComponentType.FB_PREORDER,
@@ -1922,7 +2718,7 @@ export async function settleSessionCheckoutBilling(
   await sessionRepo.save(session);
 }
 
-export async function settlePendingPayments(bookingId: string): Promise<any> {
+export async function settlePendingPayments(bookingId: string, staffUserId: string): Promise<any> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
@@ -2021,12 +2817,13 @@ export async function settlePendingPayments(bookingId: string): Promise<any> {
 
   // ── NOTIFICATIONS ─────────────────────────────────────────────────────────
   try {
+    const shortRef = booking.id.substring(0, 8).toUpperCase();
     if (booking.customerId) {
       await createNotification(
         booking.customerId,
         NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
         'Thanh toán thành công',
-        `Đơn đặt ${booking.id.substring(0, 8).toUpperCase()} đã được quyết toán hoàn tất tại quầy.`,
+        `Đơn đặt #${shortRef} đã được quyết toán hoàn tất tại quầy.`,
       );
       wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
         bookingId,
@@ -2035,8 +2832,33 @@ export async function settlePendingPayments(bookingId: string): Promise<any> {
         netCounterAmount,
       });
     }
+    await createNotification(
+      staffUserId,
+      NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
+      'Quyết toán hoàn tất',
+      `Đơn đặt #${shortRef} đã được quyết toán thành công.`,
+    );
+    wsService.pushToUser(staffUserId, 'CUSTOMER_PAYMENT_CONFIRMED', {
+      bookingId,
+      totalCounterBill,
+      depositRefundAmount,
+      netCounterAmount,
+    });
   } catch (err) {
-    logger.error('SettlePendingNotification', 'Failed to notify customer', err);
+    logger.error('SettlePendingNotification', 'Failed to notify', err);
+  }
+
+  if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+    await transition(bookingId, 'PAYMENT_SETTLED');
+    if (booking.source !== BookingSource.STAFF_MANUAL && booking.customerId) {
+      await createNotification(
+        booking.customerId,
+        NotificationType.BOOKING_REVIEW_REQUEST,
+        'Đánh giá trải nghiệm của bạn',
+        'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+      ).catch(() => {});
+      wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
+    }
   }
 
   return {
@@ -2046,4 +2868,12 @@ export async function settlePendingPayments(bookingId: string): Promise<any> {
     netCounterAmount,
     settledComponents: pendingComponents.length,
   };
+}
+
+export async function createWalkInBooking(
+  staffId: string,
+  cafeId: string,
+  body: any,
+): Promise<any> {
+  return createWalkInBookingService(staffId, cafeId, body);
 }

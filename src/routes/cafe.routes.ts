@@ -16,6 +16,7 @@ import { promotionController } from '../controllers/promotion.controller';
 import { packageController } from '../controllers/package.controller';
 import { customerPackageController } from '../controllers/customer-package.controller';
 import { UserRole } from '../types';
+import { getCafeReviews } from '../controllers/review.controller';
 
 export const cafeRouter = Router();
 
@@ -31,6 +32,15 @@ cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);
 cafeRouter.get('/:cafeId/images', cafeImageController.listImages);
 cafeRouter.get('/:cafeId/vehicles', optionalAuthenticate, vehicleController.listUnits);
 cafeRouter.get('/:cafeId/availability', optionalAuthenticate, cafeController.getAvailability);
+// Public active promotions — no auth, must be BEFORE parameterized routes
+cafeRouter.get('/:cafeId/promotions/active', promotionController.listActive);
+// Customer preview — must be registered BEFORE the parameterized /:promotionId routes
+cafeRouter.post(
+  '/:cafeId/promotions/preview',
+  authenticate,
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.ADMIN),
+  promotionController.preview,
+);
 cafeRouter.get(
   '/:cafeId/promotions',
   authenticate,
@@ -138,6 +148,8 @@ cafeRouter.post(
   upload.array('files', 20),
   cafeTrackConfigController.uploadImages,
 );
+
+cafeRouter.get('/:cafeId/reviews', getCafeReviews);
 
 cafeRouter.get('/:cafeId/widget-config', cafeController.getWidgetConfig);
 cafeRouter.put(

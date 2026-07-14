@@ -4,8 +4,7 @@ import { AppDataSource } from '../config/database';
 import { env } from '../config/env';
 import { classifyIntent } from '../config/nlu';
 import { logger } from '../config/logger';
-import { AppError, ChatResponse } from '../types';
-import { CafeWidgetConfig } from '../models/cafe-widget-config.entity';
+import { AppError, ChatResponse, WidgetConfigData } from '../types';
 import { incrementAIQuota } from './subscription.service';
 import { kbService } from './kb.service';
 import { ragCache } from './rag-cache';
@@ -106,7 +105,11 @@ export async function route(message: string): Promise<{ route: ChatRoute; confid
 // Returns immediate greeting response from widget config without calling any external service
 export async function fastAnswer(cafeId: string): Promise<ChatResponse> {
   const ds: DataSource = AppDataSource;
-  const config = await ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } });
+  const [row] = await ds.query<{ widget_config: WidgetConfigData }[]>(
+    `SELECT widget_config FROM cafes WHERE id = $1`,
+    [cafeId],
+  );
+  const config = row?.widget_config;
 
   const greetingMessage = config?.greetingMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?';
   const quickReplies = config?.quickReplies ?? [];
@@ -327,18 +330,24 @@ export async function ragChat(
     };
   }
 
-  const [cafeRows, docRows, widgetConfig, trackRows] = await Promise.all([
-    ds.query<{ name: string; address: string; operating_hours: unknown; slug: string }[]>(
-      `SELECT name, address, operating_hours, slug FROM cafes WHERE id = $1`,
-      [cafeId],
-    ),
+  const [cafeRows, docRows, trackRows] = await Promise.all([
+    ds.query<
+      {
+        name: string;
+        address: string;
+        operating_hours: unknown;
+        slug: string;
+        widget_config: WidgetConfigData;
+      }[]
+    >(`SELECT name, address, operating_hours, slug, widget_config FROM cafes WHERE id = $1`, [
+      cafeId,
+    ]),
     ds.query<{ title: string }[]>(
       `SELECT DISTINCT d.title FROM kb_chunks c
        JOIN kb_documents d ON c.document_id = d.id
        WHERE c.cafe_id = $1 AND d.deleted_at IS NULL`,
       [cafeId],
     ),
-    ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } }),
     ds.query<
       { name: string; description: string | null; max_concurrent: number; byoc_capacity: number }[]
     >(
@@ -352,8 +361,9 @@ export async function ragChat(
   ]);
 
   if (!cafeRows.length) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  const { widget_config: widgetConfig, ...cafeData } = cafeRows[0];
   const cafe = {
-    ...cafeRows[0],
+    ...cafeData,
     bookingUrl: `${env.frontendUrl}/booking/create?cafeId=${cafeId}&mode=hourly`,
     tracks: trackRows,
   };
@@ -482,18 +492,24 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
     };
   }
 
-  const [cafeRows, docRows, widgetConfig, trackRows] = await Promise.all([
-    ds.query<{ name: string; address: string; operating_hours: unknown; slug: string }[]>(
-      `SELECT name, address, operating_hours, slug FROM cafes WHERE id = $1`,
-      [cafeId],
-    ),
+  const [cafeRows, docRows, trackRows] = await Promise.all([
+    ds.query<
+      {
+        name: string;
+        address: string;
+        operating_hours: unknown;
+        slug: string;
+        widget_config: WidgetConfigData;
+      }[]
+    >(`SELECT name, address, operating_hours, slug, widget_config FROM cafes WHERE id = $1`, [
+      cafeId,
+    ]),
     ds.query<{ title: string }[]>(
       `SELECT DISTINCT d.title FROM kb_chunks c
        JOIN kb_documents d ON c.document_id = d.id
        WHERE c.cafe_id = $1 AND d.deleted_at IS NULL`,
       [cafeId],
     ),
-    ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } }),
     ds.query<
       { name: string; description: string | null; max_concurrent: number; byoc_capacity: number }[]
     >(
@@ -507,8 +523,9 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
   ]);
 
   if (!cafeRows.length) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  const { widget_config: widgetConfig, ...cafeData } = cafeRows[0];
   const cafe = {
-    ...cafeRows[0],
+    ...cafeData,
     bookingUrl: `${env.frontendUrl}/booking/create?cafeId=${cafeId}&mode=hourly`,
     tracks: trackRows,
   };
@@ -626,59 +643,34 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
 }
 
 // Widget config helpers used by controller
-export async function getWidgetConfigForCafe(cafeId: string): Promise<CafeWidgetConfig | null> {
-  return AppDataSource.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } });
+export async function getWidgetConfigForCafe(cafeId: string): Promise<WidgetConfigData | null> {
+  const [row] = await AppDataSource.query<{ widget_config: WidgetConfigData }[]>(
+    `SELECT widget_config FROM cafes WHERE id = $1`,
+    [cafeId],
+  );
+  return row?.widget_config ?? null;
 }
 
 export async function upsertWidgetConfig(
   cafeId: string,
-  updates: Partial<{
-    greetingMessage: string;
-    welcomeMessage: string;
-    position: string;
-    primaryColor: string;
-    avatarUrl: string | null;
-    quickReplies: string[];
-    systemPrompt: string | null;
-    isEnabled: boolean;
-    fullPageEnabled: boolean;
-  }>,
-): Promise<CafeWidgetConfig> {
+  updates: Partial<WidgetConfigData>,
+): Promise<WidgetConfigData> {
   const ds: DataSource = AppDataSource;
 
-  const setParts: string[] = [];
-  if (updates.greetingMessage !== undefined)
-    setParts.push(`greeting_message = EXCLUDED.greeting_message`);
-  if (updates.welcomeMessage !== undefined)
-    setParts.push(`welcome_message = EXCLUDED.welcome_message`);
-  if (updates.position !== undefined) setParts.push(`position = EXCLUDED.position`);
-  if (updates.primaryColor !== undefined) setParts.push(`primary_color = EXCLUDED.primary_color`);
-  if (updates.avatarUrl !== undefined) setParts.push(`avatar_url = EXCLUDED.avatar_url`);
-  if (updates.quickReplies !== undefined) setParts.push(`quick_replies = EXCLUDED.quick_replies`);
-  if (updates.systemPrompt !== undefined) setParts.push(`system_prompt = EXCLUDED.system_prompt`);
-  if (updates.isEnabled !== undefined) setParts.push(`is_enabled = EXCLUDED.is_enabled`);
-  if (updates.fullPageEnabled !== undefined)
-    setParts.push(`full_page_enabled = EXCLUDED.full_page_enabled`);
-
-  const setClause = setParts.length ? `, ${setParts.join(', ')}` : '';
+  const patches: Partial<WidgetConfigData> = {};
+  if (updates.greetingMessage !== undefined) patches.greetingMessage = updates.greetingMessage;
+  if (updates.welcomeMessage !== undefined) patches.welcomeMessage = updates.welcomeMessage;
+  if (updates.position !== undefined) patches.position = updates.position;
+  if (updates.primaryColor !== undefined) patches.primaryColor = updates.primaryColor;
+  if (updates.avatarUrl !== undefined) patches.avatarUrl = updates.avatarUrl;
+  if (updates.quickReplies !== undefined) patches.quickReplies = updates.quickReplies;
+  if (updates.systemPrompt !== undefined) patches.systemPrompt = updates.systemPrompt;
+  if (updates.isEnabled !== undefined) patches.isEnabled = updates.isEnabled;
+  if (updates.fullPageEnabled !== undefined) patches.fullPageEnabled = updates.fullPageEnabled;
 
   await ds.query(
-    `INSERT INTO cafe_widget_configs
-       (cafe_id, greeting_message, welcome_message, position, primary_color, avatar_url, quick_replies, system_prompt, is_enabled, full_page_enabled)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
-     ON CONFLICT (cafe_id) DO UPDATE SET updated_at = now()${setClause}`,
-    [
-      cafeId,
-      updates.greetingMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
-      updates.welcomeMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
-      updates.position ?? 'BOTTOM_RIGHT',
-      updates.primaryColor ?? '#2563EB',
-      updates.avatarUrl ?? null,
-      JSON.stringify(updates.quickReplies ?? []),
-      updates.systemPrompt ?? null,
-      updates.isEnabled ?? false,
-      updates.fullPageEnabled ?? false,
-    ],
+    `UPDATE cafes SET widget_config = widget_config || $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(patches), cafeId],
   );
 
   ragCache.clear(cafeId);
@@ -701,6 +693,9 @@ export async function upsertWidgetConfig(
     );
   }
 
-  const config = await ds.getRepository(CafeWidgetConfig).findOne({ where: { cafeId } });
-  return config!;
+  const [row] = await ds.query<{ widget_config: WidgetConfigData }[]>(
+    `SELECT widget_config FROM cafes WHERE id = $1`,
+    [cafeId],
+  );
+  return row.widget_config;
 }

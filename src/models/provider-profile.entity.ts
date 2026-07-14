@@ -7,7 +7,7 @@ import {
   DeleteDateColumn,
   Index,
 } from 'typeorm';
-import { ProviderStatus } from '../types';
+import { KycBusinessType, KycDocumentItem, ProviderStatus } from '../types';
 
 @Entity('provider_profiles')
 export class ProviderProfile {
@@ -41,6 +41,15 @@ export class ProviderProfile {
 
   @Column({ name: 'suspended_reason', type: 'text', nullable: true })
   suspendedReason: string | null;
+
+  @Column({ name: 'business_type', type: 'varchar', length: 20, nullable: true })
+  businessType: KycBusinessType | null;
+
+  @Column({ name: 'kyc_documents', type: 'jsonb', default: [] })
+  kycDocuments: KycDocumentItem[];
+
+  @Column({ name: 'kyc_submitted_at', type: 'timestamptz', nullable: true })
+  kycSubmittedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

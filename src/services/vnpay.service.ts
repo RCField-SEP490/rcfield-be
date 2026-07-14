@@ -133,7 +133,12 @@ export function verifyVnpayParams(params: Record<string, unknown>): VnpayVerific
 
   const receivedHash = String(params.vnp_SecureHash ?? '');
   const signingParams = Object.entries(params).reduce<VnpayParams>((acc, [key, value]) => {
-    if (key !== 'vnp_SecureHash' && key !== 'vnp_SecureHashType' && value !== undefined) {
+    if (
+      key.startsWith('vnp_') &&
+      key !== 'vnp_SecureHash' &&
+      key !== 'vnp_SecureHashType' &&
+      value !== undefined
+    ) {
       acc[key] = String(value);
     }
     return acc;

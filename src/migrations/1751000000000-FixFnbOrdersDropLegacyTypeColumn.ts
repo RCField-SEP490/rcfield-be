@@ -4,10 +4,13 @@ export class FixFnbOrdersDropLegacyTypeColumn1751000000000 implements MigrationI
   name = 'FixFnbOrdersDropLegacyTypeColumn1751000000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
-    // Backfill order_type from type for any rows that slipped through
-    await queryRunner.query(`
-      UPDATE fnb_orders SET order_type = type::text WHERE order_type IS NULL AND type IS NOT NULL;
-    `);
+    // Backfill order_type from type for any rows that slipped through if column exists
+    const hasTypeColumn = await queryRunner.hasColumn('fnb_orders', 'type');
+    if (hasTypeColumn) {
+      await queryRunner.query(`
+        UPDATE fnb_orders SET order_type = type::text WHERE order_type IS NULL AND type IS NOT NULL;
+      `);
+    }
 
     // Make order_type NOT NULL now that all rows are backfilled
     await queryRunner.query(`

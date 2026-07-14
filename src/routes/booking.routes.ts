@@ -5,6 +5,9 @@ import { UserRole } from '../types';
 
 export const bookingRouter = Router();
 
+// Public route — no auth: email clients load this image without JWT
+bookingRouter.get('/:id/qr', bookingController.getBookingQr);
+
 bookingRouter.post(
   '/',
   authenticate,

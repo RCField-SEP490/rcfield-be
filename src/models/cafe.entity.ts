@@ -7,7 +7,7 @@ import {
   DeleteDateColumn,
   Index,
 } from 'typeorm';
-import { CafeOperatingHours, CafeStatus } from '../types';
+import { CafeOperatingHours, CafeStatus, WidgetConfigData } from '../types';
 
 @Entity('cafes')
 @Index(['providerId'])
@@ -80,6 +80,9 @@ export class Cafe {
 
   @Column({ type: 'text', array: true, default: [] })
   rules: string[];
+
+  @Column({ name: 'widget_config', type: 'jsonb' })
+  widgetConfig: WidgetConfigData;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

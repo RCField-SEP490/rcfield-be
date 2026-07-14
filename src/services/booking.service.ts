@@ -13,6 +13,9 @@ import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { MenuItem } from '../models/menu-item.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { TrackType } from '../models/track-type.entity';
+import { User } from '../models/user.entity';
+import { PaymentComponent } from '../models/payment-component.entity';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
 import {
   AppError,
   BookingMode,
@@ -24,16 +27,25 @@ import {
   FnbOrderType,
   UserRole,
   VehicleStatus,
+  PaymentComponentType,
+  PaymentComponentStatus,
+  PaymentTransactionType,
+  PaymentTransactionStatus,
+  AuthProvider,
 } from '../types';
 import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
 import { getEffectiveMultiplier } from './pricing.service';
+import { validatePromoCode } from './promotion.service';
+import { assertBookingNotBlockedByContest } from './contest-lock.service';
+import type { Promotion } from '../models/promotion.entity';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
 const VALID_TRANSITIONS: Record<BookingStatus, string[]> = {
   [BookingStatus.PENDING]: ['PAYMENT_CONFIRMED', 'PAYMENT_TIMEOUT'],
   [BookingStatus.CONFIRMED]: ['CUSTOMER_CANCEL', 'PROVIDER_CANCEL', 'NO_SHOW', 'COMPLETE'],
+  [BookingStatus.AWAITING_PAYMENT]: ['PAYMENT_SETTLED'],
   [BookingStatus.CANCELLED]: [],
   [BookingStatus.NO_SHOW]: [],
   [BookingStatus.COMPLETED]: [],
@@ -54,6 +66,7 @@ function eventToStatus(event: string): BookingStatus {
       return BookingStatus.CANCELLED;
     case 'NO_SHOW':
       return BookingStatus.NO_SHOW;
+    case 'PAYMENT_SETTLED':
     case 'COMPLETE':
       return BookingStatus.COMPLETED;
     default:
@@ -162,6 +175,21 @@ export async function transition(bookingId: string, event: string): Promise<Book
     }
     await cancelPendingFnbOrders(bookingId);
     logger.info('BookingService', `transition → CANCELLED bookingId=${bookingId}`);
+  }
+
+  if (newStatus === BookingStatus.COMPLETED) {
+    if (booking.playMode === BookingMode.BYOC) {
+      const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
+        where: { bookingId },
+      });
+      await releaseByocSlot(
+        booking.cafeId,
+        booking.slotStart,
+        participantCount || 1,
+        booking.trackConfigId,
+      );
+    }
+    logger.info('BookingService', `transition → COMPLETED bookingId=${bookingId}`);
   }
 
   if (newStatus === BookingStatus.NO_SHOW) {
@@ -357,7 +385,7 @@ export async function createBooking(
     : rawSlotFee;
 
   let rentalFeeTotal = 0;
-  let depositTotal = 0;
+  const depositTotal = 0;
   const vehiclePricings: Array<{
     vehicleId: string;
     hourlyRate: number;
@@ -402,12 +430,11 @@ export async function createBooking(
       const hourlyRate = Number(catalog.hourlyRate);
       const rentalFee = hourlyRate * (slotMinutes / 60);
       rentalFeeTotal += rentalFee;
-      depositTotal += Number(catalog.securityDeposit);
       vehiclePricings.push({
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        securityDeposit: Number(catalog.securityDeposit),
+        securityDeposit: 0,
         damageMultiplier: Number(catalog.damageMultiplier),
       });
     }
@@ -427,6 +454,14 @@ export async function createBooking(
       where: { id: resolvedTrackConfig.trackTypeId },
     });
   }
+
+  await assertBookingNotBlockedByContest({
+    cafeId: body.cafe_id,
+    slotStart,
+    slotEnd,
+    trackConfigId: resolvedTrackConfig?.id ?? null,
+    trackTypeId: resolvedTrackConfig?.trackTypeId ?? body.track_type_id ?? null,
+  });
 
   if (body.play_mode === BookingMode.BYOC) {
     const capacity = resolvedTrackConfig ? resolvedTrackConfig.byocCapacity : cafe.byocCapacity;
@@ -496,6 +531,25 @@ export async function createBooking(
   }
 
   const totalAmount = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+
+  // Promo code validation — discount applies to slot_fee + rental_fee only
+  let discountAmount = 0;
+  let appliedPromotion: Promotion | undefined;
+  if (body.promotion_code) {
+    const promoSubtotal = slotFee + rentalFeeTotal;
+    const promoResult = await validatePromoCode({
+      cafeId: body.cafe_id,
+      code: body.promotion_code,
+      customerId,
+      subtotal: promoSubtotal,
+      playMode: body.play_mode,
+      slotStart,
+    });
+    discountAmount = promoResult.discountAmount;
+    appliedPromotion = promoResult.promotion;
+  }
+  const discountedTotal = Math.max(0, totalAmount - discountAmount);
+
   const paymentExpiresAt = new Date(Date.now() + env.platform.paymentWindowMinutes * 60 * 1000);
 
   // Acquire Redis slot locks for RENTAL vehicles
@@ -548,6 +602,15 @@ export async function createBooking(
       snapshot.slot_fee_multiplier = slotMultiplier;
       snapshot.pricing_rule_label = pricingLabel;
 
+      if (appliedPromotion) {
+        snapshot.promotion_applied = {
+          promotion_id: appliedPromotion.id,
+          code: appliedPromotion.code,
+          discount_amount: discountAmount,
+          discount_type: appliedPromotion.discountType,
+        };
+      }
+
       const newBooking = em.create(Booking, {
         customerId,
         cafeId: body.cafe_id,
@@ -559,7 +622,8 @@ export async function createBooking(
         slotStart,
         slotEnd,
         paymentExpiresAt,
-        discountAmount: 0,
+        discountAmount,
+        promotionId: appliedPromotion?.id ?? null,
         customerPackageId: customerPackage?.id ?? null,
         snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
       });
@@ -644,7 +708,7 @@ export async function createBooking(
       booking_id: booking.id,
       status: BookingStatus.PENDING,
       payment_expires_at: paymentExpiresAt,
-      total_amount: totalAmount,
+      total_amount: discountedTotal,
       breakdown: {
         slot_fee: slotFee,
         slot_fee_base: Number(cafe.slotFeeRate) * slotCount * playerCount,
@@ -653,8 +717,8 @@ export async function createBooking(
         rental_fee: rentalFeeTotal,
         security_deposit: depositTotal,
         fnb_total: fnbTotal,
-        discount: 0,
-        total: totalAmount,
+        discount: discountAmount,
+        total: discountedTotal,
       },
     };
   } catch (err) {
@@ -758,22 +822,24 @@ export interface ListCafeBookingsQuery {
 export async function listCafeBookings(
   cafeId: string,
   query: ListCafeBookingsQuery,
-): Promise<{ data: object[]; total: number; page: number; limit: number }> {
+): Promise<{ data: CafeBookingListItem[]; total: number; page: number; limit: number }> {
   const dayStart = new Date(`${query.date}T00:00:00+07:00`);
   const dayEnd = new Date(`${query.date}T23:59:59+07:00`);
 
   let qb = AppDataSource.createQueryBuilder(Booking, 'b')
     .innerJoin('users', 'u', 'u.id = b.customer_id')
     .select([
-      'b.id',
-      'u.full_name AS customer_name',
-      'u.phone AS customer_phone',
-      'b.play_mode',
-      'b.status',
-      'b.slot_start',
-      'b.slot_end',
-      'b.discount_amount',
-      'b.created_at',
+      'b.id AS id',
+      'b.status AS status',
+      'b.play_mode AS "playMode"',
+      'b.slot_start AS "slotStart"',
+      'b.slot_end AS "slotEnd"',
+      'b.created_at AS "createdAt"',
+      'b.payment_expires_at AS "paymentExpiresAt"',
+      'b.cancelled_by AS "cancelledBy"',
+      'b.cancellation_reason AS "cancellationReason"',
+      'u.full_name AS "customerName"',
+      'u.phone AS "customerPhone"',
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.slot_start >= :dayStart', { dayStart })
@@ -787,8 +853,22 @@ export async function listCafeBookings(
     qb = qb.andWhere('b.status = :status', { status: query.status });
   }
 
-  const [raw, total] = await Promise.all([qb.getRawMany(), qb.getCount()]);
+  const [raw, total] = await Promise.all([qb.getRawMany<CafeBookingListItem>(), qb.getCount()]);
   return { data: raw, total, page: query.page, limit: query.limit };
+}
+
+export interface CafeBookingListItem {
+  id: string;
+  status: BookingStatus;
+  playMode: string;
+  slotStart: string;
+  slotEnd: string;
+  createdAt: string;
+  paymentExpiresAt: string | null;
+  cancelledBy: string | null;
+  cancellationReason: string | null;
+  customerName: string;
+  customerPhone: string | null;
 }
 
 async function cancelPendingFnbOrders(bookingId: string): Promise<void> {
@@ -799,4 +879,374 @@ async function cancelPendingFnbOrders(bookingId: string): Promise<void> {
        AND status IN ('PENDING', 'CONFIRMED')`,
     [bookingId],
   );
+}
+
+export interface WalkInParticipantInput {
+  guest_name: string;
+  guest_phone: string;
+  participant_type: BookingParticipantType.WALK_IN_GUEST;
+}
+
+export interface CreateWalkInBookingBody {
+  play_mode: BookingMode;
+  track_type_id: string;
+  slot_start: string;
+  slot_end: string;
+  payment_method: 'CASH' | 'BANK_TRANSFER';
+  vehicle_ids: string[];
+  participants: WalkInParticipantInput[];
+}
+
+export interface CreateWalkInBookingResult {
+  bookingId: string;
+  bookingCode: string;
+  status: string;
+  source: string;
+  paymentStatus: string;
+  totalAmount: number;
+}
+
+export async function createWalkInBooking(
+  staffId: string,
+  cafeId: string,
+  body: CreateWalkInBookingBody,
+): Promise<CreateWalkInBookingResult> {
+  const slotStart = new Date(body.slot_start);
+  const slotEnd = new Date(body.slot_end);
+
+  if (slotStart >= slotEnd) {
+    throw new AppError('slot_start must be before slot_end', 400, 'INVALID_SLOT');
+  }
+
+  if (slotStart <= new Date()) {
+    throw new AppError('Cannot book a slot in the past', 400, 'SLOT_IN_PAST');
+  }
+
+  // Find or create primary guest account based on the first participant's phone number
+  const primaryGuest = body.participants[0];
+  if (!primaryGuest) {
+    throw new AppError('Phải có ít nhất 1 người chơi tham gia', 400, 'PARTICIPANTS_REQUIRED');
+  }
+
+  const userRepo = AppDataSource.getRepository(User);
+  let customer = await userRepo.findOne({ where: { phone: primaryGuest.guest_phone } });
+  if (!customer) {
+    customer = await userRepo.save(
+      userRepo.create({
+        email: `${primaryGuest.guest_phone}@guest.rcfield.local`,
+        full_name: primaryGuest.guest_name,
+        phone: primaryGuest.guest_phone,
+        password_hash: null,
+        role: UserRole.CUSTOMER,
+        is_active: true,
+        auth_provider: AuthProvider.LOCAL,
+      }),
+    );
+  }
+
+  const cafeRepo = AppDataSource.getRepository(Cafe);
+  const cafe = await cafeRepo.findOne({ where: { id: cafeId } });
+  if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
+
+  const slotDuration = cafe.slotDurationMinutes;
+  const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;
+
+  if (slotMinutes % slotDuration !== 0) {
+    throw new AppError(
+      `Slot range must be a multiple of ${slotDuration} minutes`,
+      400,
+      'INVALID_SLOT_RANGE',
+    );
+  }
+  if (slotMinutes > slotDuration * 8) {
+    throw new AppError(
+      `Maximum booking duration is ${slotDuration * 8} minutes`,
+      400,
+      'SLOT_RANGE_TOO_LONG',
+    );
+  }
+  const slotCount = slotMinutes / cafe.slotDurationMinutes;
+  const playerCount = body.participants.length;
+
+  const trackConfigRepo = AppDataSource.getRepository(CafeTrackConfig);
+  const trackConfig = await trackConfigRepo.findOne({
+    where: { cafeId, trackTypeId: body.track_type_id, isActive: true },
+  });
+  if (!trackConfig || trackConfig.deletedAt) {
+    throw new AppError(
+      'Track type not found or inactive for this cafe',
+      400,
+      'TRACK_CONFIG_NOT_FOUND',
+    );
+  }
+
+  const trackTypeRepo = AppDataSource.getRepository(TrackType);
+  const trackType = await trackTypeRepo.findOne({ where: { id: trackConfig.trackTypeId } });
+
+  await assertBookingNotBlockedByContest({
+    cafeId,
+    slotStart,
+    slotEnd,
+    trackConfigId: trackConfig.id,
+    trackTypeId: trackConfig.trackTypeId,
+  });
+
+  // Dynamic pricing lookup
+  const { multiplier: slotMultiplier, label: pricingLabel } = await getEffectiveMultiplier(
+    cafeId,
+    slotStart,
+  );
+
+  const baseSlotFeeRate = Number(cafe.slotFeeRate) * slotMultiplier;
+  const slotFee = baseSlotFeeRate * slotCount * playerCount;
+
+  let rentalFeeTotal = 0;
+  let depositTotal = 0;
+  const vehiclePricings: Array<{
+    vehicleId: string;
+    hourlyRate: number;
+    rentalFee: number;
+    securityDeposit: number;
+    damageMultiplier: number;
+  }> = [];
+
+  if (body.play_mode === BookingMode.RENTAL) {
+    if (!body.vehicle_ids.length) {
+      throw new AppError('vehicle_ids required for RENTAL mode', 400, 'VEHICLE_REQUIRED');
+    }
+
+    const vehicleRepo = AppDataSource.getRepository(Vehicle);
+    const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+
+    for (const vehicleId of body.vehicle_ids) {
+      let vehicle = await vehicleRepo.findOne({ where: { id: vehicleId, cafeId } });
+      const catalog = vehicle
+        ? await catalogRepo.findOne({ where: { id: vehicle.catalogId } })
+        : await catalogRepo.findOne({ where: { id: vehicleId, cafeId } });
+
+      if (!vehicle) {
+        if (!catalog)
+          throw new AppError(`Vehicle ${vehicleId} not found`, 404, 'VEHICLE_NOT_FOUND');
+        vehicle = await vehicleRepo.findOne({
+          where: { catalogId: catalog.id, cafeId, status: VehicleStatus.AVAILABLE },
+        });
+        if (!vehicle)
+          throw new AppError(
+            `No available unit for catalog ${catalog.id}`,
+            400,
+            'VEHICLE_UNAVAILABLE',
+          );
+      } else if (vehicle.status !== VehicleStatus.AVAILABLE) {
+        throw new AppError(`Vehicle ${vehicleId} is not available`, 400, 'VEHICLE_UNAVAILABLE');
+      }
+
+      if (!catalog) throw new AppError('Vehicle catalog not found', 500, 'CATALOG_NOT_FOUND');
+
+      // Check catalog track type compatibility
+      if (
+        catalog.compatibleTrackTypes.length > 0 &&
+        !catalog.compatibleTrackTypes.includes(trackConfig.trackTypeId)
+      ) {
+        throw new AppError(
+          `Vehicle ${vehicleId} is not compatible with this track type`,
+          400,
+          'VEHICLE_TRACK_INCOMPATIBLE',
+        );
+      }
+
+      const hourlyRate = Number(catalog.hourlyRate);
+      const rentalFee = hourlyRate * (slotMinutes / 60);
+      rentalFeeTotal += rentalFee;
+      depositTotal += 0;
+      vehiclePricings.push({
+        vehicleId: vehicle.id,
+        hourlyRate,
+        rentalFee,
+        securityDeposit: 0,
+        damageMultiplier: Number(catalog.damageMultiplier),
+      });
+    }
+  }
+
+  if (body.play_mode === BookingMode.BYOC) {
+    const locked = await acquireByocSlot(cafeId, slotStart, trackConfig.byocCapacity, playerCount);
+    if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+  }
+
+  const totalAmount = slotFee + rentalFeeTotal + depositTotal;
+
+  // Acquire Redis slot locks for RENTAL vehicles
+  const lockedVehicleIds: string[] = [];
+  if (body.play_mode === BookingMode.RENTAL) {
+    for (const { vehicleId } of vehiclePricings) {
+      const locked = await acquireVehicleLock(vehicleId, slotStart, 'pending');
+      if (!locked) {
+        await releaseVehicleLocks(lockedVehicleIds, slotStart);
+        throw new AppError(
+          `Vehicle ${vehicleId} is already locked for this slot`,
+          409,
+          'SLOT_LOCKED',
+        );
+      }
+      lockedVehicleIds.push(vehicleId);
+    }
+  }
+
+  try {
+    const booking = await AppDataSource.transaction(async (em) => {
+      const snapshot: Record<string, unknown> = {
+        track_config_id: trackConfig.id,
+        track_type_id: trackConfig.trackTypeId,
+        track_type_code: trackType?.code ?? null,
+        track_type_name: trackType?.name ?? null,
+        byoc_capacity_at_booking: trackConfig.byocCapacity,
+        slot_fee_multiplier: slotMultiplier,
+        pricing_rule_label: pricingLabel,
+        created_by_staff_id: staffId,
+        payment_method: body.payment_method,
+        slot_fee_total: slotFee,
+      };
+
+      const newBooking = em.create(Booking, {
+        customerId: customer.id,
+        cafeId,
+        trackTypeId: trackConfig.trackTypeId,
+        trackConfigId: trackConfig.id,
+        playMode: body.play_mode,
+        source: BookingSource.STAFF_MANUAL,
+        status: BookingStatus.CONFIRMED, // Walk-in is instantly CONFIRMED
+        slotStart,
+        slotEnd,
+        paymentExpiresAt: new Date(),
+        discountAmount: 0,
+        snapshot,
+      });
+      await em.save(newBooking);
+
+      // Primary participant (BOOKER) - mapping to customer
+      const primaryParticipant = em.create(BookingParticipant, {
+        bookingId: newBooking.id,
+        userId: customer.id,
+        participantType: BookingParticipantType.BOOKER,
+        isPrimaryResponsible: true,
+      });
+      await em.save(primaryParticipant);
+
+      // Save additional participants (exclude primary participant since it's already BOOKER)
+      for (let i = 1; i < body.participants.length; i++) {
+        const p = body.participants[i];
+        const participant = em.create(BookingParticipant, {
+          bookingId: newBooking.id,
+          userId: null,
+          participantType: p.participant_type,
+          isPrimaryResponsible: false,
+          guestName: p.guest_name,
+          guestPhone: p.guest_phone,
+        });
+        await em.save(participant);
+      }
+
+      // Booking vehicles
+      const savedVehicles: BookingVehicle[] = [];
+      for (const vp of vehiclePricings) {
+        const bv = em.create(BookingVehicle, {
+          bookingId: newBooking.id,
+          vehicleId: vp.vehicleId,
+          hourlyRateSnapshot: vp.hourlyRate,
+          rentalFeeSnapshot: vp.rentalFee,
+          securityDepositSnapshot: vp.securityDeposit,
+          damageMultiplierSnapshot: vp.damageMultiplier,
+        });
+        await em.save(bv);
+        savedVehicles.push(bv);
+      }
+
+      // Create Payment Components immediately as DISBURSED (Cash/card received at counter)
+      const slotFeeComponent = em.create(PaymentComponent, {
+        bookingId: newBooking.id,
+        bookingVehicleId: null,
+        type: PaymentComponentType.SLOT_FEE,
+        amount: slotFee,
+        status: PaymentComponentStatus.DISBURSED,
+      });
+      await em.save(slotFeeComponent);
+
+      for (const bv of savedVehicles) {
+        const rfComponent = em.create(PaymentComponent, {
+          bookingId: newBooking.id,
+          bookingVehicleId: bv.id,
+          type: PaymentComponentType.RENTAL_FEE,
+          amount: Number(bv.rentalFeeSnapshot),
+          status: PaymentComponentStatus.DISBURSED,
+        });
+        await em.save(rfComponent);
+
+        if (Number(bv.securityDepositSnapshot) > 0) {
+          const sdComponent = em.create(PaymentComponent, {
+            bookingId: newBooking.id,
+            bookingVehicleId: bv.id,
+            type: PaymentComponentType.SECURITY_DEPOSIT,
+            amount: Number(bv.securityDepositSnapshot),
+            status: PaymentComponentStatus.DISBURSED,
+          });
+          await em.save(sdComponent);
+        }
+      }
+
+      // Create Payment Transaction as SUCCESS
+      const transaction = em.create(PaymentTransaction, {
+        bookingId: newBooking.id,
+        type: PaymentTransactionType.PAYMENT,
+        gateway: `COUNTER_${body.payment_method}`,
+        txnRef: `WALK_IN_${newBooking.id.substring(0, 8).toUpperCase()}_${Date.now()}`,
+        amount: totalAmount,
+        status: PaymentTransactionStatus.SUCCESS,
+        rawRequest: { created_by_staff_id: staffId, payment_method: body.payment_method },
+        rawResponse: {
+          processedAt: new Date().toISOString(),
+          processedByStaffId: staffId,
+          paymentMethod: body.payment_method,
+          status: 'SUCCESS',
+          amount: totalAmount,
+        },
+      });
+      await em.save(transaction);
+
+      return newBooking;
+    });
+
+    // Update slot locks in redis with actual booking ID
+    if (body.play_mode === BookingMode.RENTAL) {
+      for (const vehicleId of lockedVehicleIds) {
+        await redis.set(
+          vehicleLockKey(vehicleId, slotStart),
+          booking.id,
+          'EX',
+          env.platform.slotLockTtlSeconds,
+        );
+      }
+    }
+
+    logger.info(
+      'BookingService',
+      `walk-in booking created bookingId=${booking.id} mode=${body.play_mode}`,
+    );
+
+    return {
+      bookingId: booking.id,
+      bookingCode: `RCF-${booking.id.substring(0, 4).toUpperCase()}`,
+      status: booking.status,
+      source: booking.source,
+      paymentStatus: 'CAPTURED',
+      totalAmount,
+    };
+  } catch (err) {
+    // Release locks on transaction failure
+    await releaseVehicleLocks(lockedVehicleIds, slotStart);
+    if (body.play_mode === BookingMode.BYOC) {
+      await releaseByocSlot(cafeId, slotStart, playerCount);
+    }
+    throw err;
+  }
 }

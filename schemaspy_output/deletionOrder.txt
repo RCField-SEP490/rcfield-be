@@ -3,6 +3,7 @@ cafe_channels
 amenity_catalog
 trust_score_logs
 staff_shifts
+fnb_orders
 contest_registrations
 vehicle_maintenance_logs
 staff_cafe_assignments
@@ -18,7 +19,6 @@ disputes
 provider_subscriptions
 kb_chunks
 inspection_photos
-fnb_order_items
 cafe_holiday_overrides
 cafe_closures
 cafe_announcements
@@ -31,11 +31,11 @@ password_reset_tokens
 package_usages
 notifications
 inspection_checklists
+fnb_order_items
 feature_flags
 cafe_widget_configs
 cafe_pricing_rules
 cafe_images
-fnb_orders
 kb_documents
 contests
 shift_positions

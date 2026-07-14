@@ -38,6 +38,7 @@ export async function purchasePackage(
   packageId: string,
   viewer: Viewer,
   ipAddr: string,
+  customReturnUrl?: string,
 ): Promise<PurchasePackageResult> {
   const pkg = await AppDataSource.getRepository(Package).findOne({
     where: { id: packageId, cafeId, deletedAt: IsNull() },
@@ -76,7 +77,8 @@ export async function purchasePackage(
   });
   const savedCp = await cpRepo.save(cp);
 
-  const txnRef = savedCp.id.replace(/-/g, '').substring(0, 32);
+  // Tạo txnRef duy nhất bắt đầu bằng pkg_ để tránh trùng lặp khi bấm thanh toán lại đơn mua gói
+  const txnRef = `pkg_${savedCp.id.replace(/-/g, '').substring(0, 20)}_${Date.now().toString().slice(-4)}`;
 
   const txRepo = AppDataSource.getRepository(PaymentTransaction);
   const existingTx = await txRepo.findOne({ where: { txnRef } });
@@ -119,6 +121,7 @@ export async function purchasePackage(
       orderInfo: `RCField package ${savedCp.id.substring(0, 8)}`,
       ipAddr,
       bankCode: 'VNBANK',
+      returnUrl: customReturnUrl,
     });
   }
 

@@ -95,4 +95,23 @@ export const providerDashboardController = {
       next(err);
     }
   },
+
+  // GET /api/v1/provider/dashboard/top-stats
+  async getTopStats(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const providerId = req.user!.userId;
+      const { from, to, cafeId } = req.query;
+
+      const topStats = await providerDashboardService.getProviderTopStats(
+        providerId,
+        from ? String(from) : undefined,
+        to ? String(to) : undefined,
+        cafeId ? String(cafeId) : undefined,
+      );
+
+      res.json({ success: true, data: topStats });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

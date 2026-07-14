@@ -2,9 +2,19 @@ import * as bcrypt from 'bcryptjs';
 import { AppDataSource } from '../config/database';
 import { User } from '../models/user.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
-import { AppError, AuthProvider, NotificationType, ProviderStatus, UserRole } from '../types';
+import {
+  AppError,
+  AuthProvider,
+  KycBusinessType,
+  KycDocumentItem,
+  KycDocumentType,
+  NotificationType,
+  ProviderStatus,
+  UserRole,
+} from '../types';
 import { createNotification } from './notification.service';
 import { createTrial } from './subscription.service';
+import { uploadFile, deleteFile } from './cloudinary.service';
 
 interface RegisterBody {
   email: string;
@@ -13,13 +23,40 @@ interface RegisterBody {
   phone?: string;
   business_name: string;
   business_description?: string;
+  business_type: KycBusinessType;
+}
+
+type KycFiles = Record<string, Express.Multer.File[] | undefined>;
+
+const REQUIRED_DOCS: Record<KycBusinessType, KycDocumentType[]> = {
+  INDIVIDUAL: [KycDocumentType.CCCD_FRONT, KycDocumentType.CCCD_BACK, KycDocumentType.VENUE_PHOTO],
+  BUSINESS: [KycDocumentType.GPKD, KycDocumentType.REPRESENTATIVE_ID, KycDocumentType.VENUE_PHOTO],
+};
+
+const FILE_FIELD_TO_DOC_TYPE: Record<string, KycDocumentType> = {
+  cccd_front: KycDocumentType.CCCD_FRONT,
+  cccd_back: KycDocumentType.CCCD_BACK,
+  gpkd: KycDocumentType.GPKD,
+  representative_id: KycDocumentType.REPRESENTATIVE_ID,
+  venue_photo: KycDocumentType.VENUE_PHOTO,
+};
+
+function validateRequiredDocs(businessType: KycBusinessType, files: KycFiles): void {
+  const required = REQUIRED_DOCS[businessType];
+  const missing = required.filter((docType) => {
+    const fieldName = Object.entries(FILE_FIELD_TO_DOC_TYPE).find(([, v]) => v === docType)?.[0];
+    return !fieldName || !files[fieldName]?.[0];
+  });
+  if (missing.length > 0) {
+    throw new AppError(`Thiếu tài liệu bắt buộc: ${missing.join(', ')}`, 400, 'MISSING_DOCUMENTS');
+  }
 }
 
 const PROVIDER_STATUS_TRANSITIONS: Record<ProviderStatus, ProviderStatus[]> = {
   [ProviderStatus.PENDING]: [ProviderStatus.ACTIVE, ProviderStatus.REJECTED],
   [ProviderStatus.ACTIVE]: [ProviderStatus.SUSPENDED],
   [ProviderStatus.SUSPENDED]: [ProviderStatus.ACTIVE],
-  [ProviderStatus.REJECTED]: [],
+  [ProviderStatus.REJECTED]: [ProviderStatus.PENDING],
 };
 
 async function getProfileOrThrow(providerId: string): Promise<ProviderProfile> {
@@ -41,34 +78,68 @@ function assertTransition(profile: ProviderProfile, to: ProviderStatus): void {
   }
 }
 
-export async function register(body: RegisterBody): Promise<User> {
+export async function register(body: RegisterBody, files: KycFiles): Promise<User> {
   const userRepo = AppDataSource.getRepository(User);
 
   const existing = await userRepo.findOne({ where: { email: body.email } });
   if (existing) throw new AppError('Email đã được sử dụng', 409, 'EMAIL_EXISTS');
 
-  return AppDataSource.transaction(async (manager) => {
-    const passwordHash = await bcrypt.hash(body.password, 10);
-    const user = await manager.save(
-      manager.create(User, {
-        email: body.email,
-        full_name: body.full_name,
-        phone: body.phone ?? null,
-        password_hash: passwordHash,
-        auth_provider: AuthProvider.LOCAL,
-        role: UserRole.PROVIDER,
-      }),
-    );
-    await manager.save(
-      manager.create(ProviderProfile, {
-        userId: user.id,
-        businessName: body.business_name,
-        businessDescription: body.business_description ?? null,
-        registrationStatus: ProviderStatus.PENDING,
-      }),
-    );
-    return user;
-  });
+  validateRequiredDocs(body.business_type, files);
+
+  const uploadedDocs: KycDocumentItem[] = [];
+  const uploadedPublicIds: string[] = [];
+
+  try {
+    for (const [fieldName, docType] of Object.entries(FILE_FIELD_TO_DOC_TYPE)) {
+      const file = files[fieldName]?.[0];
+      if (!file) continue;
+
+      const { publicId, url } = await uploadFile({
+        buffer: file.buffer,
+        folder: `rcfield/kyc/registration`,
+        publicIdPrefix: `${fieldName}-${Date.now()}`,
+      });
+      uploadedPublicIds.push(publicId);
+      uploadedDocs.push({
+        documentType: docType,
+        cloudinaryUrl: url,
+        cloudinaryPublicId: publicId,
+        originalFilename: file.originalname ?? null,
+      });
+    }
+
+    return await AppDataSource.transaction(async (manager) => {
+      const passwordHash = await bcrypt.hash(body.password, 10);
+      const user = await manager.save(
+        manager.create(User, {
+          email: body.email,
+          full_name: body.full_name,
+          phone: body.phone ?? null,
+          password_hash: passwordHash,
+          auth_provider: AuthProvider.LOCAL,
+          role: UserRole.PROVIDER,
+        }),
+      );
+      await manager.save(
+        manager.create(ProviderProfile, {
+          userId: user.id,
+          businessName: body.business_name,
+          businessDescription: body.business_description ?? null,
+          registrationStatus: ProviderStatus.PENDING,
+          businessType: body.business_type,
+          kycDocuments: uploadedDocs,
+          kycSubmittedAt: new Date(),
+        }),
+      );
+      return user;
+    });
+  } catch (err) {
+    // If DB transaction failed after uploads, clean up Cloudinary files
+    if (uploadedPublicIds.length > 0 && !(err instanceof AppError && err.code === 'EMAIL_EXISTS')) {
+      await Promise.allSettled(uploadedPublicIds.map((id) => deleteFile(id)));
+    }
+    throw err;
+  }
 }
 
 export async function approve(providerId: string, _adminId: string): Promise<void> {
@@ -189,6 +260,7 @@ export async function getProviderDetail(providerId: string): Promise<unknown> {
       u.id, u.email, u.full_name, u.phone, u.created_at,
       pp.business_name, pp.business_description, pp.registration_status,
       pp.rejection_reason, pp.suspended_at, pp.suspended_reason,
+      pp.business_type, pp.kyc_documents, pp.kyc_submitted_at,
       sp_name.name as plan_name,
       ps.status as subscription_status,
       ps.started_at, ps.expires_at, ps.grace_ends_at, ps.ai_messages_used,
@@ -202,5 +274,94 @@ export async function getProviderDetail(providerId: string): Promise<unknown> {
     [providerId],
   );
   if (!rows.length) throw new AppError('Provider không tồn tại', 404, 'NOT_FOUND');
-  return rows[0];
+
+  const row = rows[0] as Record<string, unknown>;
+
+  // Build nested kyc object for ADMIN response
+  const kycDocs = (row.kyc_documents as KycDocumentItem[]) ?? [];
+  const kyc =
+    row.kyc_submitted_at || kycDocs.length > 0
+      ? {
+          businessType: row.business_type ?? null,
+          submittedAt: row.kyc_submitted_at ?? null,
+          documents: kycDocs.map((d) => ({
+            documentType: d.documentType,
+            cloudinaryUrl: d.cloudinaryUrl,
+            originalFilename: d.originalFilename,
+          })),
+        }
+      : null;
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { kyc_documents: _kd, kyc_submitted_at: _ks, business_type: _bt, ...rest } = row;
+  return { ...rest, kyc };
+}
+
+export async function resubmit(
+  providerId: string,
+  businessType: KycBusinessType,
+  files: KycFiles,
+): Promise<{ status: string; kycSubmittedAt: Date }> {
+  const profile = await getProfileOrThrow(providerId);
+
+  if (profile.registrationStatus !== ProviderStatus.REJECTED) {
+    throw new AppError('Chỉ có thể nộp lại khi hồ sơ bị từ chối', 400, 'RESUBMIT_NOT_ALLOWED');
+  }
+
+  validateRequiredDocs(businessType, files);
+
+  const uploadedDocs: KycDocumentItem[] = [];
+  const uploadedPublicIds: string[] = [];
+
+  try {
+    for (const [fieldName, docType] of Object.entries(FILE_FIELD_TO_DOC_TYPE)) {
+      const file = files[fieldName]?.[0];
+      if (!file) continue;
+
+      const { publicId, url } = await uploadFile({
+        buffer: file.buffer,
+        folder: `rcfield/kyc/${profile.id}`,
+        publicIdPrefix: fieldName,
+      });
+      uploadedPublicIds.push(publicId);
+      uploadedDocs.push({
+        documentType: docType,
+        cloudinaryUrl: url,
+        cloudinaryPublicId: publicId,
+        originalFilename: file.originalname ?? null,
+      });
+    }
+
+    assertTransition(profile, ProviderStatus.PENDING);
+
+    profile.registrationStatus = ProviderStatus.PENDING;
+    profile.businessType = businessType;
+    profile.kycDocuments = uploadedDocs;
+    profile.kycSubmittedAt = new Date();
+    profile.rejectionReason = null;
+
+    await AppDataSource.getRepository(ProviderProfile).save(profile);
+
+    return { status: profile.registrationStatus, kycSubmittedAt: profile.kycSubmittedAt! };
+  } catch (err) {
+    if (uploadedPublicIds.length > 0) {
+      await Promise.allSettled(uploadedPublicIds.map((id) => deleteFile(id)));
+    }
+    throw err;
+  }
+}
+
+export async function getKycStatus(providerId: string): Promise<unknown> {
+  const profile = await getProfileOrThrow(providerId);
+
+  return {
+    providerStatus: profile.registrationStatus,
+    businessType: profile.businessType ?? null,
+    rejectionReason: profile.rejectionReason ?? null,
+    kycSubmittedAt: profile.kycSubmittedAt ?? null,
+    documents: (profile.kycDocuments ?? []).map((d) => ({
+      documentType: d.documentType,
+      originalFilename: d.originalFilename,
+    })),
+  };
 }

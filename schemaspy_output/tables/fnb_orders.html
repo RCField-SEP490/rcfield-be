@@ -117,11 +117,6 @@
                                     <td>gen_random_uuid()</td>
                                     <td>
                                         <table border='0' cellspacing='0' cellpadding='0'>
-                                            <tr>
-                                                <td title="fnb_order_items.order_id references fnb_orders.id via fnb_order_items_order_id_fkey"><a href='fnb_order_items.html'>fnb_order_items</a><span class='relatedKey'>.order_id</span></td>
-                                                <td class="constraint detail">fnb_order_items_order_id_fkey</td>
-                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
-                                            </tr>
                                         </table>
                                     </td>
                                     <td>
@@ -148,23 +143,6 @@
                                                 <td class="constraint detail">fnb_orders_booking_id_fkey</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
-                                        </table>
-                                    </td>
-                                    <td></td>
-                                </tr>
-                                <tr>
-                                    <td><span id="type">type</span></td>
-                                    <td>fnb_order_type_enum</td>
-                                    <td>2147483647</td>
-                                    <td title=''></td>
-                                    <td title=''></td>
-                                    <td>null</td>
-                                    <td>
-                                        <table border='0' cellspacing='0' cellpadding='0'>
-                                        </table>
-                                    </td>
-                                    <td>
-                                        <table border='0' cellspacing='0' cellpadding='0'>
                                         </table>
                                     </td>
                                     <td></td>
@@ -341,7 +319,7 @@
                                     <td><span id="order_type">order_type</span></td>
                                     <td>varchar</td>
                                     <td>20</td>
-                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
                                     <td title=''></td>
                                     <td>null</td>
                                     <td>
@@ -397,12 +375,6 @@
                                     <td>booking_id</td>
                                 </tr>
                                 <tr>
-                                    <td class='uniqueKey' title='Unique Key'><i class='icon ion-key iconkey'></i> idx_fnb_orders_preorder</td>
-                                    <td>Must be unique</td>
-                                    <td><span title='Ascending'>Asc</span></td>
-                                    <td>booking_id</td>
-                                </tr>
-                                <tr>
                                     <td title='Indexed'>idx_fnb_orders_session_id</td>
                                     <td>Performance</td>
                                     <td><span title='Ascending'>Asc</span></td>
@@ -433,60 +405,57 @@
                                         <map id="oneDegreeRelationshipsDiagram" name="oneDegreeRelationshipsDiagram">
 <area shape="rect" id="node1" href="bookings.html" target="_top" title="bookings" alt="" coords="247,5,504,475">
 <area shape="rect" id="node2" href="users.html" target="_top" title="users" alt="" coords="5,471,203,676">
-<area shape="rect" id="node3" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="1349,244,1603,449">
-<area shape="rect" id="node4" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="839,271,1305,721">
-<area shape="rect" id="node5" href="sessions.html" target="_top" title="sessions" alt="" coords="548,564,795,828">
+<area shape="rect" id="node3" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="839,300,1305,721">
+<area shape="rect" id="node4" href="sessions.html" target="_top" title="sessions" alt="" coords="548,564,795,828">
 </map>
                                         <a name='diagram'><img id="oneDegreeImg" src="../diagrams/tables/fnb_orders.1degree.png" usemap="#oneDegreeRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>
                                     <div class="chart tab-pane " id="twodegreesDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="twoDegreesRelationshipsDiagram" name="twoDegreesRelationshipsDiagram">
-<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1231,864,1519,952">
-<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="955,1221,1127,1309">
-<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1775,141,1863">
-<area shape="rect" id="node5" href="cafes.html" target="_top" title="cafes" alt="" coords="265,1464,417,1552">
-<area shape="rect" id="node6" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="557,1060,833,1148">
-<area shape="rect" id="node7" href="promotions.html" target="_top" title="promotions" alt="" coords="598,1464,793,1552">
-<area shape="rect" id="node8" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="588,1217,803,1305">
-<area shape="rect" id="node9" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="564,1359,827,1447">
-<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="1671,933,1921,1021">
-<area shape="rect" id="node10" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="551,1605,840,1693">
-<area shape="rect" id="node11" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="588,1711,803,1799">
-<area shape="rect" id="node12" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="895,723,1187,811">
-<area shape="rect" id="node13" href="contests.html" target="_top" title="contests" alt="" coords="612,723,779,811">
-<area shape="rect" id="node14" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="564,581,827,669">
-<area shape="rect" id="node15" href="disputes.html" target="_top" title="disputes" alt="" coords="1291,2299,1458,2387">
-<area shape="rect" id="node16" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="1655,5,1937,93">
-<area shape="rect" id="node17" href="sessions.html" target="_top" title="sessions" alt="" coords="1291,1041,1458,1129">
-<area shape="rect" id="node18" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="235,2380,447,2468">
-<area shape="rect" id="node19" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="2073,395,2327,600">
-<area shape="rect" id="node20" href="menu_items.html" target="_top" title="menu_items" alt="" coords="940,936,1141,1024">
-<area shape="rect" id="node21" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="1563,183,2029,633">
-<area shape="rect" id="node22" href="incidents.html" target="_top" title="incidents" alt="" coords="1709,651,1883,739">
-<area shape="rect" id="node23" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="2609,281,2871,369">
-<area shape="rect" id="node24" href="inspections.html" target="_top" title="inspections" alt="" coords="2371,488,2565,576">
-<area shape="rect" id="node25" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2078,828,2322,916">
-<area shape="rect" id="node39" href="session_participants.html" target="_top" title="session_participants" alt="" coords="1655,828,1937,916">
-<area shape="rect" id="node26" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="583,1816,807,1904">
-<area shape="rect" id="node27" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="1673,1111,1919,1199">
-<area shape="rect" id="node28" href="notifications.html" target="_top" title="notifications" alt="" coords="237,2485,444,2573">
-<area shape="rect" id="node29" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1253,1219,1496,1307">
-<area shape="rect" id="node30" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="185,2591,496,2679">
-<area shape="rect" id="node31" href="payment_components.html" target="_top" title="payment_components" alt="" coords="1647,1323,1945,1411">
-<area shape="rect" id="node32" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="209,2696,473,2784">
-<area shape="rect" id="node33" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="1646,1216,1946,1304">
-<area shape="rect" id="node34" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1243,1447,1506,1535">
-<area shape="rect" id="node35" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="216,2801,465,2889">
-<area shape="rect" id="node36" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="187,2907,494,2995">
-<area shape="rect" id="node37" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="226,3012,455,3100">
-<area shape="rect" id="node38" href="reviews.html" target="_top" title="reviews" alt="" coords="1295,1552,1454,1640">
-<area shape="rect" id="node40" href="shift_positions.html" target="_top" title="shift_positions" alt="" coords="228,2171,453,2259">
-<area shape="rect" id="node41" href="shift_time_presets.html" target="_top" title="shift_time_presets" alt="" coords="209,3117,472,3205">
-<area shape="rect" id="node42" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="540,1957,851,2045">
-<area shape="rect" id="node43" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="207,3223,475,3311">
-<area shape="rect" id="node44" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="599,2223,791,2311">
-<area shape="rect" id="node45" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="1675,1581,1917,1669">
-<area shape="rect" id="node46" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="1627,1995,1965,2083">
+<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1231,1312,1519,1400">
+<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="955,1045,1127,1133">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1175,141,1263">
+<area shape="rect" id="node5" href="cafes.html" target="_top" title="cafes" alt="" coords="265,1013,417,1101">
+<area shape="rect" id="node6" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="557,1325,833,1413">
+<area shape="rect" id="node7" href="promotions.html" target="_top" title="promotions" alt="" coords="598,675,793,763">
+<area shape="rect" id="node8" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="588,1043,803,1131">
+<area shape="rect" id="node9" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="564,1184,827,1272">
+<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="1671,1172,1921,1260">
+<area shape="rect" id="node10" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="551,569,840,657">
+<area shape="rect" id="node11" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="588,780,803,868">
+<area shape="rect" id="node12" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="895,356,1187,444">
+<area shape="rect" id="node13" href="contests.html" target="_top" title="contests" alt="" coords="612,392,779,480">
+<area shape="rect" id="node14" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="564,215,827,303">
+<area shape="rect" id="node15" href="disputes.html" target="_top" title="disputes" alt="" coords="1291,127,1458,215">
+<area shape="rect" id="node16" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="1655,75,1937,163">
+<area shape="rect" id="node17" href="sessions.html" target="_top" title="sessions" alt="" coords="1291,1525,1458,1613">
+<area shape="rect" id="node18" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="235,820,447,908">
+<area shape="rect" id="node19" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="1563,417,2029,839">
+<area shape="rect" id="node20" href="incidents.html" target="_top" title="incidents" alt="" coords="1709,2332,1883,2420">
+<area shape="rect" id="node21" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="2600,2023,2861,2111">
+<area shape="rect" id="node22" href="inspections.html" target="_top" title="inspections" alt="" coords="2361,1540,2556,1628">
+<area shape="rect" id="node23" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2073,1488,2317,1576">
+<area shape="rect" id="node37" href="session_participants.html" target="_top" title="session_participants" alt="" coords="1655,1488,1937,1576">
+<area shape="rect" id="node24" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="583,937,807,1025">
+<area shape="rect" id="node25" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="1673,989,1919,1077">
+<area shape="rect" id="node26" href="notifications.html" target="_top" title="notifications" alt="" coords="237,1263,444,1351">
+<area shape="rect" id="node27" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1253,921,1496,1009">
+<area shape="rect" id="node28" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="185,1368,496,1456">
+<area shape="rect" id="node29" href="payment_components.html" target="_top" title="payment_components" alt="" coords="1647,1383,1945,1471">
+<area shape="rect" id="node30" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="209,1525,473,1613">
+<area shape="rect" id="node31" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="1646,1277,1946,1365">
+<area shape="rect" id="node32" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1243,675,1506,763">
+<area shape="rect" id="node33" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="216,1667,465,1755">
+<area shape="rect" id="node34" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="187,1772,494,1860">
+<area shape="rect" id="node35" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="226,1877,455,1965">
+<area shape="rect" id="node36" href="reviews.html" target="_top" title="reviews" alt="" coords="1295,1207,1454,1295">
+<area shape="rect" id="node38" href="shift_positions.html" target="_top" title="shift_positions" alt="" coords="228,2087,453,2175">
+<area shape="rect" id="node39" href="shift_time_presets.html" target="_top" title="shift_time_presets" alt="" coords="209,2192,472,2280">
+<area shape="rect" id="node40" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="540,1900,851,1988">
+<area shape="rect" id="node41" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="207,2349,475,2437">
+<area shape="rect" id="node42" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="599,2005,791,2093">
+<area shape="rect" id="node43" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="1675,1963,1917,2051">
+<area shape="rect" id="node44" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="1627,2437,1965,2525">
 </map>
                                         <a name='diagram'><img id="twodegreesDegreeImg" src="../diagrams/tables/fnb_orders.2degrees.png" usemap="#twoDegreesRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>

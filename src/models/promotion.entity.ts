@@ -86,6 +86,9 @@ export class Promotion {
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 
+  @Column({ name: 'show_on_cafe_page', type: 'boolean', default: true })
+  showOnCafePage: boolean;
+
   @Column({ name: 'created_by', type: 'uuid' })
   createdBy: string;
 

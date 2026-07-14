@@ -82,21 +82,64 @@ export interface InvoiceData {
   slotStart: Date;
   slotEnd: Date;
   playMode: string; // 'RENTAL' | 'BYOC'
-  bookingMode: string; // human-readable label
-  // Line items
+  trackTypeName?: string | null;
+  pricingLabel?: string | null;
+  slotMultiplier?: number;
+  // Line items (gross, before discount)
   lineItems: Array<{
     description: string;
     qty: number;
     unitPrice: number;
     total: number;
   }>;
-  totalAmount: number;
+  discountAmount: number;
+  promoCode?: string | null;
+  totalAmount: number; // post-discount
   depositAmount: number; // shown in orange note
 }
 
 export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
   const slotLabel = `${formatDateTime(data.slotStart)} – ${data.slotEnd.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' })}`;
   const modeLabel = data.playMode === 'RENTAL' ? 'Thuê xe tại quán' : 'Mang xe cá nhân (BYOC)';
+  const grossTotal = data.lineItems.reduce((s, l) => s + l.total, 0);
+
+  // Pre-build booking info left/right stacks to avoid conditional-spread type issues
+  const leftStack: Content[] = [
+    {
+      columns: [
+        { text: 'Thời gian:', style: 'label', width: 70 },
+        { text: slotLabel, style: 'value' },
+      ],
+      margin: [0, 0, 0, 2] as [number, number, number, number],
+    } as Content,
+  ];
+  if (data.trackTypeName) {
+    leftStack.push({
+      columns: [
+        { text: 'Loại sân:', style: 'label', width: 70 },
+        { text: data.trackTypeName, style: 'value' },
+      ],
+      margin: [0, 0, 0, 2] as [number, number, number, number],
+    } as Content);
+  }
+  const rightStack: Content[] = [
+    {
+      columns: [
+        { text: 'Chế độ chơi:', style: 'label', width: 70 },
+        { text: modeLabel, style: 'value' },
+      ],
+      margin: [0, 0, 0, 2] as [number, number, number, number],
+    } as Content,
+  ];
+  if (data.pricingLabel && data.slotMultiplier && data.slotMultiplier > 1) {
+    rightStack.push({
+      columns: [
+        { text: 'Giá áp dụng:', style: 'label', width: 70 },
+        { text: `${data.pricingLabel} ×${data.slotMultiplier}`, style: 'value', color: '#92400e' },
+      ],
+      margin: [0, 0, 0, 2] as [number, number, number, number],
+    } as Content);
+  }
 
   const itemRows: TableCell[][] = [
     [
@@ -280,36 +323,18 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
         : []),
 
       // ── Booking info ────────────────────────────────────────────────────────
-      { text: 'THÔNG TIN ĐẶT SÂN', style: 'label', margin: [0, 0, 0, 4] },
+      {
+        text: 'THÔNG TIN ĐẶT SÂN',
+        style: 'label',
+        margin: [0, 0, 0, 4] as [number, number, number, number],
+      },
       {
         columns: [
-          {
-            width: '50%',
-            stack: [
-              {
-                columns: [
-                  { text: 'Thời gian:', style: 'label', width: 70 },
-                  { text: slotLabel, style: 'value' },
-                ],
-                margin: [0, 0, 0, 2],
-              },
-            ],
-          },
-          {
-            width: '50%',
-            stack: [
-              {
-                columns: [
-                  { text: 'Chế độ chơi:', style: 'label', width: 70 },
-                  { text: modeLabel, style: 'value' },
-                ],
-                margin: [0, 0, 0, 2],
-              },
-            ],
-          },
+          { width: '50%', stack: leftStack },
+          { width: '50%', stack: rightStack },
         ],
-        margin: [0, 0, 0, 12],
-      },
+        margin: [0, 0, 0, 12] as [number, number, number, number],
+      } as Content,
 
       // ── Line items table ────────────────────────────────────────────────────
       {
@@ -331,6 +356,63 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
         margin: [0, 0, 0, 0],
       },
 
+      // ── Discount row (only if promo applied) ────────────────────────────────
+      ...(data.discountAmount > 0
+        ? [
+            {
+              table: {
+                widths: ['*', 80],
+                body: [
+                  [
+                    {
+                      text: `Mã ưu đãi${data.promoCode ? ` (${data.promoCode})` : ''}`,
+                      fontSize: 9,
+                      color: '#059669',
+                      alignment: 'right',
+                      border: [false, false, false, false],
+                    },
+                    {
+                      text: `−${vnd(data.discountAmount)}`,
+                      fontSize: 9,
+                      bold: true,
+                      color: '#059669',
+                      alignment: 'right',
+                      border: [false, false, false, false],
+                    },
+                  ],
+                  ...(grossTotal !== data.totalAmount + data.depositAmount
+                    ? [
+                        [
+                          {
+                            text: 'Tạm tính',
+                            fontSize: 9,
+                            color: '#6b7280',
+                            alignment: 'right',
+                            border: [false, false, false, false],
+                          },
+                          {
+                            text: vnd(grossTotal),
+                            fontSize: 9,
+                            color: '#6b7280',
+                            alignment: 'right',
+                            border: [false, false, false, false],
+                          },
+                        ],
+                      ]
+                    : []),
+                ],
+              },
+              layout: {
+                paddingLeft: () => 6,
+                paddingRight: () => 6,
+                paddingTop: () => 4,
+                paddingBottom: () => 4,
+              },
+              margin: [0, 0, 0, 0],
+            } as Content,
+          ]
+        : []),
+
       // ── Total row ───────────────────────────────────────────────────────────
       {
         table: {
@@ -338,7 +420,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
           body: [
             [
               {
-                text: 'Tổng cộng',
+                text: 'Tổng thanh toán',
                 style: 'totalLabel',
                 alignment: 'right',
                 border: [false, false, false, false],

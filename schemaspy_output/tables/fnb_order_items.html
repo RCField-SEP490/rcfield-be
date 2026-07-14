@@ -126,28 +126,6 @@
                                     <td></td>
                                 </tr>
                                 <tr>
-                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="order_id">order_id</span></td>
-                                    <td>uuid</td>
-                                    <td>2147483647</td>
-                                    <td title=''></td>
-                                    <td title=''></td>
-                                    <td>null</td>
-                                    <td>
-                                        <table border='0' cellspacing='0' cellpadding='0'>
-                                        </table>
-                                    </td>
-                                    <td>
-                                        <table border='0' cellspacing='0' cellpadding='0'>
-                                            <tr>
-                                                <td title="fnb_order_items.order_id references fnb_orders.id via fnb_order_items_order_id_fkey"><a href='fnb_orders.html'>fnb_orders</a><span class='relatedKey'>.id</span></td>
-                                                <td class="constraint detail">fnb_order_items_order_id_fkey</td>
-                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
-                                            </tr>
-                                        </table>
-                                    </td>
-                                    <td></td>
-                                </tr>
-                                <tr>
                                     <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="menu_item_id">menu_item_id</span></td>
                                     <td>uuid</td>
                                     <td>2147483647</td>
@@ -241,7 +219,7 @@
                                     <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="fnb_order_id">fnb_order_id</span></td>
                                     <td>uuid</td>
                                     <td>2147483647</td>
-                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
                                     <td title=''></td>
                                     <td>null</td>
                                     <td>
@@ -330,12 +308,6 @@
                                     <td><span title='Ascending'>Asc</span></td>
                                     <td>fnb_order_id</td>
                                 </tr>
-                                <tr>
-                                    <td title='Indexed'>idx_fnb_order_items_order_id</td>
-                                    <td>Performance</td>
-                                    <td><span title='Ascending'>Asc</span></td>
-                                    <td>order_id</td>
-                                </tr>
                                 </tbody>
                             </table>
                         </div><!-- /.box-body -->
@@ -391,21 +363,16 @@
                                 <div class="tab-content no-padding">
                                     <div class="chart tab-pane active" id="oneDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="oneDegreeRelationshipsDiagram" name="oneDegreeRelationshipsDiagram">
-<area shape="rect" id="node1" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="251,85,655,448">
-<area shape="rect" id="node2" href="menu_items.html" target="_top" title="menu_items" alt="" coords="5,257,207,433">
-<area shape="rect" id="node3" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="12,5,200,240">
+<area shape="rect" id="node1" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="251,5,655,339">
+<area shape="rect" id="node2" href="menu_items.html" target="_top" title="menu_items" alt="" coords="5,37,207,213">
 </map>
                                         <a name='diagram'><img id="oneDegreeImg" src="../diagrams/tables/fnb_order_items.1degree.png" usemap="#oneDegreeRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>
                                     <div class="chart tab-pane " id="twodegreesDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="twoDegreesRelationshipsDiagram" name="twoDegreesRelationshipsDiagram">
-<area shape="rect" id="node1" href="bookings.html" target="_top" title="bookings" alt="" coords="381,28,553,116">
-<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="185,155,337,243">
-<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,81,141,169">
-<area shape="rect" id="node4" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="1075,93,1479,456">
-<area shape="rect" id="node5" href="menu_items.html" target="_top" title="menu_items" alt="" coords="597,275,799,451">
-<area shape="rect" id="node6" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="843,5,1031,240">
-<area shape="rect" id="node7" href="sessions.html" target="_top" title="sessions" alt="" coords="615,169,781,257">
+<area shape="rect" id="node1" href="fnb_order_items.html" target="_top" title="fnb_order_items" alt="" coords="447,5,851,339">
+<area shape="rect" id="node2" href="menu_items.html" target="_top" title="menu_items" alt="" coords="201,37,403,213">
+<area shape="rect" id="node3" href="cafes.html" target="_top" title="cafes" alt="" coords="5,69,157,157">
 </map>
                                         <a name='diagram'><img id="twodegreesDegreeImg" src="../diagrams/tables/fnb_order_items.2degrees.png" usemap="#twoDegreesRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>

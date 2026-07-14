@@ -47,6 +47,20 @@ class MemoryRedis {
     return current;
   }
 
+  async incrby(key: string, count: number): Promise<number> {
+    const current = Number((await this.get(key)) ?? 0) + count;
+    const expiresAt = this.store.get(key)?.expiresAt;
+    this.store.set(key, { value: String(current), expiresAt });
+    return current;
+  }
+
+  async decrby(key: string, count: number): Promise<number> {
+    const current = Number((await this.get(key)) ?? 0) - count;
+    const expiresAt = this.store.get(key)?.expiresAt;
+    this.store.set(key, { value: String(current), expiresAt });
+    return current;
+  }
+
   async expire(key: string, seconds: number): Promise<number> {
     if (this.isExpired(key) || !this.store.has(key)) return 0;
     const item = this.store.get(key)!;
