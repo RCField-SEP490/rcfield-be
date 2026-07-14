@@ -123,15 +123,36 @@ export async function listCustomerReviews(
   customerId: string,
   page: number,
   limit: number,
-): Promise<{ data: Review[]; total: number }> {
-  const reviewRepo = AppDataSource.getRepository(Review);
-  const [data, total] = await reviewRepo.findAndCount({
-    where: { customerId },
-    order: { createdAt: 'DESC' },
-    skip: (page - 1) * limit,
-    take: limit,
-  });
-  return { data, total };
+): Promise<{ data: (Review & { cafeName: string })[]; total: number }> {
+  const offset = (page - 1) * limit;
+  const [rows, [{ count }]] = await Promise.all([
+    AppDataSource.query<(Review & { cafeName: string })[]>(
+      `SELECT
+         r.id,
+         r.booking_id       AS "bookingId",
+         r.cafe_id          AS "cafeId",
+         r.customer_id      AS "customerId",
+         r.rating           AS "overallScore",
+         r.vehicle_score    AS "vehicleScore",
+         r.staff_score      AS "staffScore",
+         r.facility_score   AS "facilityScore",
+         r.note,
+         r.status,
+         r.created_at       AS "createdAt",
+         c.name             AS "cafeName"
+       FROM reviews r
+       JOIN cafes c ON c.id = r.cafe_id
+       WHERE r.customer_id = $1
+       ORDER BY r.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [customerId, limit, offset],
+    ),
+    AppDataSource.query<[{ count: string }]>(
+      `SELECT COUNT(*) FROM reviews WHERE customer_id = $1`,
+      [customerId],
+    ),
+  ]);
+  return { data: rows, total: parseInt(count, 10) };
 }
 
 // ── US3: Mask customer name ───────────────────────────────────────────────────

@@ -1,7 +1,8 @@
-import { IsNull } from 'typeorm';
+import { IsNull, In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { Vehicle } from '../models/vehicle.entity';
+import { TrackType } from '../models/track-type.entity';
 import { getManagedCafeOrThrow, Viewer } from './cafe.service';
 import { AppError, UserRole, VehicleStatus } from '../types';
 
@@ -209,7 +210,12 @@ export async function getVehicleUnitDetail(
 export async function listVehicleUnits(
   cafeId: string,
   viewer: Viewer | undefined,
-  filters: { status?: VehicleStatus; catalog_id?: string; search?: string },
+  filters: {
+    status?: VehicleStatus;
+    catalog_id?: string;
+    search?: string;
+    excludeRetired?: boolean;
+  },
 ): Promise<Record<string, unknown>[]> {
   // Determine if viewer is cafe operator/owner
   let isOperator = false;
@@ -240,7 +246,9 @@ export async function listVehicleUnits(
     }
   }
 
-  if (!isOperator) {
+  // Always filter RETIRED for non-operators.
+  // For operators: also filter if excludeRetired=true (e.g. booking flow — RETIRED cannot be booked anyway)
+  if (!isOperator || filters.excludeRetired) {
     qb.andWhere('v.status != :retiredStatus', { retiredStatus: VehicleStatus.RETIRED });
   }
 
@@ -259,7 +267,29 @@ export async function listVehicleUnits(
 
   const vehicles = await qb.getMany();
 
+  // Load track types referenced by catalogs of retrieved vehicles
+  const allTrackTypeIds = Array.from(
+    new Set(vehicles.flatMap((v) => v.catalog.compatibleTrackTypes || [])),
+  );
+  const trackTypes =
+    allTrackTypeIds.length > 0
+      ? await AppDataSource.getRepository(TrackType).findBy({ id: In(allTrackTypeIds) })
+      : [];
+  const trackTypeMap = new Map(trackTypes.map((t) => [t.id, t]));
+
   return vehicles.map((v) => {
+    const mappedTracks = (v.catalog.compatibleTrackTypes || [])
+      .map((id) => trackTypeMap.get(id))
+      .filter((t): t is TrackType => !!t)
+      .map((t) => ({
+        id: t.id,
+        code: t.code,
+        name: t.name,
+        sortOrder: t.sortOrder,
+        isActive: t.isActive,
+        description: t.description,
+      }));
+
     const base: Record<string, unknown> = {
       id: v.id,
       catalogId: v.catalogId,
@@ -274,6 +304,8 @@ export async function listVehicleUnits(
         name: v.catalog.name,
         tier: v.catalog.tier,
         cover_image_url: v.catalog.coverImageUrl,
+        hourlyRate: Number(v.catalog.hourlyRate),
+        compatibleTrackTypes: mappedTracks,
       },
       createdAt: v.createdAt,
     };
