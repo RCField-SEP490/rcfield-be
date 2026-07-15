@@ -54,6 +54,7 @@ const VALID_TRANSITIONS: Record<BookingStatus, string[]> = {
 
 const MAX_CONSECUTIVE_SLOTS = 8;
 const VN_TZ_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 function getVietnamLocalMidnightUtcMs(value: Date): number {
@@ -107,32 +108,43 @@ function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slotEnd: Da
     );
   }
 
-  const localStart = getVietnamLocalMidnightUtcMs(slotStart);
-  const candidates = [localStart, localStart - 24 * 60 * 60 * 1000];
+  const firstLocalDay = getVietnamLocalMidnightUtcMs(slotStart) - DAY_MS;
+  const lastLocalDay = getVietnamLocalMidnightUtcMs(new Date(slotEnd.getTime() - 1)) + DAY_MS;
+  const candidates: number[] = [];
+  for (let candidate = firstLocalDay; candidate <= lastLocalDay; candidate += DAY_MS) {
+    candidates.push(candidate);
+  }
+
   const windows = candidates
     .map((candidate) => buildOperatingWindow(cafe.operatingHours, candidate))
     .filter((window): window is { openAt: Date; closeAt: Date } => window !== null);
 
-  if (
-    windows.some(
-      (window) =>
-        slotStart.getTime() >= window.openAt.getTime() &&
-        slotEnd.getTime() <= window.closeAt.getTime(),
-    )
-  ) {
-    return;
-  }
-
   const hasConfiguredDay = candidates.some(
     (candidate) => cafe.operatingHours?.[getOperatingDayKey(candidate)] !== undefined,
   );
-  if (!hasConfiguredDay || windows.length === 0) {
+  if (!hasConfiguredDay) {
     throw new AppError(
       'Cafe operating hours are not configured correctly',
       400,
       'INVALID_CAFE_SCHEDULE',
     );
   }
+
+  // A booking may pass midnight. It is valid when the full range is covered by
+  // consecutive operating windows (for example, 00:00–24:00 on two adjacent days).
+  let coveredUntil = slotStart.getTime();
+  const requestedEnd = slotEnd.getTime();
+  while (coveredUntil < requestedEnd) {
+    const coveringWindows = windows.filter(
+      (window) =>
+        window.openAt.getTime() <= coveredUntil && window.closeAt.getTime() > coveredUntil,
+    );
+    const latestClose = Math.max(...coveringWindows.map((window) => window.closeAt.getTime()));
+    if (!Number.isFinite(latestClose)) break;
+    coveredUntil = latestClose;
+  }
+
+  if (coveredUntil >= requestedEnd) return;
 
   throw new AppError(
     'Selected slot is outside cafe operating hours',
