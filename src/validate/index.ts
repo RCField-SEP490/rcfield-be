@@ -6,6 +6,7 @@ import {
   BookingMode,
   BookingStatus,
   CafeStatus,
+  ContestBanScopeType,
   ContestParticipantStatus,
   ContestStatus,
   CustomerPackageStatus,
@@ -485,9 +486,13 @@ export const UpdateContestSchema = ContestUpsertBaseSchema.partial().refine(
 );
 
 export const CreateContestRegistrationSchema = z.object({
-  booking_id: z.string().uuid(),
-  vehicle_id: z.string().uuid(),
+  booking_id: z.string().uuid().optional(),
+  vehicle_id: z.string().uuid().optional(),
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
+  byoc_vehicle_name: z.string().trim().min(2).max(120).optional(),
+  byoc_vehicle_brand: z.string().trim().min(1).max(120).optional(),
+  byoc_vehicle_class: z.string().trim().min(1).max(120).optional(),
+  byoc_vehicle_notes: z.string().trim().max(1000).optional(),
 });
 
 export const ContestRegistrationActionSchema = z.object({
@@ -496,6 +501,22 @@ export const ContestRegistrationActionSchema = z.object({
 
 export const ContestMarkFeePaidSchema = z.object({
   note: z.string().trim().max(1000).optional(),
+});
+
+export const ContestAssignStaffSchema = z.object({
+  staff_id: z.string().uuid(),
+});
+
+export const ContestBanCreateSchema = z.object({
+  user_id: z.string().uuid(),
+  scope_type: z.nativeEnum(ContestBanScopeType).default(ContestBanScopeType.CONTEST),
+  reason: z.string().trim().min(3).max(1000),
+  evidence: z.record(z.string(), z.unknown()).optional().default({}),
+  expires_at: z.coerce.date().nullable().optional(),
+});
+
+export const ContestBanLiftSchema = z.object({
+  reason: z.string().trim().max(1000).optional(),
 });
 
 export const ContestCheckInSchema = z.object({
@@ -531,8 +552,8 @@ export const ContestSubmitResultsSchema = z.object({
         registration_id: z.string().uuid(),
         finish_position: z.number().int().positive().nullable().optional(),
         score: z.coerce.number().nullable().optional(),
-        best_lap_ms: z.number().int().positive().nullable().optional(),
-        total_time_ms: z.number().int().positive().nullable().optional(),
+        best_lap_seconds: z.coerce.number().positive().nullable().optional(),
+        total_time_seconds: z.coerce.number().positive().nullable().optional(),
         is_winner: z.boolean().optional().default(false),
         result_note: z.string().trim().max(1000).nullable().optional(),
         status: z.nativeEnum(ContestParticipantStatus).optional(),
@@ -544,6 +565,10 @@ export const ContestSubmitResultsSchema = z.object({
 
 export const ContestCorrectResultsSchema = ContestSubmitResultsSchema.extend({
   force_cascade: z.boolean().optional().default(false),
+});
+
+export const ContestEntryPaymentCreateSchema = z.object({
+  return_url: z.string().url().optional(),
 });
 
 export const PromotionIdParamsSchema = z.object({

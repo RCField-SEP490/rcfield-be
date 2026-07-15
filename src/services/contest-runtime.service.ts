@@ -20,9 +20,8 @@ import {
 } from '../types';
 import { Viewer } from './cafe.service';
 import {
-  assertContestOwner,
+  assertContestOperator,
   getContestOrThrow,
-  isStaffAssignedToCafe,
   isStaffAssignedToContest,
   writeContestAudit,
 } from './contest.helpers';
@@ -50,8 +49,8 @@ type SubmitResultsBody = {
     registration_id: string;
     finish_position?: number | null;
     score?: number | null;
-    best_lap_ms?: number | null;
-    total_time_ms?: number | null;
+    best_lap_seconds?: number | null;
+    total_time_seconds?: number | null;
     is_winner?: boolean;
     result_note?: string | null;
     status?: ContestParticipantStatus;
@@ -213,12 +212,12 @@ async function assertViewerCanViewContestMatches(contestId: string, viewer?: Vie
 
 async function assertViewerCanOperateMatch(match: ContestMatch, viewer: Viewer) {
   if (viewer.role === UserRole.PROVIDER) {
-    await assertContestOwner(match.contestId, viewer);
+    await assertContestOperator(match.contestId, viewer);
     return;
   }
 
   if (viewer.role === UserRole.STAFF) {
-    const assigned = await isStaffAssignedToCafe(viewer.userId, match.cafeId);
+    const assigned = await isStaffAssignedToContest(match.contestId, viewer.userId);
     if (!assigned) {
       throw new AppError('Staff không được thao tác match ở chi nhánh này', 403, 'FORBIDDEN');
     }
@@ -242,12 +241,12 @@ function inferMatchWinners(
     const bFinish = b.finishPosition ?? Number.MAX_SAFE_INTEGER;
     if (aFinish !== bFinish) return aFinish - bFinish;
 
-    const aBestLap = a.bestLapMs ?? Number.MAX_SAFE_INTEGER;
-    const bBestLap = b.bestLapMs ?? Number.MAX_SAFE_INTEGER;
+    const aBestLap = a.bestLapSeconds ?? Number.MAX_SAFE_INTEGER;
+    const bBestLap = b.bestLapSeconds ?? Number.MAX_SAFE_INTEGER;
     if (aBestLap !== bBestLap) return aBestLap - bBestLap;
 
-    const aTotal = a.totalTimeMs ?? Number.MAX_SAFE_INTEGER;
-    const bTotal = b.totalTimeMs ?? Number.MAX_SAFE_INTEGER;
+    const aTotal = a.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER;
+    const bTotal = b.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER;
     if (aTotal !== bTotal) return aTotal - bTotal;
 
     const aScore = a.score ?? Number.NEGATIVE_INFINITY;
@@ -305,8 +304,8 @@ async function mapMatchesPayload(contestId: string, viewer?: Viewer) {
         status: participant.status,
         score: participant.score,
         finish_position: participant.finishPosition,
-        best_lap_ms: participant.bestLapMs,
-        total_time_ms: participant.totalTimeMs,
+        best_lap_seconds: normalizeContestTimeSeconds(participant.bestLapSeconds),
+        total_time_seconds: normalizeContestTimeSeconds(participant.totalTimeSeconds),
         is_winner: participant.isWinner,
         result_note: participant.resultNote,
         metadata: participant.metadata,
@@ -358,17 +357,20 @@ function buildTimeTrialResultSummary(
   const sorted = [...participants].sort((a, b) => {
     if (leaderboardMode === 'TOTAL_TIME') {
       return (
-        (a.totalTimeMs ?? Number.MAX_SAFE_INTEGER) - (b.totalTimeMs ?? Number.MAX_SAFE_INTEGER)
+        (a.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
+        (b.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER)
       );
     }
-    return (a.bestLapMs ?? Number.MAX_SAFE_INTEGER) - (b.bestLapMs ?? Number.MAX_SAFE_INTEGER);
+    return (
+      (a.bestLapSeconds ?? Number.MAX_SAFE_INTEGER) - (b.bestLapSeconds ?? Number.MAX_SAFE_INTEGER)
+    );
   });
   const winner = sorted[0] ?? null;
   return {
     leaderboard_mode: leaderboardMode,
     winner_registration_id: winner?.registrationId ?? null,
-    best_lap_ms: winner?.bestLapMs ?? null,
-    total_time_ms: winner?.totalTimeMs ?? null,
+    best_lap_seconds: normalizeContestTimeSeconds(winner?.bestLapSeconds),
+    total_time_seconds: normalizeContestTimeSeconds(winner?.totalTimeSeconds),
   };
 }
 
@@ -456,7 +458,7 @@ export async function generateContestMatches(
   viewer: Viewer,
   body: GenerateMatchesBody,
 ) {
-  const contest = await assertContestOwner(contestId, viewer);
+  const contest = await assertContestOperator(contestId, viewer);
   await ensureContestRuntimeEditable(contest);
   await validateContestCafe(contestId, body.cafe_id);
   const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
@@ -683,8 +685,16 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
     const participant = participantMap.get(item.registration_id)!;
     participant.finishPosition = item.finish_position ?? null;
     participant.score = item.score ?? null;
-    participant.bestLapMs = item.best_lap_ms ?? null;
-    participant.totalTimeMs = item.total_time_ms ?? null;
+    participant.bestLapSeconds = item.best_lap_seconds ?? null;
+    participant.totalTimeSeconds = item.total_time_seconds ?? null;
+    participant.bestLapMsLegacy =
+      item.best_lap_seconds !== undefined && item.best_lap_seconds !== null
+        ? Math.round(item.best_lap_seconds * 1000)
+        : null;
+    participant.totalTimeMsLegacy =
+      item.total_time_seconds !== undefined && item.total_time_seconds !== null
+        ? Math.round(item.total_time_seconds * 1000)
+        : null;
     participant.isWinner = item.is_winner ?? false;
     participant.resultNote = item.result_note ?? null;
     participant.status = item.status ?? ContestParticipantStatus.FINISHED;
@@ -772,8 +782,10 @@ export async function correctMatchResults(
   for (const participant of previousParticipants) {
     participant.finishPosition = null;
     participant.score = null;
-    participant.bestLapMs = null;
-    participant.totalTimeMs = null;
+    participant.bestLapSeconds = null;
+    participant.totalTimeSeconds = null;
+    participant.bestLapMsLegacy = null;
+    participant.totalTimeMsLegacy = null;
     participant.isWinner = false;
     participant.resultNote = null;
     participant.status = ContestParticipantStatus.READY;
@@ -885,12 +897,18 @@ type LeaderboardEntry = {
   driver_handle: string | null;
   driver_title_label: string | null;
   wins: number;
-  best_lap_ms: number | null;
-  total_time_ms: number | null;
+  best_lap_seconds: number | null;
+  total_time_seconds: number | null;
   latest_finish_position: number | null;
   matches_completed: number;
   progressed_round: number;
 };
+
+function normalizeContestTimeSeconds(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function sortLeaderboardEntries(
   entries: LeaderboardEntry[],
@@ -907,10 +925,14 @@ function sortLeaderboardEntries(
     }
     if (mode === 'TOTAL_TIME') {
       return (
-        (a.total_time_ms ?? Number.MAX_SAFE_INTEGER) - (b.total_time_ms ?? Number.MAX_SAFE_INTEGER)
+        (a.total_time_seconds ?? Number.MAX_SAFE_INTEGER) -
+        (b.total_time_seconds ?? Number.MAX_SAFE_INTEGER)
       );
     }
-    return (a.best_lap_ms ?? Number.MAX_SAFE_INTEGER) - (b.best_lap_ms ?? Number.MAX_SAFE_INTEGER);
+    return (
+      (a.best_lap_seconds ?? Number.MAX_SAFE_INTEGER) -
+      (b.best_lap_seconds ?? Number.MAX_SAFE_INTEGER)
+    );
   });
 }
 
@@ -941,8 +963,8 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
         driver_handle: racing.driverHandle,
         driver_title_label: racing.titleLabel,
         wins: 0,
-        best_lap_ms: null,
-        total_time_ms: null,
+        best_lap_seconds: null,
+        total_time_seconds: null,
         latest_finish_position: null,
         matches_completed: 0,
         progressed_round: 0,
@@ -951,17 +973,19 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
       current.progressed_round = Math.max(current.progressed_round, match.roundNo);
       current.latest_finish_position = participant.finishPosition ?? current.latest_finish_position;
       if (participant.isWinner) current.wins += 1;
-      if (participant.bestLapMs !== null) {
-        current.best_lap_ms =
-          current.best_lap_ms === null
-            ? participant.bestLapMs
-            : Math.min(current.best_lap_ms, participant.bestLapMs);
+      const bestLapSeconds = normalizeContestTimeSeconds(participant.bestLapSeconds);
+      const totalTimeSeconds = normalizeContestTimeSeconds(participant.totalTimeSeconds);
+      if (bestLapSeconds !== null) {
+        current.best_lap_seconds =
+          current.best_lap_seconds === null
+            ? bestLapSeconds
+            : Math.min(current.best_lap_seconds, bestLapSeconds);
       }
-      if (participant.totalTimeMs !== null) {
-        current.total_time_ms =
-          current.total_time_ms === null
-            ? participant.totalTimeMs
-            : Math.min(current.total_time_ms, participant.totalTimeMs);
+      if (totalTimeSeconds !== null) {
+        current.total_time_seconds =
+          current.total_time_seconds === null
+            ? totalTimeSeconds
+            : Math.min(current.total_time_seconds, totalTimeSeconds);
       }
       entryMap.set(participant.registrationId, current);
     }
@@ -979,7 +1003,7 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
 }
 
 export async function publishContestLeaderboard(contestId: string, viewer: Viewer) {
-  const contest = await assertContestOwner(contestId, viewer);
+  const contest = await assertContestOperator(contestId, viewer);
   const matches = await loadContestMatches(contestId);
   if (matches.length === 0) {
     throw new AppError('Contest chưa có match để publish leaderboard', 400, 'CONTEST_NO_MATCHES');
@@ -1030,7 +1054,7 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
 }
 
 export async function listContestAuditLogs(contestId: string, viewer: Viewer) {
-  await assertContestOwner(contestId, viewer);
+  await assertContestOperator(contestId, viewer);
   return AppDataSource.getRepository(ContestAuditLog).find({
     where: { contestId },
     order: { createdAt: 'DESC' },
@@ -1039,7 +1063,7 @@ export async function listContestAuditLogs(contestId: string, viewer: Viewer) {
 }
 
 export async function getContestMetrics(contestId: string, viewer: Viewer) {
-  const contest = await assertContestOwner(contestId, viewer);
+  const contest = await assertContestOperator(contestId, viewer);
   const registrations = await AppDataSource.getRepository(ContestRegistration).find({
     where: { contestId },
   });
@@ -1058,6 +1082,8 @@ export async function getContestMetrics(contestId: string, viewer: Viewer) {
 
   return {
     contest_id: contestId,
+    capacity: contest.capacity,
+    entry_fee_amount: Number(contest.entryFee ?? 0),
     registration_counts: {
       total: registrations.length,
       pending: registrations.filter((item) => item.status === ContestRegistrationStatus.PENDING)
@@ -1069,6 +1095,30 @@ export async function getContestMetrics(contestId: string, viewer: Viewer) {
       ).length,
       cancelled: registrations.filter((item) => item.status === ContestRegistrationStatus.CANCELLED)
         .length,
+    },
+    revenue: {
+      expected_revenue:
+        registrations.filter((item) => item.status !== ContestRegistrationStatus.CANCELLED).length *
+        Number(contest.entryFee ?? 0),
+      paid_revenue:
+        registrations.filter((item) => item.paymentStatus === 'MARKED_PAID').length *
+        Number(contest.entryFee ?? 0),
+      waived_revenue:
+        registrations.filter((item) => item.paymentStatus === 'WAIVED').length *
+        Number(contest.entryFee ?? 0),
+      pending_revenue:
+        registrations.filter((item) =>
+          ['PENDING_PAYMENT', 'PENDING_REVIEW'].includes(item.paymentStatus),
+        ).length * Number(contest.entryFee ?? 0),
+      payment_conversion_rate:
+        registrations.length > 0
+          ? Number(
+              (
+                registrations.filter((item) => item.paymentStatus === 'MARKED_PAID').length /
+                registrations.length
+              ).toFixed(4),
+            )
+          : 0,
     },
     match_counts: {
       total: matches.length,

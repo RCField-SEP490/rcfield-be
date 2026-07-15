@@ -5,6 +5,7 @@ import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
 import { Cafe } from '../models/cafe.entity';
+import { ContestRegistration } from '../models/contest-registration.entity';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
@@ -15,9 +16,11 @@ import {
   PaymentComponentStatus,
   PaymentComponentType,
   PaymentTransactionStatus,
+  PaymentTransactionSubjectType,
   PaymentTransactionType,
   UserRole,
   NotificationType,
+  ContestEntryFeePaymentStatus,
 } from '../types';
 import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
@@ -26,6 +29,7 @@ import { activateCustomerPackage, deductSlots } from './customer-package.service
 import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
+import { writeContestAudit } from './contest.helpers';
 
 async function pushBookingNew(booking: Booking): Promise<void> {
   try {
@@ -267,6 +271,8 @@ export async function createCheckoutUrl(
         txRepo.create({
           bookingId,
           customerPackageId: null,
+          contestRegistrationId: null,
+          subjectType: PaymentTransactionSubjectType.BOOKING,
           type: PaymentTransactionType.PAYMENT,
           gateway: 'DIRECT',
           txnRef,
@@ -353,6 +359,8 @@ export async function createCheckoutUrl(
     const tx = txRepo.create({
       bookingId,
       customerPackageId: null,
+      contestRegistrationId: null,
+      subjectType: PaymentTransactionSubjectType.BOOKING,
       type: PaymentTransactionType.PAYMENT,
       gateway: 'VNPAY',
       txnRef,
@@ -480,6 +488,46 @@ export async function processConfirmation(
     status: PaymentTransactionStatus.SUCCESS,
     rawResponse: vnpParams as object,
   });
+
+  if (tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY) {
+    if (!tx.contestRegistrationId) {
+      logger.error(
+        'PaymentService',
+        `contest entry transaction missing registrationId txnRef=${result.txnRef}`,
+      );
+      return { rspCode: '01', message: 'Contest registration missing' };
+    }
+    const registrationRepo = AppDataSource.getRepository(ContestRegistration);
+    const registration = await registrationRepo.findOne({
+      where: { id: tx.contestRegistrationId },
+    });
+    if (!registration) {
+      return { rspCode: '01', message: 'Contest registration not found' };
+    }
+    registration.paymentStatus = ContestEntryFeePaymentStatus.MARKED_PAID;
+    registration.entryFeeMarkedPaidAt = new Date();
+    registration.entryFeeMarkedPaidBy = null;
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      payment_source: 'VNPAY',
+      payment_txn_ref: result.txnRef,
+    };
+    await registrationRepo.save(registration);
+    await writeContestAudit({
+      contestId: registration.contestId,
+      registrationId: registration.id,
+      actorId: null,
+      actorRole: 'SYSTEM',
+      eventType: 'registration.entry_fee_marked_paid',
+      afterJson: { paymentStatus: registration.paymentStatus, payment_source: 'VNPAY' },
+      reason: 'VNPay confirmation',
+    });
+    logger.info(
+      'PaymentService',
+      `contest entry confirmed registrationId=${registration.id} txnRef=${result.txnRef}`,
+    );
+    return { rspCode: '00', message: 'Confirm Success' };
+  }
 
   // Branch: checkout/counter payment (second VNPAY payment)
   if (result.txnRef.startsWith('ctr_')) {
@@ -630,6 +678,38 @@ export async function processMockConfirmation(
     status: PaymentTransactionStatus.SUCCESS,
     rawResponse: { mock: true, txnRef },
   });
+
+  if (tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY) {
+    if (!tx.contestRegistrationId) {
+      return { rspCode: '01', message: 'Contest registration missing' };
+    }
+    const registrationRepo = AppDataSource.getRepository(ContestRegistration);
+    const registration = await registrationRepo.findOne({
+      where: { id: tx.contestRegistrationId },
+    });
+    if (!registration) {
+      return { rspCode: '01', message: 'Contest registration not found' };
+    }
+    registration.paymentStatus = ContestEntryFeePaymentStatus.MARKED_PAID;
+    registration.entryFeeMarkedPaidAt = new Date();
+    registration.entryFeeMarkedPaidBy = null;
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      payment_source: 'MOCK',
+      payment_txn_ref: txnRef,
+    };
+    await registrationRepo.save(registration);
+    await writeContestAudit({
+      contestId: registration.contestId,
+      registrationId: registration.id,
+      actorId: null,
+      actorRole: 'SYSTEM',
+      eventType: 'registration.entry_fee_marked_paid',
+      afterJson: { paymentStatus: registration.paymentStatus, payment_source: 'MOCK' },
+      reason: 'Mock VNPay confirmation',
+    });
+    return { rspCode: '00', message: 'Mock Confirm Success' };
+  }
 
   // Branch: checkout/counter payment (second VNPAY payment)
   if (txnRef.startsWith('ctr_')) {
@@ -833,6 +913,9 @@ export async function mockConfirmPayment(
   const tx = txRepo.create({
     bookingId,
     type: PaymentTransactionType.PAYMENT,
+    customerPackageId: null,
+    contestRegistrationId: null,
+    subjectType: PaymentTransactionSubjectType.BOOKING,
     gateway: 'MOCK',
     txnRef,
     amount: totalCharged,
@@ -920,6 +1003,9 @@ export async function processRefund(
     await txRepo.save(
       txRepo.create({
         bookingId,
+        customerPackageId: null,
+        contestRegistrationId: null,
+        subjectType: PaymentTransactionSubjectType.BOOKING,
         type: PaymentTransactionType.REFUND,
         gateway: 'DIRECT',
         txnRef,
@@ -1027,6 +1113,8 @@ export async function createCheckoutAdditionalPaymentUrl(
   const tx = txRepo.create({
     bookingId,
     customerPackageId: null,
+    contestRegistrationId: null,
+    subjectType: PaymentTransactionSubjectType.BOOKING,
     type: PaymentTransactionType.PAYMENT,
     gateway: 'VNPAY',
     txnRef,

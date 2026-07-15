@@ -2,8 +2,12 @@ import type { NextFunction, Request, Response } from 'express';
 import { AuthRequest, AppError, ContestStatus, UserRole } from '../types';
 import {
   ContestCatalogTemplateQuerySchema,
+  ContestAssignStaffSchema,
+  ContestBanCreateSchema,
+  ContestBanLiftSchema,
   ContestCorrectResultsSchema,
   ContestCheckInSchema,
+  ContestEntryPaymentCreateSchema,
   ContestGenerateMatchesSchema,
   ContestListQuerySchema,
   ContestMatchesQuerySchema,
@@ -422,6 +426,118 @@ export const contestController = {
     try {
       const viewer = requireViewer(req);
       const data = await racingNetworkService.syncContestRaceRecords(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listStaffAssignments(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.listContestStaffAssignments(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async assignStaff(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestAssignStaffSchema.parse(req.body);
+      const data = await contestService.assignContestStaff(
+        req.params.contestId,
+        body.staff_id,
+        viewer,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async unassignStaff(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.unassignContestStaff(
+        req.params.contestId,
+        req.params.staffId,
+        viewer,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async createEntryFeePayment(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestEntryPaymentCreateSchema.parse(req.body ?? {});
+      const forwardedFor = req.headers['x-forwarded-for'];
+      const ipAddr =
+        typeof forwardedFor === 'string'
+          ? forwardedFor.split(',')[0].trim()
+          : req.ip || req.socket.remoteAddress || '127.0.0.1';
+      const data = await contestService.createContestEntryPaymentUrl(
+        req.params.registrationId,
+        viewer,
+        ipAddr,
+        body.return_url,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listBans(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.listContestBans(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async createBan(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestBanCreateSchema.parse(req.body);
+      const data = await contestService.createContestBan(req.params.contestId, viewer, body);
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async liftBan(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestBanLiftSchema.parse(req.body ?? {});
+      const data = await contestService.liftContestBan(
+        req.params.contestId,
+        req.params.banId,
+        viewer,
+        body.reason,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async disqualifyRegistration(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestRegistrationActionSchema.parse(req.body ?? {});
+      const data = await contestService.disqualifyRegistration(
+        req.params.registrationId,
+        viewer,
+        body.reason,
+      );
       res.json({ success: true, data });
     } catch (error) {
       next(error);

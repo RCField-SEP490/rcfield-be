@@ -37,65 +37,107 @@ contestRouter.post(
 contestRouter.patch(
   '/contests/:contestId',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.updateContest,
 );
 contestRouter.post(
   '/contests/:contestId/open',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.openContest,
 );
 contestRouter.post(
   '/contests/:contestId/close',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.closeContest,
 );
 contestRouter.post(
   '/contests/:contestId/cancel',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.cancelContest,
 );
 contestRouter.post(
   '/contests/:contestId/matches/generate',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.generateMatches,
 );
 contestRouter.post(
   '/contests/:contestId/leaderboard/publish',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.publishLeaderboard,
 );
 contestRouter.post(
   '/contests/:contestId/sync-race-records',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.syncRaceRecords,
 );
 contestRouter.get(
   '/contests/:contestId/audit-logs',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.listAuditLogs,
 );
 contestRouter.get(
   '/contests/:contestId/metrics',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.getMetrics,
+);
+contestRouter.get(
+  '/contests/:contestId/staff-assignments',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.listStaffAssignments,
+);
+contestRouter.post(
+  '/contests/:contestId/staff-assignments',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.assignStaff,
+);
+contestRouter.delete(
+  '/contests/:contestId/staff-assignments/:staffId',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestController.unassignStaff,
+);
+contestRouter.get(
+  '/contests/:contestId/bans',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.listBans,
+);
+contestRouter.post(
+  '/contests/:contestId/bans',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.createBan,
+);
+contestRouter.post(
+  '/contests/:contestId/bans/:banId/lift',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.liftBan,
 );
 
 contestRouter.post(
@@ -113,9 +155,15 @@ contestRouter.get(
 contestRouter.get(
   '/contests/:contestId/registrations',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.listContestRegistrations,
+);
+contestRouter.post(
+  '/contest-registrations/:registrationId/create-entry-fee-payment',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  contestController.createEntryFeePayment,
 );
 contestRouter.get(
   '/contests/:contestId/registrations/lookup',
@@ -126,30 +174,37 @@ contestRouter.get(
 contestRouter.post(
   '/contest-registrations/:registrationId/mark-entry-fee-paid',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.markEntryFeePaid,
 );
 contestRouter.post(
   '/contest-registrations/:registrationId/waive-entry-fee',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.waiveEntryFee,
 );
 contestRouter.post(
   '/contest-registrations/:registrationId/approve',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.approveRegistration,
 );
 contestRouter.post(
   '/contest-registrations/:registrationId/reject',
   authenticate,
-  authorize(UserRole.PROVIDER),
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.rejectRegistration,
+);
+contestRouter.post(
+  '/contest-registrations/:registrationId/disqualify',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.disqualifyRegistration,
 );
 contestRouter.post(
   '/contest-registrations/:registrationId/cancel',

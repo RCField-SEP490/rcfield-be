@@ -634,8 +634,8 @@ async function loadSyncSourceRows(contestId: string) {
       track_config_id: string | null;
       match_id: string;
       vehicle_source: VehicleSource;
-      best_lap_ms: number | null;
-      total_time_ms: number | null;
+      best_lap_seconds: number | null;
+      total_time_seconds: number | null;
       score: string | null;
       finish_position: number | null;
       is_winner: boolean;
@@ -652,8 +652,8 @@ async function loadSyncSourceRows(contestId: string) {
        m.track_config_id,
        m.id AS match_id,
        r.vehicle_source,
-       p.best_lap_ms,
-       p.total_time_ms,
+       p.best_lap_seconds,
+       p.total_time_seconds,
        p.score::text,
        p.finish_position,
        p.is_winner,
@@ -706,8 +706,8 @@ export async function syncContestRaceRecords(contestId: string, viewer: Viewer) 
 
   for (const row of sourceRows) {
     if (
-      row.best_lap_ms === null &&
-      row.total_time_ms === null &&
+      row.best_lap_seconds === null &&
+      row.total_time_seconds === null &&
       row.score === null &&
       row.finish_position === null
     ) {
@@ -726,8 +726,10 @@ export async function syncContestRaceRecords(contestId: string, viewer: Viewer) 
       vehicleSource: row.vehicle_source,
       sourceType: RaceRecordSourceType.CONTEST,
       verificationStatus: RaceRecordVerificationStatus.VERIFIED,
-      bestLapMs: row.best_lap_ms,
-      totalTimeMs: row.total_time_ms,
+      bestLapMs:
+        row.best_lap_seconds === null ? null : Math.round(Number(row.best_lap_seconds) * 1000),
+      totalTimeMs:
+        row.total_time_seconds === null ? null : Math.round(Number(row.total_time_seconds) * 1000),
       score: row.score ? Number(row.score) : null,
       finishPosition: row.finish_position,
       recordedAt: new Date(row.match_ended_at ?? new Date().toISOString()),

@@ -130,6 +130,12 @@ export enum PaymentTransactionType {
   REFUND = 'REFUND',
 }
 
+export enum PaymentTransactionSubjectType {
+  BOOKING = 'BOOKING',
+  CONTEST_ENTRY = 'CONTEST_ENTRY',
+  CUSTOMER_PACKAGE = 'CUSTOMER_PACKAGE',
+}
+
 export enum PaymentTransactionStatus {
   PENDING = 'PENDING',
   SUCCESS = 'SUCCESS',
@@ -197,6 +203,11 @@ export enum ContestStatus {
 export enum ContestResourceScope {
   FULL_BRANCH = 'FULL_BRANCH',
   SELECTED_TRACKS = 'SELECTED_TRACKS',
+}
+
+export enum ContestBanScopeType {
+  CONTEST = 'CONTEST',
+  PROVIDER = 'PROVIDER',
 }
 
 export enum ContestRegistrationStatus {

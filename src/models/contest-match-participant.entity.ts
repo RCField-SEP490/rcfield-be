@@ -43,10 +43,22 @@ export class ContestMatchParticipant {
   finishPosition: number | null;
 
   @Column({ name: 'best_lap_ms', type: 'int', nullable: true })
-  bestLapMs: number | null;
+  bestLapMsLegacy: number | null;
 
   @Column({ name: 'total_time_ms', type: 'int', nullable: true })
-  totalTimeMs: number | null;
+  totalTimeMsLegacy: number | null;
+
+  @Column({ name: 'best_lap_seconds', type: 'numeric', precision: 10, scale: 3, nullable: true })
+  bestLapSeconds: number | null;
+
+  @Column({
+    name: 'total_time_seconds',
+    type: 'numeric',
+    precision: 10,
+    scale: 3,
+    nullable: true,
+  })
+  totalTimeSeconds: number | null;
 
   @Column({ name: 'is_winner', type: 'boolean', default: false })
   isWinner: boolean;

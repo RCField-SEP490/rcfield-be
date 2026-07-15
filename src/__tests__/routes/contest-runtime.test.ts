@@ -2,7 +2,7 @@ import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import { ProviderStatus, SubscriptionStatus, UserRole, VehicleSource } from '../../types';
-import { createTestCafe, createTestUser, generateToken } from '../helpers';
+import { createTestCafe, createTestUser, createTestVehicle, generateToken } from '../helpers';
 
 async function activateProvider(providerId: string): Promise<void> {
   await AppDataSource.query(
@@ -27,6 +27,7 @@ async function createContestFixture(
   providerId: string,
   cafeId: string,
   formatCode: 'TIME_TRIAL' | 'KNOCKOUT',
+  overrides?: Partial<{ entryFee: number; vehiclePolicy: 'RENTAL_ONLY' | 'BYOC_ONLY' | 'MIXED' }>,
 ) {
   const [trackType] = await AppDataSource.query<{ id: string; code: string }[]>(
     `SELECT id, code FROM track_types ORDER BY created_at ASC LIMIT 1`,
@@ -52,7 +53,7 @@ async function createContestFixture(
      VALUES
        ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day',
-        NULL, $10, $11, NOW() + INTERVAL '1 day', NOW() + INTERVAL '2 day', 32, 0, 'OPEN', $2)
+        NULL, $10, $11, NOW() + INTERVAL '1 day', NOW() + INTERVAL '2 day', 32, $12, 'OPEN', $2)
      RETURNING id`,
     [
       cafeId,
@@ -64,8 +65,12 @@ async function createContestFixture(
       contestType.id,
       contestFormat.id,
       contestTemplate.id,
-      JSON.stringify({ vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' }),
+      JSON.stringify({
+        vehicle_policy: overrides?.vehiclePolicy ?? 'RENTAL_ONLY',
+        assignment_policy: 'AT_CHECK_IN',
+      }),
       JSON.stringify(contestTemplate.default_config ?? { format: formatCode }),
+      overrides?.entryFee ?? 0,
     ],
   );
 
@@ -191,8 +196,8 @@ describe('Contest runtime routes', () => {
           {
             registration_id: firstMatch.participants[0].registration_id,
             finish_position: 1,
-            best_lap_ms: 35210,
-            total_time_ms: 35210,
+            best_lap_seconds: 35.21,
+            total_time_seconds: 35.21,
           },
         ],
       })
@@ -207,8 +212,8 @@ describe('Contest runtime routes', () => {
           {
             registration_id: secondMatch.participants[0].registration_id,
             finish_position: 1,
-            best_lap_ms: 33100,
-            total_time_ms: 33100,
+            best_lap_seconds: 33.1,
+            total_time_seconds: 33.1,
           },
         ],
       })
@@ -225,7 +230,7 @@ describe('Contest runtime routes', () => {
     expect(leaderboardRes.body.data.entries[0]).toMatchObject({
       registration_id: registrationB.id,
       rank: 1,
-      best_lap_ms: 33100,
+      best_lap_seconds: 33.1,
     });
 
     const metricsRes = await request(app)
@@ -437,5 +442,181 @@ describe('Contest runtime routes', () => {
 
     expect(res.body.data.available).toBe(false);
     expect(res.body.data.vehicles).toHaveLength(0);
+  });
+
+  it('assigned staff có thể check-in, vận hành runtime và xem metrics của contest được bàn giao', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const providerToken = generateToken(provider);
+    const staffToken = generateToken(staff);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL');
+    const registration = await createRegistrationFixture(contestId, 'CONFIRMED');
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/staff-assignments`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ staff_id: staff.id })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ checked_in_cafe_id: cafe.id })
+      .expect(200);
+
+    const generateRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ cafe_id: cafe.id, registration_ids: [registration.id] })
+      .expect(201);
+
+    const matchId = generateRes.body.data[0].id;
+    await request(app)
+      .post(`/api/v1/contest-matches/${matchId}/results`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({
+        reason: 'Staff run time trial',
+        results: [
+          {
+            registration_id: registration.id,
+            finish_position: 1,
+            best_lap_seconds: 32.45,
+            total_time_seconds: 32.45,
+          },
+        ],
+      })
+      .expect(200);
+
+    const metricsRes = await request(app)
+      .get(`/api/v1/contests/${contestId}/metrics`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(200);
+
+    expect(metricsRes.body.data.match_counts.completed).toBe(1);
+    expect(metricsRes.body.data.registration_counts.checked_in).toBe(1);
+  });
+
+  it('customer có thể đăng ký BYOC contest khi contest cho phép và provider duyệt thủ công', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const providerToken = generateToken(provider);
+    const customerToken = generateToken(customer);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      vehiclePolicy: 'MIXED',
+    });
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'BYOC',
+        byoc_vehicle_name: 'MST RMX 2.5',
+        byoc_vehicle_brand: 'MST',
+        byoc_vehicle_class: 'Drift',
+      })
+      .expect(201);
+
+    expect(registerRes.body.data.vehicle_source).toBe('BYOC');
+    expect(registerRes.body.data.metadata.byoc_declaration.vehicle_name).toBe('MST RMX 2.5');
+
+    const approvedRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ reason: 'BYOC declaration accepted' })
+      .expect(200);
+
+    expect(approvedRes.body.data.status).toBe('CONFIRMED');
+  });
+
+  it('ban contest sẽ chặn customer đăng ký mới', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const providerToken = generateToken(provider);
+    const customerToken = generateToken(customer);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      vehiclePolicy: 'MIXED',
+    });
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/bans`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({
+        user_id: customer.id,
+        scope_type: 'CONTEST',
+        reason: 'Intentional sabotage',
+      })
+      .expect(201);
+
+    const res = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'BYOC',
+        byoc_vehicle_name: 'Yokomo YD-2',
+      })
+      .expect(403);
+
+    expect(res.body.code).toBe('CONTEST_PARTICIPANT_BANNED');
+  });
+
+  it('customer có thể tạo payment URL cho contest entry fee', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const { contestId, trackTypeId } = await createContestFixture(
+      provider.id,
+      cafe.id,
+      'TIME_TRIAL',
+      {
+        entryFee: 150000,
+      },
+    );
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [trackTypeId],
+    });
+
+    const [booking] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES
+         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0)
+       RETURNING id`,
+      [customer.id, cafe.id, trackTypeId],
+    );
+
+    await AppDataSource.query(
+      `INSERT INTO booking_vehicles
+         (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
+       VALUES ($1, $2, 50000, 0, 1.0)`,
+      [booking.id, vehicle.id],
+    );
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        booking_id: booking.id,
+        vehicle_id: vehicle.id,
+        vehicle_source: 'RENTAL',
+      })
+      .expect(201);
+
+    const paymentRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/create-entry-fee-payment`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({})
+      .expect(201);
+
+    expect(paymentRes.body.data.payment_url).toContain('vnp');
+    expect(paymentRes.body.data.txn_ref).toContain('contest_');
   });
 });

@@ -3,26 +3,35 @@ import { AppDataSource } from '../config/database';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { Cafe } from '../models/cafe.entity';
+import { ContestBan } from '../models/contest-ban.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestFormat } from '../models/contest-format.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { ContestStaffAssignment } from '../models/contest-staff-assignment.entity';
 import { ContestTemplate } from '../models/contest-template.entity';
 import { ContestType } from '../models/contest-type.entity';
 import { Contest } from '../models/contest.entity';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
 import { TrackType } from '../models/track-type.entity';
 import { User } from '../models/user.entity';
 import {
   AppError,
   BookingStatus,
+  ContestBanScopeType,
   ContestEntryFeePaymentStatus,
   ContestRegistrationStatus,
   ContestStatus,
+  PaymentTransactionStatus,
+  PaymentTransactionSubjectType,
+  PaymentTransactionType,
   UserRole,
   VehicleSource,
 } from '../types';
 import {
+  assertContestOperator,
   assertContestOwner,
   assertProviderViewer,
+  getActiveContestBan,
   getContestOrThrow,
   isStaffAssignedToContest,
   writeContestAudit,
@@ -33,6 +42,9 @@ import {
   mergeContestConfig,
   resolveContestResourceLocks,
 } from './contest-lock.service';
+import { createPaymentUrl } from './vnpay.service';
+import { env } from '../config/env';
+import { processMockConfirmation } from './payment.service';
 
 type ListContestsOptions = {
   page: number;
@@ -68,9 +80,13 @@ type CreateContestBody = {
 type UpdateContestBody = Partial<CreateContestBody>;
 
 type CreateRegistrationBody = {
-  booking_id: string;
-  vehicle_id: string;
+  booking_id?: string;
+  vehicle_id?: string;
   vehicle_source: VehicleSource;
+  byoc_vehicle_name?: string;
+  byoc_vehicle_brand?: string;
+  byoc_vehicle_class?: string;
+  byoc_vehicle_notes?: string;
 };
 
 type MyContestRegistrationsQuery = {
@@ -93,6 +109,14 @@ type ContestRegistrationsQuery = {
   payment_status?: 'NOT_REQUIRED' | 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'WAIVED' | 'MARKED_PAID';
 };
 
+type ContestBanPayload = {
+  user_id: string;
+  scope_type: ContestBanScopeType;
+  reason: string;
+  evidence?: Record<string, unknown>;
+  expires_at?: Date | null;
+};
+
 async function loadContestCatalogMaps(contests: Contest[]) {
   const trackTypeIds = Array.from(
     new Set(contests.map((item) => item.trackTypeId).filter(Boolean)),
@@ -108,27 +132,37 @@ async function loadContestCatalogMaps(contests: Contest[]) {
   ) as string[];
   const contestIds = contests.map((item) => item.id);
 
-  const [trackTypes, types, formats, templates, contestCafes] = await Promise.all([
-    trackTypeIds.length > 0
-      ? AppDataSource.getRepository(TrackType).findBy({ id: In(trackTypeIds) })
-      : Promise.resolve([]),
-    typeIds.length > 0
-      ? AppDataSource.getRepository(ContestType).findBy({ id: In(typeIds) })
-      : Promise.resolve([]),
-    formatIds.length > 0
-      ? AppDataSource.getRepository(ContestFormat).findBy({ id: In(formatIds) })
-      : Promise.resolve([]),
-    templateIds.length > 0
-      ? AppDataSource.getRepository(ContestTemplate).findBy({ id: In(templateIds) })
-      : Promise.resolve([]),
-    contestIds.length > 0
-      ? AppDataSource.getRepository(ContestCafe).findBy({ contestId: In(contestIds) })
-      : Promise.resolve([]),
-  ]);
+  const [trackTypes, types, formats, templates, contestCafes, registrations, directAssignments] =
+    await Promise.all([
+      trackTypeIds.length > 0
+        ? AppDataSource.getRepository(TrackType).findBy({ id: In(trackTypeIds) })
+        : Promise.resolve([]),
+      typeIds.length > 0
+        ? AppDataSource.getRepository(ContestType).findBy({ id: In(typeIds) })
+        : Promise.resolve([]),
+      formatIds.length > 0
+        ? AppDataSource.getRepository(ContestFormat).findBy({ id: In(formatIds) })
+        : Promise.resolve([]),
+      templateIds.length > 0
+        ? AppDataSource.getRepository(ContestTemplate).findBy({ id: In(templateIds) })
+        : Promise.resolve([]),
+      contestIds.length > 0
+        ? AppDataSource.getRepository(ContestCafe).findBy({ contestId: In(contestIds) })
+        : Promise.resolve([]),
+      contestIds.length > 0
+        ? AppDataSource.getRepository(ContestRegistration).findBy({ contestId: In(contestIds) })
+        : Promise.resolve([]),
+      contestIds.length > 0
+        ? AppDataSource.getRepository(ContestStaffAssignment).findBy({ contestId: In(contestIds) })
+        : Promise.resolve([]),
+    ]);
 
   const cafeIds = Array.from(new Set(contestCafes.map((item) => item.cafeId)));
+  const staffIds = Array.from(new Set(directAssignments.map((item) => item.staffId)));
   const cafes =
     cafeIds.length > 0 ? await AppDataSource.getRepository(Cafe).findBy({ id: In(cafeIds) }) : [];
+  const staffs =
+    staffIds.length > 0 ? await AppDataSource.getRepository(User).findBy({ id: In(staffIds) }) : [];
 
   return {
     trackTypeMap: new Map(trackTypes.map((item) => [item.id, item])),
@@ -142,12 +176,41 @@ async function loadContestCatalogMaps(contests: Contest[]) {
       return map;
     }, new Map()),
     cafeMap: new Map(cafes.map((item) => [item.id, item])),
+    registrationStatsByContest: registrations.reduce<
+      Map<string, { total: number; checkedIn: number; confirmed: number }>
+    >((map, item) => {
+      const current = map.get(item.contestId) ?? { total: 0, checkedIn: 0, confirmed: 0 };
+      if (item.status !== ContestRegistrationStatus.CANCELLED) current.total += 1;
+      if (item.status === ContestRegistrationStatus.CHECKED_IN) current.checkedIn += 1;
+      if (item.status === ContestRegistrationStatus.CONFIRMED) current.confirmed += 1;
+      map.set(item.contestId, current);
+      return map;
+    }, new Map()),
+    staffAssignmentsByContest: directAssignments.reduce<Map<string, ContestStaffAssignment[]>>(
+      (map, item) => {
+        const list = map.get(item.contestId) ?? [];
+        list.push(item);
+        map.set(item.contestId, list);
+        return map;
+      },
+      new Map(),
+    ),
+    staffMap: new Map(staffs.map((item) => [item.id, item])),
   };
 }
 
 async function mapContestPayload(contests: Contest[]) {
-  const { trackTypeMap, typeMap, formatMap, templateMap, cafesByContest, cafeMap } =
-    await loadContestCatalogMaps(contests);
+  const {
+    trackTypeMap,
+    typeMap,
+    formatMap,
+    templateMap,
+    cafesByContest,
+    cafeMap,
+    registrationStatsByContest,
+    staffAssignmentsByContest,
+    staffMap,
+  } = await loadContestCatalogMaps(contests);
 
   return contests.map((contest) => {
     const branches = (cafesByContest.get(contest.id) ?? [])
@@ -182,6 +245,30 @@ async function mapContestPayload(contests: Contest[]) {
     const contestTemplate = contest.contestTemplateId
       ? (templateMap.get(contest.contestTemplateId) ?? null)
       : null;
+    const registrationStats = registrationStatsByContest.get(contest.id) ?? {
+      total: 0,
+      checkedIn: 0,
+      confirmed: 0,
+    };
+    const resourceLocks = Array.isArray(contest.config?.resource_locks)
+      ? (contest.config.resource_locks as unknown[])
+      : [];
+    const staffAssignments = (staffAssignmentsByContest.get(contest.id) ?? []).map((assignment) => {
+      const staff = staffMap.get(assignment.staffId);
+      return {
+        id: assignment.id,
+        staff_id: assignment.staffId,
+        assigned_by: assignment.assignedBy,
+        assigned_at: assignment.assignedAt,
+        staff: staff
+          ? {
+              id: staff.id,
+              full_name: staff.full_name,
+              email: staff.email,
+            }
+          : null,
+      };
+    });
 
     return {
       id: contest.id,
@@ -198,6 +285,11 @@ async function mapContestPayload(contests: Contest[]) {
       banner_image_url: contest.bannerImageUrl,
       vehicle_rule: contest.vehicleRule,
       config: contest.config ?? {},
+      resource_locks: resourceLocks,
+      prize_structure:
+        (contest.config?.prize_structure as Record<string, unknown> | undefined) ??
+        (contest.config?.prizes as unknown[] | undefined) ??
+        null,
       created_by: contest.createdBy,
       created_at: contest.createdAt,
       updated_at: contest.updatedAt,
@@ -241,6 +333,16 @@ async function mapContestPayload(contests: Contest[]) {
             feature_flags: contestTemplate.featureFlags,
           }
         : null,
+      public_stats: {
+        registration_count: registrationStats.total,
+        confirmed_count: registrationStats.confirmed,
+        checked_in_count: registrationStats.checkedIn,
+        capacity_remaining:
+          contest.capacity && contest.capacity > 0
+            ? Math.max(0, contest.capacity - registrationStats.total)
+            : null,
+      },
+      staff_assignments: staffAssignments,
     };
   });
 }
@@ -492,6 +594,28 @@ function stripRuntimeManagedConfig(config: Record<string, unknown> | null | unde
   return nextConfig;
 }
 
+async function assertContestProviderOrAssignedStaff(contestId: string, viewer: Viewer) {
+  return assertContestOperator(contestId, viewer);
+}
+
+async function resolveContestProviderIdForViewer(
+  viewer: Viewer,
+  contest?: Contest,
+): Promise<string> {
+  if (viewer.role === UserRole.PROVIDER) return viewer.userId;
+  if (contest?.providerId) return contest.providerId;
+  throw new AppError('Không xác định được provider của contest', 400, 'PROVIDER_NOT_RESOLVED');
+}
+
+function buildByocMetadata(body: CreateRegistrationBody) {
+  return {
+    vehicle_name: body.byoc_vehicle_name ?? null,
+    vehicle_brand: body.byoc_vehicle_brand ?? null,
+    vehicle_class: body.byoc_vehicle_class ?? null,
+    notes: body.byoc_vehicle_notes ?? null,
+  };
+}
+
 export async function listContestTypes() {
   return AppDataSource.getRepository(ContestType).find({
     where: { isActive: true },
@@ -529,11 +653,29 @@ export async function listContests(options: ListContestsOptions) {
   const qb = repo.createQueryBuilder('contest');
 
   if (options.scope === 'managed') {
-    assertProviderViewer(options.viewer);
-    qb.andWhere('contest.provider_id = :providerId', { providerId: options.viewer.userId });
+    if (options.viewer?.role === UserRole.PROVIDER) {
+      qb.andWhere('contest.provider_id = :providerId', { providerId: options.viewer.userId });
+    } else if (options.viewer?.role === UserRole.STAFF) {
+      qb.innerJoin(
+        ContestStaffAssignment,
+        'contest_staff_assignment',
+        'contest_staff_assignment.contest_id = contest.id AND contest_staff_assignment.staff_id = :staffId',
+        { staffId: options.viewer.userId },
+      );
+    } else {
+      throw new AppError('Bạn không có quyền xem danh sách contest quản lý', 403, 'FORBIDDEN');
+    }
   } else {
     qb.andWhere('contest.status != :draft', { draft: ContestStatus.DRAFT });
     qb.andWhere('contest.status != :cancelled', { cancelled: ContestStatus.CANCELLED });
+    if (options.viewer?.role === UserRole.STAFF) {
+      qb.innerJoin(
+        ContestStaffAssignment,
+        'contest_staff_assignment',
+        'contest_staff_assignment.contest_id = contest.id AND contest_staff_assignment.staff_id = :staffId',
+        { staffId: options.viewer.userId },
+      );
+    }
   }
 
   if (options.status) qb.andWhere('contest.status = :status', { status: options.status });
@@ -609,7 +751,10 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
     }
   }
 
-  return payload;
+  return {
+    ...payload,
+    operator_access: isOwner || isAssignedStaff,
+  };
 }
 
 export async function createContest(viewer: Viewer, body: CreateContestBody) {
@@ -688,8 +833,7 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
 }
 
 export async function updateContest(contestId: string, viewer: Viewer, body: UpdateContestBody) {
-  assertProviderViewer(viewer);
-  const contest = await assertContestOwner(contestId, viewer);
+  const contest = await assertContestProviderOrAssignedStaff(contestId, viewer);
   if (![ContestStatus.DRAFT, ContestStatus.OPEN].includes(contest.status)) {
     throw new AppError(
       'Chỉ được sửa contest ở trạng thái DRAFT hoặc OPEN',
@@ -724,10 +868,8 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
     ).map((item) => item.cafeId);
 
   if (body.participating_cafe_ids) {
-    const branches = await resolveProviderBranchesOrThrow(
-      viewer.userId,
-      body.participating_cafe_ids,
-    );
+    const providerId = await resolveContestProviderIdForViewer(viewer, contest);
+    const branches = await resolveProviderBranchesOrThrow(providerId, body.participating_cafe_ids);
     await AppDataSource.getRepository(ContestCafe).delete({ contestId: contest.id });
     await AppDataSource.getRepository(ContestCafe).save(
       branches.map((branch, index) => ({
@@ -829,8 +971,7 @@ export async function changeContestStatus(
   viewer: Viewer,
   nextStatus: ContestStatus.OPEN | ContestStatus.CLOSED | ContestStatus.CANCELLED,
 ) {
-  assertProviderViewer(viewer);
-  const contest = await assertContestOwner(contestId, viewer);
+  const contest = await assertContestProviderOrAssignedStaff(contestId, viewer);
   const allowedTransitions: Record<string, ContestStatus[]> = {
     [ContestStatus.DRAFT]: [ContestStatus.OPEN, ContestStatus.CANCELLED],
     [ContestStatus.OPEN]: [ContestStatus.CLOSED, ContestStatus.CANCELLED],
@@ -883,8 +1024,15 @@ export async function createContestRegistration(
   if (contest.registrationClosesAt && now > contest.registrationClosesAt) {
     throw new AppError('Contest đã đóng đăng ký', 400, 'CONTEST_REGISTRATION_CLOSED');
   }
-  if (body.vehicle_source !== VehicleSource.RENTAL) {
-    throw new AppError('Phase đầu chỉ hỗ trợ đăng ký RENTAL contest', 400, 'CONTEST_RENTAL_ONLY');
+  if (contest.providerId) {
+    const activeBan = await getActiveContestBan(viewer.userId, contest.providerId, contest.id);
+    if (activeBan) {
+      throw new AppError(
+        'Bạn đang bị chặn tham gia contest này',
+        403,
+        'CONTEST_PARTICIPANT_BANNED',
+      );
+    }
   }
 
   if (contest.capacity && contest.capacity > 0) {
@@ -906,41 +1054,66 @@ export async function createContestRegistration(
     throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
   }
 
-  const booking = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: body.booking_id, customerId: viewer.userId },
-  });
-  if (!booking) throw new AppError('Booking không tồn tại', 404, 'BOOKING_NOT_FOUND');
-  if (booking.status !== BookingStatus.CONFIRMED) {
-    throw new AppError('Booking phải ở trạng thái CONFIRMED', 400, 'BOOKING_NOT_CONFIRMED');
-  }
-  if (contest.trackTypeId && booking.trackTypeId !== contest.trackTypeId) {
-    throw new AppError(
-      'Booking không khớp loại track của contest',
-      400,
-      'BOOKING_TRACK_TYPE_MISMATCH',
-    );
-  }
+  if (body.vehicle_source === VehicleSource.RENTAL) {
+    if (!body.booking_id || !body.vehicle_id) {
+      throw new AppError(
+        'Đăng ký RENTAL yêu cầu booking_id và vehicle_id',
+        400,
+        'CONTEST_RENTAL_BOOKING_REQUIRED',
+      );
+    }
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: body.booking_id, customerId: viewer.userId },
+    });
+    if (!booking) throw new AppError('Booking không tồn tại', 404, 'BOOKING_NOT_FOUND');
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new AppError('Booking phải ở trạng thái CONFIRMED', 400, 'BOOKING_NOT_CONFIRMED');
+    }
+    if (contest.trackTypeId && booking.trackTypeId !== contest.trackTypeId) {
+      throw new AppError(
+        'Booking không khớp loại track của contest',
+        400,
+        'BOOKING_TRACK_TYPE_MISMATCH',
+      );
+    }
 
-  const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
-    where: { contestId, cafeId: booking.cafeId },
-  });
-  if (!contestCafe) {
-    throw new AppError(
-      'Booking không thuộc chi nhánh tham gia contest',
-      400,
-      'BOOKING_CAFE_MISMATCH',
-    );
-  }
+    const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
+      where: { contestId, cafeId: booking.cafeId },
+    });
+    if (!contestCafe) {
+      throw new AppError(
+        'Booking không thuộc chi nhánh tham gia contest',
+        400,
+        'BOOKING_CAFE_MISMATCH',
+      );
+    }
 
-  if (booking.slotStart > contest.endsAt || booking.slotEnd < contest.startsAt) {
-    throw new AppError('Khung giờ booking không giao với contest', 400, 'BOOKING_TIME_MISMATCH');
-  }
+    if (booking.slotStart > contest.endsAt || booking.slotEnd < contest.startsAt) {
+      throw new AppError('Khung giờ booking không giao với contest', 400, 'BOOKING_TIME_MISMATCH');
+    }
 
-  const bookingVehicle = await AppDataSource.getRepository(BookingVehicle).findOne({
-    where: { bookingId: booking.id, vehicleId: body.vehicle_id },
-  });
-  if (!bookingVehicle) {
-    throw new AppError('Vehicle không thuộc booking này', 400, 'BOOKING_VEHICLE_MISMATCH');
+    const bookingVehicle = await AppDataSource.getRepository(BookingVehicle).findOne({
+      where: { bookingId: booking.id, vehicleId: body.vehicle_id },
+    });
+    if (!bookingVehicle) {
+      throw new AppError('Vehicle không thuộc booking này', 400, 'BOOKING_VEHICLE_MISMATCH');
+    }
+  } else {
+    const vehiclePolicy = String(contest.vehicleRule?.vehicle_policy ?? 'RENTAL_ONLY');
+    if (vehiclePolicy === 'RENTAL_ONLY') {
+      throw new AppError(
+        'Contest này không cho đăng ký xe cá nhân',
+        400,
+        'CONTEST_BYOC_NOT_ALLOWED',
+      );
+    }
+    if (!body.byoc_vehicle_name?.trim()) {
+      throw new AppError(
+        'Đăng ký BYOC yêu cầu khai báo tên xe',
+        400,
+        'CONTEST_BYOC_DECLARATION_REQUIRED',
+      );
+    }
   }
 
   const registrationRepo = AppDataSource.getRepository(ContestRegistration);
@@ -949,8 +1122,10 @@ export async function createContestRegistration(
   registration.userId = viewer.userId;
   registration.participantRoleSnapshot = UserRole.CUSTOMER;
   registration.vehicleSource = body.vehicle_source;
-  registration.vehicleId = body.vehicle_id;
-  registration.bookingId = body.booking_id;
+  registration.vehicleId =
+    body.vehicle_source === VehicleSource.RENTAL ? (body.vehicle_id ?? null) : null;
+  registration.bookingId =
+    body.vehicle_source === VehicleSource.RENTAL ? (body.booking_id ?? null) : null;
   registration.customerVehicleId = null;
   registration.status = ContestRegistrationStatus.PENDING;
   registration.checkInCode =
@@ -963,7 +1138,9 @@ export async function createContestRegistration(
       : ContestEntryFeePaymentStatus.PENDING_REVIEW;
   registration.metadata = {
     ...(registration.metadata ?? {}),
-    booking_id: body.booking_id,
+    booking_id: body.booking_id ?? null,
+    byoc_declaration:
+      body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
   };
 
   const saved = await registrationRepo.save(registration);
@@ -1010,7 +1187,7 @@ export async function listContestRegistrations(
   viewer: Viewer,
   query?: ContestRegistrationsQuery,
 ) {
-  await assertContestOwner(contestId, viewer);
+  await assertContestProviderOrAssignedStaff(contestId, viewer);
   const rows = await AppDataSource.getRepository(ContestRegistration).find({
     where: { contestId },
     order: { createdAt: 'DESC' },
@@ -1036,7 +1213,7 @@ async function getContestRegistrationForOwner(registrationId: string, viewer: Vi
   });
   if (!registration)
     throw new AppError('Registration không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
-  await assertContestOwner(registration.contestId, viewer);
+  await assertContestProviderOrAssignedStaff(registration.contestId, viewer);
   return registration;
 }
 
@@ -1096,6 +1273,21 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
       'ENTRY_FEE_PENDING',
     );
   }
+  const contest = await getContestOrThrow(registration.contestId);
+  if (contest.providerId) {
+    const activeBan = await getActiveContestBan(
+      registration.userId,
+      contest.providerId,
+      contest.id,
+    );
+    if (activeBan) {
+      throw new AppError(
+        'Người tham gia đang bị ban khỏi contest này',
+        409,
+        'CONTEST_PARTICIPANT_BANNED',
+      );
+    }
+  }
   registration.status = ContestRegistrationStatus.CONFIRMED;
   await AppDataSource.getRepository(ContestRegistration).save(registration);
   await writeContestAudit({
@@ -1140,7 +1332,7 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
   if (viewer.role === UserRole.CUSTOMER) {
     if (registration.userId !== viewer.userId) throw new AppError('Forbidden', 403, 'FORBIDDEN');
   } else {
-    await assertContestOwner(registration.contestId, viewer);
+    await assertContestProviderOrAssignedStaff(registration.contestId, viewer);
   }
 
   registration.status = ContestRegistrationStatus.CANCELLED;
@@ -1168,17 +1360,10 @@ export async function lookupRegistrationByCode(
 ) {
   const contest = await getContestOrThrow(contestId);
   if (viewer.role === UserRole.PROVIDER) {
-    await assertContestOwner(contestId, viewer);
+    await assertContestProviderOrAssignedStaff(contestId, viewer);
   } else if (viewer.role === UserRole.STAFF) {
-    const assigned = await AppDataSource.query(
-      `SELECT 1
-       FROM staff_cafe_assignments a
-       JOIN contest_cafes cc ON cc.cafe_id = a.cafe_id
-       WHERE a.staff_id = $1 AND cc.contest_id = $2
-       LIMIT 1`,
-      [viewer.userId, contestId],
-    );
-    if (assigned.length === 0) {
+    const assigned = await isStaffAssignedToContest(contestId, viewer.userId);
+    if (!assigned) {
       throw new AppError('Staff không thuộc chi nhánh tham gia contest', 403, 'FORBIDDEN');
     }
   } else {
@@ -1231,17 +1416,29 @@ export async function checkInRegistration(
   }
 
   if (viewer.role === UserRole.PROVIDER) {
-    await assertContestOwner(contest.id, viewer);
+    await assertContestProviderOrAssignedStaff(contest.id, viewer);
   } else if (viewer.role === UserRole.STAFF) {
-    const assigned = await AppDataSource.query(
-      `SELECT 1 FROM staff_cafe_assignments WHERE staff_id = $1 AND cafe_id = $2`,
-      [viewer.userId, checkedInCafeId],
-    );
-    if (assigned.length === 0) {
+    const assigned = await isStaffAssignedToContest(contest.id, viewer.userId);
+    if (!assigned) {
       throw new AppError('Staff không được check-in ở chi nhánh này', 403, 'FORBIDDEN');
     }
   } else {
     throw new AppError('Forbidden', 403, 'FORBIDDEN');
+  }
+
+  if (contest.providerId) {
+    const activeBan = await getActiveContestBan(
+      registration.userId,
+      contest.providerId,
+      contest.id,
+    );
+    if (activeBan) {
+      throw new AppError(
+        'Người tham gia đang bị chặn thi đấu ở contest này',
+        403,
+        'CONTEST_PARTICIPANT_BANNED',
+      );
+    }
   }
 
   registration.status = ContestRegistrationStatus.CHECKED_IN;
@@ -1258,5 +1455,225 @@ export async function checkInRegistration(
     afterJson: { status: registration.status, checkedInCafeId },
   });
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: true });
+  return mapped;
+}
+
+export async function listContestStaffAssignments(contestId: string, viewer: Viewer) {
+  await assertContestProviderOrAssignedStaff(contestId, viewer);
+  const contest = await getContestOrThrow(contestId);
+  const [payload] = await mapContestPayload([contest]);
+  return payload.staff_assignments ?? [];
+}
+
+export async function assignContestStaff(contestId: string, staffId: string, viewer: Viewer) {
+  assertProviderViewer(viewer);
+  await assertContestOwner(contestId, viewer);
+  const staff = await AppDataSource.getRepository(User).findOne({
+    where: { id: staffId, role: UserRole.STAFF, is_active: true },
+  });
+  if (!staff) throw new AppError('Staff không tồn tại', 404, 'STAFF_NOT_FOUND');
+  const assignmentRepo = AppDataSource.getRepository(ContestStaffAssignment);
+  const existing = await assignmentRepo.findOne({ where: { contestId, staffId } });
+  if (!existing) {
+    await assignmentRepo.save(
+      assignmentRepo.create({
+        contestId,
+        staffId,
+        assignedBy: viewer.userId,
+      }),
+    );
+  }
+  await writeContestAudit({
+    contestId,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.staff_assigned',
+    afterJson: { staff_id: staffId },
+  });
+  return listContestStaffAssignments(contestId, viewer);
+}
+
+export async function unassignContestStaff(contestId: string, staffId: string, viewer: Viewer) {
+  assertProviderViewer(viewer);
+  await assertContestOwner(contestId, viewer);
+  await AppDataSource.getRepository(ContestStaffAssignment).delete({ contestId, staffId });
+  await writeContestAudit({
+    contestId,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.staff_unassigned',
+    afterJson: { staff_id: staffId },
+  });
+  return listContestStaffAssignments(contestId, viewer);
+}
+
+export async function createContestEntryPaymentUrl(
+  registrationId: string,
+  viewer: Viewer,
+  ipAddr: string,
+  returnUrl?: string,
+) {
+  if (viewer.role !== UserRole.CUSTOMER) {
+    throw new AppError('Chỉ customer mới được tạo thanh toán entry fee', 403, 'FORBIDDEN');
+  }
+  const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+    where: { id: registrationId, userId: viewer.userId },
+  });
+  if (!registration) {
+    throw new AppError('Registration không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
+  }
+  const contest = await getContestOrThrow(registration.contestId);
+  if (Number(registration.entryFeeAmount ?? 0) <= 0) {
+    throw new AppError('Contest này không yêu cầu entry fee', 400, 'ENTRY_FEE_NOT_REQUIRED');
+  }
+  if (
+    [ContestEntryFeePaymentStatus.MARKED_PAID, ContestEntryFeePaymentStatus.WAIVED].includes(
+      registration.paymentStatus,
+    )
+  ) {
+    throw new AppError('Entry fee đã được xử lý', 409, 'ENTRY_FEE_ALREADY_SETTLED');
+  }
+
+  const txnRef = `contest_${registration.id.replace(/-/g, '').slice(0, 18)}_${Date.now().toString().slice(-4)}`;
+  const paymentUrl = createPaymentUrl({
+    amount: Number(registration.entryFeeAmount),
+    txnRef,
+    orderInfo: `Contest entry ${contest.name.slice(0, 40)}`,
+    ipAddr,
+    returnUrl,
+    bankCode: 'VNBANK',
+  });
+
+  await AppDataSource.getRepository(PaymentTransaction).save(
+    AppDataSource.getRepository(PaymentTransaction).create({
+      bookingId: null,
+      customerPackageId: null,
+      contestRegistrationId: registration.id,
+      subjectType: PaymentTransactionSubjectType.CONTEST_ENTRY,
+      type: PaymentTransactionType.PAYMENT,
+      gateway: env.vnpay.mockEnabled ? 'MOCK' : 'VNPAY',
+      txnRef,
+      amount: Number(registration.entryFeeAmount),
+      status: PaymentTransactionStatus.PENDING,
+      rawRequest: {
+        registrationId: registration.id,
+        contestId: contest.id,
+        returnUrl: returnUrl ?? null,
+      },
+    }),
+  );
+
+  if (env.vnpay.mockEnabled) {
+    await processMockConfirmation(txnRef);
+    const target = new URL('/payment/result', env.frontendUrl);
+    target.searchParams.set('status', 'success');
+    target.searchParams.set('txn_ref', txnRef);
+    target.searchParams.set('mock', '1');
+    return {
+      payment_url: target.toString(),
+      txn_ref: txnRef,
+      amount: Number(registration.entryFeeAmount),
+    };
+  }
+
+  return {
+    payment_url: paymentUrl,
+    txn_ref: txnRef,
+    amount: Number(registration.entryFeeAmount),
+  };
+}
+
+export async function listContestBans(contestId: string, viewer: Viewer) {
+  const contest = await assertContestProviderOrAssignedStaff(contestId, viewer);
+  const rows = await AppDataSource.getRepository(ContestBan).find({
+    where: { providerId: contest.providerId ?? undefined },
+    order: { createdAt: 'DESC' },
+  });
+  return rows.filter((item) => item.contestId === contestId || item.contestId === null);
+}
+
+export async function createContestBan(contestId: string, viewer: Viewer, body: ContestBanPayload) {
+  const contest = await assertContestProviderOrAssignedStaff(contestId, viewer);
+  const providerId = await resolveContestProviderIdForViewer(viewer, contest);
+  const repo = AppDataSource.getRepository(ContestBan);
+  const ban = await repo.save(
+    repo.create({
+      providerId,
+      contestId: body.scope_type === ContestBanScopeType.CONTEST ? contestId : null,
+      userId: body.user_id,
+      scopeType: body.scope_type,
+      reason: body.reason,
+      evidence: body.evidence ?? {},
+      createdBy: viewer.userId,
+      expiresAt: body.expires_at ?? null,
+    }),
+  );
+  await writeContestAudit({
+    contestId,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.participant_banned',
+    afterJson: { ban_id: ban.id, user_id: body.user_id, scope_type: body.scope_type },
+    reason: body.reason,
+  });
+  return ban;
+}
+
+export async function liftContestBan(
+  contestId: string,
+  banId: string,
+  viewer: Viewer,
+  reason?: string,
+) {
+  const contest = await assertContestProviderOrAssignedStaff(contestId, viewer);
+  const repo = AppDataSource.getRepository(ContestBan);
+  const ban = await repo.findOne({
+    where: {
+      id: banId,
+      providerId: contest.providerId ?? undefined,
+    },
+  });
+  if (!ban) throw new AppError('Ban không tồn tại', 404, 'CONTEST_BAN_NOT_FOUND');
+  ban.liftedAt = new Date();
+  ban.liftedBy = viewer.userId;
+  ban.liftReason = reason ?? null;
+  await repo.save(ban);
+  await writeContestAudit({
+    contestId: contest.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.participant_unbanned',
+    afterJson: { ban_id: ban.id, user_id: ban.userId },
+    reason: reason ?? null,
+  });
+  return ban;
+}
+
+export async function disqualifyRegistration(
+  registrationId: string,
+  viewer: Viewer,
+  reason?: string,
+) {
+  const registration = await getContestRegistrationForOwner(registrationId, viewer);
+  registration.status = ContestRegistrationStatus.CANCELLED;
+  registration.cancelledBy = viewer.userId;
+  registration.cancelledAt = new Date();
+  registration.cancellationReason = reason ?? 'Disqualified';
+  registration.metadata = {
+    ...(registration.metadata ?? {}),
+    disqualified: true,
+    disqualified_at: new Date().toISOString(),
+  };
+  await AppDataSource.getRepository(ContestRegistration).save(registration);
+  await writeContestAudit({
+    contestId: registration.contestId,
+    registrationId: registration.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'registration.disqualified',
+    afterJson: { status: registration.status },
+    reason: registration.cancellationReason,
+  });
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
