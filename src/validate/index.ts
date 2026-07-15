@@ -268,14 +268,16 @@ const CafeUpsertBaseSchema = z.object({
   city: z.string().min(1).max(100).openapi({ example: 'TP. Ho Chi Minh' }),
   latitude: z.number().min(-90).max(90).nullable().optional().openapi({ example: 10.7403 }),
   longitude: z.number().min(-180).max(180).nullable().optional().openapi({ example: 106.712 }),
-  operating_hours: z.record(OperatingHourSchema).optional().default({}),
+  operating_hours: z
+    .record(OperatingHourSchema)
+    .refine((hours) => Object.keys(hours).length > 0, 'Cần cấu hình giờ hoạt động'),
   track_types: z
     .array(TrackTypeSchema)
     .min(1)
     .openapi({
       example: ['550e8400-e29b-41d4-a716-446655440000', '550e8400-e29b-41d4-a716-446655440001'],
     }),
-  slot_duration_minutes: z.number().int().positive().max(1440).optional().default(60).openapi({
+  slot_duration_minutes: z.number().int().positive().max(1440).openapi({
     example: 60,
   }),
   slot_fee_rate: z.number().positive().openapi({ example: 50000 }),

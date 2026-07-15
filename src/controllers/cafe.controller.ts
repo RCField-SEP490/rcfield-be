@@ -22,6 +22,7 @@ import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { Cafe } from '../models/cafe.entity';
 import { Booking } from '../models/booking.entity';
+import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { findContestLockConflictForBooking } from '../services/contest-lock.service';
 import { Vehicle } from '../models/vehicle.entity';
@@ -266,14 +267,22 @@ export const cafeController = {
           qb.andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id });
         }
 
-        const dbCount = await qb.getCount();
+        // BYOC capacity is counted per participant. Legacy bookings without a
+        // participant row still consume one position instead of becoming free.
+        const dbOccupiedRow = await qb
+          .leftJoin(BookingParticipant, 'bp', 'bp.booking_id = b.id')
+          .select('COUNT(bp.id) + COUNT(DISTINCT b.id) FILTER (WHERE bp.id IS NULL)', 'count')
+          .getRawOne<{ count: string }>();
+        const dbOccupied = Number(dbOccupiedRow?.count ?? 0);
 
         // Redis counter covers in-flight checkouts not yet confirmed
         const counterKey = trackConfig
           ? `slot:byoc:${cafeId}:${trackConfig.id}:${slotStart.getTime()}`
           : `slot:byoc:${cafeId}:${slotStart.getTime()}`;
         const redisCount = Number((await redis.get(counterKey)) ?? 0);
-        const occupied = Math.max(dbCount, redisCount);
+        // Redis only represents a checkout that has not committed its booking yet;
+        // committed PENDING/CONFIRMED bookings are counted from the database.
+        const occupied = dbOccupied + redisCount;
         const remaining = Math.max(0, capacity - occupied);
         res.json({
           success: true,
@@ -371,7 +380,7 @@ export const cafeController = {
           .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
           .getCount();
 
-        const maxConcurrent = trackConfig.maxConcurrent ?? 10;
+        const maxConcurrent = trackConfig.maxConcurrent;
         const remainingSlots = Math.max(0, maxConcurrent - currentRentalCount);
         filteredVehicles = filteredVehicles.slice(0, remainingSlots);
       }

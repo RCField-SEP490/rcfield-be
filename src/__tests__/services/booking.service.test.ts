@@ -1,5 +1,5 @@
 import { BookingStatus } from '../../types';
-import { canTransition } from '../../services/booking.service';
+import { canTransition, meetsMinimumBookingNotice } from '../../services/booking.service';
 
 describe('BookingService.canTransition', () => {
   it('PENDING → CONFIRMED via PAYMENT_CONFIRMED is valid', () => {
@@ -32,5 +32,17 @@ describe('BookingService.canTransition', () => {
 
   it('COMPLETED → CANCELLED is invalid', () => {
     expect(canTransition(BookingStatus.COMPLETED, 'CUSTOMER_CANCEL')).toBe(false);
+  });
+});
+
+describe('BookingService.meetsMinimumBookingNotice', () => {
+  const now = new Date('2026-07-15T12:00:00.000Z');
+
+  it('accepts a slot exactly at the configured lead time', () => {
+    expect(meetsMinimumBookingNotice(new Date('2026-07-15T12:30:00.000Z'), 30, now)).toBe(true);
+  });
+
+  it('rejects a slot that is too close to its start time', () => {
+    expect(meetsMinimumBookingNotice(new Date('2026-07-15T12:29:59.000Z'), 30, now)).toBe(false);
   });
 });
