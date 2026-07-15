@@ -111,7 +111,15 @@ export async function createTestCafe(options: CreateCafeOptions = {}) {
       status,
       mappedTrackIds,
       byoc_capacity,
-      JSON.stringify({ mon: { open: '09:00', close: '22:00', is_closed: false } }),
+      JSON.stringify(
+        ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].reduce<Record<string, unknown>>(
+          (hours, day) => {
+            hours[day] = { open: '00:00', close: '24:00', is_closed: false };
+            return hours;
+          },
+          {},
+        ),
+      ),
       latitude,
       longitude,
       amenity_ids,

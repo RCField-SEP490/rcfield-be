@@ -39,6 +39,7 @@ import { getEffectiveMultiplier } from './pricing.service';
 import { validatePromoCode } from './promotion.service';
 import { assertBookingNotBlockedByContest } from './contest-lock.service';
 import type { Promotion } from '../models/promotion.entity';
+import type { CafeOperatingHours } from '../types';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
@@ -51,9 +52,118 @@ const VALID_TRANSITIONS: Record<BookingStatus, string[]> = {
   [BookingStatus.COMPLETED]: [],
 };
 
+const MAX_CONSECUTIVE_SLOTS = 8;
+const VN_TZ_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function getVietnamLocalMidnightUtcMs(value: Date): number {
+  const local = new Date(value.getTime() + VN_TZ_OFFSET_MS);
+  return (
+    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - VN_TZ_OFFSET_MS
+  );
+}
+
+function getOperatingDayKey(localMidnightUtcMs: number): string {
+  const local = new Date(localMidnightUtcMs + VN_TZ_OFFSET_MS);
+  return DAY_KEYS[local.getUTCDay()]!;
+}
+
+function parseOperatingTimeToMinutes(value?: string): number | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours === 24 && minutes === 0) return 24 * 60;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function buildOperatingWindow(
+  operatingHours: CafeOperatingHours | null | undefined,
+  localMidnightUtcMs: number,
+): { openAt: Date; closeAt: Date } | null {
+  const schedule = operatingHours?.[getOperatingDayKey(localMidnightUtcMs)];
+  if (!schedule || schedule.is_closed) return null;
+
+  const openMinutes = parseOperatingTimeToMinutes(schedule.open);
+  const closeMinutes = parseOperatingTimeToMinutes(schedule.close);
+  if (openMinutes === null || closeMinutes === null) return null;
+
+  const closeOffsetMinutes = closeMinutes <= openMinutes ? closeMinutes + 24 * 60 : closeMinutes;
+  return {
+    openAt: new Date(localMidnightUtcMs + openMinutes * 60 * 1000),
+    closeAt: new Date(localMidnightUtcMs + closeOffsetMinutes * 60 * 1000),
+  };
+}
+
+function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slotEnd: Date): void {
+  if (!Number.isInteger(cafe.slotDurationMinutes) || cafe.slotDurationMinutes <= 0) {
+    throw new AppError(
+      'Cafe slot duration is not configured correctly',
+      400,
+      'INVALID_CAFE_SCHEDULE',
+    );
+  }
+
+  const localStart = getVietnamLocalMidnightUtcMs(slotStart);
+  const candidates = [localStart, localStart - 24 * 60 * 60 * 1000];
+  const windows = candidates
+    .map((candidate) => buildOperatingWindow(cafe.operatingHours, candidate))
+    .filter((window): window is { openAt: Date; closeAt: Date } => window !== null);
+
+  if (
+    windows.some(
+      (window) =>
+        slotStart.getTime() >= window.openAt.getTime() &&
+        slotEnd.getTime() <= window.closeAt.getTime(),
+    )
+  ) {
+    return;
+  }
+
+  const hasConfiguredDay = candidates.some(
+    (candidate) => cafe.operatingHours?.[getOperatingDayKey(candidate)] !== undefined,
+  );
+  if (!hasConfiguredDay || windows.length === 0) {
+    throw new AppError(
+      'Cafe operating hours are not configured correctly',
+      400,
+      'INVALID_CAFE_SCHEDULE',
+    );
+  }
+
+  throw new AppError(
+    'Selected slot is outside cafe operating hours',
+    400,
+    'OUTSIDE_OPERATING_HOURS',
+  );
+}
+
 /** Pure function — exported for unit tests (Constitution Principle V) */
 export function canTransition(current: BookingStatus, event: string): boolean {
   return VALID_TRANSITIONS[current]?.includes(event) ?? false;
+}
+
+/** Pure function — shared booking lead-time rule for customer self-service bookings. */
+export function meetsMinimumBookingNotice(
+  slotStart: Date,
+  minBookingNoticeMinutes: number,
+  now: Date = new Date(),
+): boolean {
+  const noticeMinutes = Math.max(0, minBookingNoticeMinutes);
+  return slotStart.getTime() >= now.getTime() + noticeMinutes * 60 * 1000;
+}
+
+function assertMinimumBookingNotice(slotStart: Date, minBookingNoticeMinutes: number): void {
+  if (meetsMinimumBookingNotice(slotStart, minBookingNoticeMinutes)) return;
+
+  throw new AppError(
+    `Bookings must be made at least ${minBookingNoticeMinutes} minutes in advance`,
+    400,
+    'MIN_BOOKING_NOTICE_NOT_MET',
+  );
 }
 
 function eventToStatus(event: string): BookingStatus {
@@ -86,6 +196,36 @@ function byocCounterKey(cafeId: string, slotStart: Date, trackConfigId?: string 
     : `slot:byoc:${cafeId}:${slotStart.getTime()}`;
 }
 
+async function countOccupiedByocParticipants(
+  cafeId: string,
+  slotStart: Date,
+  slotEnd: Date,
+  trackConfigId?: string | null,
+): Promise<number> {
+  const query = AppDataSource.getRepository(Booking)
+    .createQueryBuilder('booking')
+    .leftJoin(BookingParticipant, 'participant', 'participant.booking_id = booking.id')
+    .where('booking.cafe_id = :cafeId', { cafeId })
+    .andWhere('booking.play_mode = :playMode', { playMode: BookingMode.BYOC })
+    .andWhere('booking.slot_start < :slotEnd', { slotEnd })
+    .andWhere('booking.slot_end > :slotStart', { slotStart })
+    .andWhere('booking.status IN (:...statuses)', {
+      statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+    });
+
+  if (trackConfigId) {
+    query.andWhere('booking.track_config_id = :trackConfigId', { trackConfigId });
+  }
+
+  const row = await query
+    .select(
+      'COUNT(participant.id) + COUNT(DISTINCT booking.id) FILTER (WHERE participant.id IS NULL)',
+      'count',
+    )
+    .getRawOne<{ count: string }>();
+  return Number(row?.count ?? 0);
+}
+
 async function acquireVehicleLock(
   vehicleId: string,
   slotStart: Date,
@@ -96,11 +236,36 @@ async function acquireVehicleLock(
   return result === 'OK';
 }
 
-async function releaseVehicleLocks(vehicleIds: string[], slotStart: Date): Promise<void> {
-  const keys = vehicleIds.map((id) => vehicleLockKey(id, slotStart));
+type VehicleSlotLock = {
+  vehicleId: string;
+  slotStart: Date;
+};
+
+function getSlotStarts(slotStart: Date, slotEnd: Date, slotDurationMinutes: number): Date[] {
+  const slotStarts: Date[] = [];
+  const slotDurationMs = slotDurationMinutes * 60 * 1000;
+  for (let cursor = slotStart.getTime(); cursor < slotEnd.getTime(); cursor += slotDurationMs) {
+    slotStarts.push(new Date(cursor));
+  }
+  return slotStarts;
+}
+
+async function releaseVehicleSlotLocks(locks: VehicleSlotLock[]): Promise<void> {
+  const keys = locks.map(({ vehicleId, slotStart }) => vehicleLockKey(vehicleId, slotStart));
   if (keys.length > 0) {
     await redis.del(keys);
   }
+}
+
+async function getBookingSlotStarts(booking: Booking): Promise<Date[]> {
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({
+    where: { id: booking.cafeId },
+    select: { slotDurationMinutes: true },
+  });
+  if (!cafe) {
+    throw new AppError('Cafe not found for booking', 404, 'CAFE_NOT_FOUND');
+  }
+  return getSlotStarts(booking.slotStart, booking.slotEnd, cafe.slotDurationMinutes);
 }
 
 async function acquireByocSlot(
@@ -158,19 +323,21 @@ export async function transition(bookingId: string, event: string): Promise<Book
   await repo.update(bookingId, { status: newStatus });
 
   if (newStatus === BookingStatus.CANCELLED) {
+    const slotStarts = await getBookingSlotStarts(booking);
     const bvRepo = AppDataSource.getRepository(BookingVehicle);
     const vehicles = await bvRepo.find({ where: { bookingId } });
     const vehicleIds = vehicles.map((v) => v.vehicleId);
-    await releaseVehicleLocks(vehicleIds, booking.slotStart);
+    await releaseVehicleSlotLocks(
+      slotStarts.flatMap((slotStart) => vehicleIds.map((vehicleId) => ({ vehicleId, slotStart }))),
+    );
     if (booking.playMode === BookingMode.BYOC) {
       const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
         where: { bookingId },
       });
-      await releaseByocSlot(
-        booking.cafeId,
-        booking.slotStart,
-        participantCount || 1,
-        booking.trackConfigId,
+      await Promise.all(
+        slotStarts.map((slotStart) =>
+          releaseByocSlot(booking.cafeId, slotStart, participantCount || 1, booking.trackConfigId),
+        ),
       );
     }
     await cancelPendingFnbOrders(bookingId);
@@ -179,14 +346,14 @@ export async function transition(bookingId: string, event: string): Promise<Book
 
   if (newStatus === BookingStatus.COMPLETED) {
     if (booking.playMode === BookingMode.BYOC) {
+      const slotStarts = await getBookingSlotStarts(booking);
       const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
         where: { bookingId },
       });
-      await releaseByocSlot(
-        booking.cafeId,
-        booking.slotStart,
-        participantCount || 1,
-        booking.trackConfigId,
+      await Promise.all(
+        slotStarts.map((slotStart) =>
+          releaseByocSlot(booking.cafeId, slotStart, participantCount || 1, booking.trackConfigId),
+        ),
       );
     }
     logger.info('BookingService', `transition → COMPLETED bookingId=${bookingId}`);
@@ -307,11 +474,13 @@ export async function createBooking(
   const cafe = await cafeRepo.findOne({ where: { id: body.cafe_id } });
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
   if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
+  assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
+  assertMinimumBookingNotice(slotStart, cafe.minBookingNoticeMinutes);
 
   const slotDuration = cafe.slotDurationMinutes;
   const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;
 
-  // Slot range validation: must be aligned with slotDurationMinutes and ≤ 8 slots
+  // Slot range validation: must be aligned with slotDurationMinutes and within policy.
   if (slotMinutes % slotDuration !== 0) {
     throw new AppError(
       `Slot range must be a multiple of ${slotDuration} minutes`,
@@ -319,9 +488,9 @@ export async function createBooking(
       'INVALID_SLOT_RANGE',
     );
   }
-  if (slotMinutes > slotDuration * 8) {
+  if (slotMinutes > slotDuration * MAX_CONSECUTIVE_SLOTS) {
     throw new AppError(
-      `Maximum booking duration is ${slotDuration * 8} minutes`,
+      `Maximum booking duration is ${slotDuration * MAX_CONSECUTIVE_SLOTS} minutes`,
       400,
       'SLOT_RANGE_TOO_LONG',
     );
@@ -329,6 +498,8 @@ export async function createBooking(
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
   const slotsNeeded = Math.ceil(slotMinutes / cafe.slotDurationMinutes);
   const playerCount = 1 + (body.participants?.length ?? 0); // booker + companions
+  const slotStarts = getSlotStarts(slotStart, slotEnd, slotDuration);
+  const lockedByocSlotStarts: Date[] = [];
 
   // Validate customer package if provided (T021)
   let customerPackage: CustomerPackage | null = null;
@@ -465,14 +636,31 @@ export async function createBooking(
 
   if (body.play_mode === BookingMode.BYOC) {
     const capacity = resolvedTrackConfig ? resolvedTrackConfig.byocCapacity : cafe.byocCapacity;
-    const locked = await acquireByocSlot(
-      body.cafe_id,
-      slotStart,
-      capacity,
-      playerCount,
-      resolvedTrackConfig?.id,
-    );
-    if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+    for (const rangeSlotStart of slotStarts) {
+      const rangeSlotEnd = new Date(rangeSlotStart.getTime() + slotDuration * 60 * 1000);
+      const dbOccupied = await countOccupiedByocParticipants(
+        body.cafe_id,
+        rangeSlotStart,
+        rangeSlotEnd,
+        resolvedTrackConfig?.id,
+      );
+      const locked = await acquireByocSlot(
+        body.cafe_id,
+        rangeSlotStart,
+        Math.max(0, capacity - dbOccupied),
+        playerCount,
+        resolvedTrackConfig?.id,
+      );
+      if (!locked) {
+        await Promise.all(
+          lockedByocSlotStarts.map((lockedSlotStart) =>
+            releaseByocSlot(body.cafe_id, lockedSlotStart, playerCount, resolvedTrackConfig?.id),
+          ),
+        );
+        throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+      }
+      lockedByocSlotStarts.push(rangeSlotStart);
+    }
   }
 
   // Validate vehicle compat with track type for RENTAL
@@ -553,19 +741,21 @@ export async function createBooking(
   const paymentExpiresAt = new Date(Date.now() + env.platform.paymentWindowMinutes * 60 * 1000);
 
   // Acquire Redis slot locks for RENTAL vehicles
-  const lockedVehicleIds: string[] = [];
+  const lockedVehicleSlots: VehicleSlotLock[] = [];
   if (body.play_mode === BookingMode.RENTAL) {
     for (const { vehicleId } of vehiclePricings) {
-      const locked = await acquireVehicleLock(vehicleId, slotStart, 'pending');
-      if (!locked) {
-        await releaseVehicleLocks(lockedVehicleIds, slotStart);
-        throw new AppError(
-          `Vehicle ${vehicleId} is already locked for this slot`,
-          409,
-          'SLOT_LOCKED',
-        );
+      for (const rangeSlotStart of slotStarts) {
+        const locked = await acquireVehicleLock(vehicleId, rangeSlotStart, 'pending');
+        if (!locked) {
+          await releaseVehicleSlotLocks(lockedVehicleSlots);
+          throw new AppError(
+            `Vehicle ${vehicleId} is already locked for this slot`,
+            409,
+            'SLOT_LOCKED',
+          );
+        }
+        lockedVehicleSlots.push({ vehicleId, slotStart: rangeSlotStart });
       }
-      lockedVehicleIds.push(vehicleId);
     }
   }
 
@@ -692,14 +882,23 @@ export async function createBooking(
 
     // Update slot locks with actual booking ID
     if (body.play_mode === BookingMode.RENTAL) {
-      for (const vehicleId of lockedVehicleIds) {
+      for (const { vehicleId, slotStart: lockedSlotStart } of lockedVehicleSlots) {
         await redis.set(
-          vehicleLockKey(vehicleId, slotStart),
+          vehicleLockKey(vehicleId, lockedSlotStart),
           booking.id,
           'EX',
           env.platform.slotLockTtlSeconds,
         );
       }
+    }
+
+    if (body.play_mode === BookingMode.BYOC) {
+      await Promise.all(
+        lockedByocSlotStarts.map((lockedSlotStart) =>
+          releaseByocSlot(body.cafe_id, lockedSlotStart, playerCount, resolvedTrackConfig?.id),
+        ),
+      );
+      lockedByocSlotStarts.length = 0;
     }
 
     logger.info('BookingService', `created bookingId=${booking.id} mode=${body.play_mode}`);
@@ -723,9 +922,13 @@ export async function createBooking(
     };
   } catch (err) {
     // Release locks on transaction failure
-    await releaseVehicleLocks(lockedVehicleIds, slotStart);
+    await releaseVehicleSlotLocks(lockedVehicleSlots);
     if (body.play_mode === BookingMode.BYOC) {
-      await releaseByocSlot(body.cafe_id, slotStart, playerCount, resolvedTrackConfig?.id);
+      await Promise.all(
+        lockedByocSlotStarts.map((lockedSlotStart) =>
+          releaseByocSlot(body.cafe_id, lockedSlotStart, playerCount, resolvedTrackConfig?.id),
+        ),
+      );
     }
     throw err;
   }
@@ -760,19 +963,20 @@ export async function cancelBooking(
   // Release slot locks
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
   const vehicles = await bvRepo.find({ where: { bookingId } });
-  await releaseVehicleLocks(
-    vehicles.map((v) => v.vehicleId),
-    booking.slotStart,
+  const slotStarts = await getBookingSlotStarts(booking);
+  await releaseVehicleSlotLocks(
+    slotStarts.flatMap((slotStart) =>
+      vehicles.map((vehicle) => ({ vehicleId: vehicle.vehicleId, slotStart })),
+    ),
   );
   if (booking.playMode === BookingMode.BYOC) {
     const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
       where: { bookingId },
     });
-    await releaseByocSlot(
-      booking.cafeId,
-      booking.slotStart,
-      participantCount || 1,
-      booking.trackConfigId,
+    await Promise.all(
+      slotStarts.map((slotStart) =>
+        releaseByocSlot(booking.cafeId, slotStart, participantCount || 1, booking.trackConfigId),
+      ),
     );
   }
 
@@ -948,6 +1152,7 @@ export async function createWalkInBooking(
   const cafe = await cafeRepo.findOne({ where: { id: cafeId } });
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
   if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
+  assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
 
   const slotDuration = cafe.slotDurationMinutes;
   const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;
@@ -959,15 +1164,17 @@ export async function createWalkInBooking(
       'INVALID_SLOT_RANGE',
     );
   }
-  if (slotMinutes > slotDuration * 8) {
+  if (slotMinutes > slotDuration * MAX_CONSECUTIVE_SLOTS) {
     throw new AppError(
-      `Maximum booking duration is ${slotDuration * 8} minutes`,
+      `Maximum booking duration is ${slotDuration * MAX_CONSECUTIVE_SLOTS} minutes`,
       400,
       'SLOT_RANGE_TOO_LONG',
     );
   }
   const slotCount = slotMinutes / cafe.slotDurationMinutes;
   const playerCount = body.participants.length;
+  const slotStarts = getSlotStarts(slotStart, slotEnd, slotDuration);
+  const lockedByocSlotStarts: Date[] = [];
 
   const trackConfigRepo = AppDataSource.getRepository(CafeTrackConfig);
   const trackConfig = await trackConfigRepo.findOne({
@@ -1070,26 +1277,51 @@ export async function createWalkInBooking(
   }
 
   if (body.play_mode === BookingMode.BYOC) {
-    const locked = await acquireByocSlot(cafeId, slotStart, trackConfig.byocCapacity, playerCount);
-    if (!locked) throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+    for (const rangeSlotStart of slotStarts) {
+      const rangeSlotEnd = new Date(rangeSlotStart.getTime() + slotDuration * 60 * 1000);
+      const dbOccupied = await countOccupiedByocParticipants(
+        cafeId,
+        rangeSlotStart,
+        rangeSlotEnd,
+        trackConfig.id,
+      );
+      const locked = await acquireByocSlot(
+        cafeId,
+        rangeSlotStart,
+        Math.max(0, trackConfig.byocCapacity - dbOccupied),
+        playerCount,
+        trackConfig.id,
+      );
+      if (!locked) {
+        await Promise.all(
+          lockedByocSlotStarts.map((lockedSlotStart) =>
+            releaseByocSlot(cafeId, lockedSlotStart, playerCount, trackConfig.id),
+          ),
+        );
+        throw new AppError('BYOC capacity full for this slot', 400, 'BYOC_CAPACITY_FULL');
+      }
+      lockedByocSlotStarts.push(rangeSlotStart);
+    }
   }
 
   const totalAmount = slotFee + rentalFeeTotal + depositTotal;
 
   // Acquire Redis slot locks for RENTAL vehicles
-  const lockedVehicleIds: string[] = [];
+  const lockedVehicleSlots: VehicleSlotLock[] = [];
   if (body.play_mode === BookingMode.RENTAL) {
     for (const { vehicleId } of vehiclePricings) {
-      const locked = await acquireVehicleLock(vehicleId, slotStart, 'pending');
-      if (!locked) {
-        await releaseVehicleLocks(lockedVehicleIds, slotStart);
-        throw new AppError(
-          `Vehicle ${vehicleId} is already locked for this slot`,
-          409,
-          'SLOT_LOCKED',
-        );
+      for (const rangeSlotStart of slotStarts) {
+        const locked = await acquireVehicleLock(vehicleId, rangeSlotStart, 'pending');
+        if (!locked) {
+          await releaseVehicleSlotLocks(lockedVehicleSlots);
+          throw new AppError(
+            `Vehicle ${vehicleId} is already locked for this slot`,
+            409,
+            'SLOT_LOCKED',
+          );
+        }
+        lockedVehicleSlots.push({ vehicleId, slotStart: rangeSlotStart });
       }
-      lockedVehicleIds.push(vehicleId);
     }
   }
 
@@ -1218,14 +1450,23 @@ export async function createWalkInBooking(
 
     // Update slot locks in redis with actual booking ID
     if (body.play_mode === BookingMode.RENTAL) {
-      for (const vehicleId of lockedVehicleIds) {
+      for (const { vehicleId, slotStart: lockedSlotStart } of lockedVehicleSlots) {
         await redis.set(
-          vehicleLockKey(vehicleId, slotStart),
+          vehicleLockKey(vehicleId, lockedSlotStart),
           booking.id,
           'EX',
           env.platform.slotLockTtlSeconds,
         );
       }
+    }
+
+    if (body.play_mode === BookingMode.BYOC) {
+      await Promise.all(
+        lockedByocSlotStarts.map((lockedSlotStart) =>
+          releaseByocSlot(cafeId, lockedSlotStart, playerCount, trackConfig.id),
+        ),
+      );
+      lockedByocSlotStarts.length = 0;
     }
 
     logger.info(
@@ -1243,9 +1484,13 @@ export async function createWalkInBooking(
     };
   } catch (err) {
     // Release locks on transaction failure
-    await releaseVehicleLocks(lockedVehicleIds, slotStart);
+    await releaseVehicleSlotLocks(lockedVehicleSlots);
     if (body.play_mode === BookingMode.BYOC) {
-      await releaseByocSlot(cafeId, slotStart, playerCount);
+      await Promise.all(
+        lockedByocSlotStarts.map((lockedSlotStart) =>
+          releaseByocSlot(cafeId, lockedSlotStart, playerCount, trackConfig.id),
+        ),
+      );
     }
     throw err;
   }
