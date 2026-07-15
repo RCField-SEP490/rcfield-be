@@ -177,6 +177,17 @@ export enum InspectionType {
   CHECK_OUT = 'CHECK_OUT',
 }
 
+export enum DamagePartType {
+  TIRE_WHEEL = 'TIRE_WHEEL',
+  SPOILER = 'SPOILER',
+  CHASSIS = 'CHASSIS',
+  MOTOR = 'MOTOR',
+  SHELL = 'SHELL',
+  SERVO = 'SERVO',
+  REMOTE = 'REMOTE',
+  OTHER = 'OTHER',
+}
+
 export enum ParticipantRole {
   DRIVER = 'DRIVER',
   PLAYER = 'PLAYER',

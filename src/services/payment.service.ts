@@ -562,6 +562,12 @@ export async function processConfirmation(
             NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
             'Thanh toán dịch vụ phát sinh thành công',
             `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công qua VNPAY.`,
+            {
+              bookingId: tx.bookingId,
+              totalCounterBill: tx.amount,
+              netCounterAmount: tx.amount,
+              route: `/booking/${tx.bookingId}`,
+            },
           );
           wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
             bookingId: tx.bookingId,
@@ -576,8 +582,21 @@ export async function processConfirmation(
           where: { bookingId: booking.id },
         });
         if (session && session.checkedInBy) {
+          await createNotification(
+            session.checkedInBy,
+            NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
+            'Khách đã thanh toán phí phát sinh',
+            `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công.`,
+            {
+              bookingId: tx.bookingId,
+              sessionId: session.id,
+              totalCounterBill: tx.amount,
+              route: `/staff/session/${session.id}`,
+            },
+          );
           wsService.pushToUser(session.checkedInBy, 'CUSTOMER_PAYMENT_CONFIRMED', {
             bookingId: tx.bookingId,
+            sessionId: session.id,
             totalCounterBill: tx.amount,
           });
         }
@@ -744,6 +763,12 @@ export async function processMockConfirmation(
             NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
             'Thanh toán dịch vụ phát sinh thành công',
             `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công qua VNPAY.`,
+            {
+              bookingId: tx.bookingId,
+              totalCounterBill: tx.amount,
+              netCounterAmount: tx.amount,
+              route: `/booking/${tx.bookingId}`,
+            },
           );
           wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
             bookingId: tx.bookingId,
@@ -757,8 +782,21 @@ export async function processMockConfirmation(
           where: { bookingId: booking.id },
         });
         if (session && session.checkedInBy) {
+          await createNotification(
+            session.checkedInBy,
+            NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
+            'Khách đã thanh toán phí phát sinh',
+            `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công.`,
+            {
+              bookingId: tx.bookingId,
+              sessionId: session.id,
+              totalCounterBill: tx.amount,
+              route: `/staff/session/${session.id}`,
+            },
+          );
           wsService.pushToUser(session.checkedInBy, 'CUSTOMER_PAYMENT_CONFIRMED', {
             bookingId: tx.bookingId,
+            sessionId: session.id,
             totalCounterBill: tx.amount,
           });
         }
@@ -1078,6 +1116,7 @@ export async function confirmRefund(bookingId: string): Promise<void> {
 export async function createCheckoutAdditionalPaymentUrl(
   bookingId: string,
   ipAddr: string,
+  customReturnUrl?: string,
 ): Promise<{ payment_url: string | null; txn_ref: string; total_amount: number }> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
@@ -1098,13 +1137,16 @@ export async function createCheckoutAdditionalPaymentUrl(
   }
 
   // Create unique txnRef starting with ctr_ to distinguish from initial payment
-  const txnRef = `ctr_${bookingId.replace(/-/g, '').substring(0, 18)}_${Date.now().toString().slice(-4)}`;
+  const txnRef = `ctr_${bookingId.replace(/-/g, '').substring(0, 18)}_${Date.now()
+    .toString()
+    .slice(-4)}`;
 
   const vnpayPaymentUrl = createPaymentUrl({
     amount: totalCharged,
     txnRef,
     orderInfo: `RCField checkout ${bookingId.substring(0, 8)}`,
     ipAddr,
+    returnUrl: customReturnUrl,
     bankCode: 'VNBANK',
   });
 
@@ -1120,7 +1162,13 @@ export async function createCheckoutAdditionalPaymentUrl(
     txnRef,
     amount: totalCharged,
     status: PaymentTransactionStatus.PENDING,
-    rawRequest: { bookingId, totalCharged, ipAddr, additionalPayment: true },
+    rawRequest: {
+      bookingId,
+      totalCharged,
+      ipAddr,
+      additionalPayment: true,
+      returnUrl: customReturnUrl,
+    },
   });
   await txRepo.save(tx);
 

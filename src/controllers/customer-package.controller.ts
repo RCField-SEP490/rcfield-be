@@ -26,7 +26,7 @@ export const customerPackageController = {
   // POST /api/v1/cafes/:cafeId/packages/:packageId/purchase  [auth]
   async purchasePackage(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      PurchasePackageSchema.parse(req.body);
+      const body = PurchasePackageSchema.parse(req.body);
       const viewer = customerViewer(req);
       const ipAddr =
         (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
@@ -37,7 +37,7 @@ export const customerPackageController = {
         req.params.packageId,
         viewer,
         ipAddr,
-        req.body?.return_url,
+        body.return_url,
       );
       res.json({ success: true, data });
     } catch (err) {

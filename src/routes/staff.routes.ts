@@ -18,6 +18,12 @@ staffRouter.get('/sessions/:sessionId', staffController.getSessionDetail);
 
 // Session Operations
 staffRouter.post('/sessions/:sessionId/inspections', staffController.submitInspection);
+staffRouter.post('/sessions/:sessionId/confirm-checkout', staffController.confirmCheckout);
+staffRouter.put(
+  '/sessions/:sessionId/inspections/:inspectionId/damage-items',
+  staffController.updateDamageItems,
+);
+staffRouter.post('/sessions/:sessionId/escalate-dispute', staffController.escalateDispute);
 staffRouter.post('/sessions/:sessionId/extensions', staffController.proposeExtension);
 staffRouter.post('/sessions/:sessionId/fnb-orders', staffController.addSessionFnbOrder);
 staffRouter.post('/sessions/:sessionId/swap-vehicle', staffController.swapSessionVehicle);

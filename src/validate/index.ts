@@ -19,6 +19,7 @@ import {
   ReviewStatus,
   VehicleStatus,
   VehicleSource,
+  DamagePartType,
 } from '../types';
 
 extendZodWithOpenApi(z);
@@ -864,6 +865,25 @@ export const NotificationQuerySchema = z.object({
     .transform((v) => v === 'true'),
 });
 
+export const RegisterPushTokenSchema = z.object({
+  token: z
+    .string()
+    .min(10)
+    .max(500)
+    .refine(
+      (value) => value.startsWith('ExpoPushToken[') || value.startsWith('ExponentPushToken['),
+      'Expo push token không hợp lệ',
+    ),
+  platform: z.enum(['ios', 'android', 'web']).optional(),
+  device_id: z.string().max(255).nullable().optional(),
+  device_name: z.string().max(255).nullable().optional(),
+  app_version: z.string().max(50).nullable().optional(),
+});
+
+export const UnregisterPushTokenSchema = z.object({
+  token: z.string().min(10).max(500),
+});
+
 export const AdminPaymentRequestQuerySchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'REJECTED']).optional(),
   page: z.coerce.number().int().positive().optional().default(1),
@@ -1207,3 +1227,61 @@ export const CreateWalkInBookingSchema = z
       });
     }
   });
+
+// ── inspections ───────────────────────────────────────────────────────────────
+
+const DamageLineItemInputSchema = z
+  .object({
+    partType: z.nativeEnum(DamagePartType),
+    customPartName: z.string().max(255).optional(),
+    partsPrice: z.number().min(0, 'Giá linh kiện phải >= 0'),
+    laborPrice: z.number().min(0, 'Phí công phải >= 0').default(0),
+  })
+  .superRefine((item, ctx) => {
+    if (item.partType === DamagePartType.OTHER && !item.customPartName?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['customPartName'],
+        message: 'Vui lòng nhập tên hư hỏng khi chọn "Khác"',
+      });
+    }
+  });
+
+export const SubmitInspectionV2Schema = z.object({
+  type: z.enum(['CHECK_IN', 'CHECK_OUT']),
+  photos: z
+    .array(
+      z.object({
+        angle: z.enum(['FRONT', 'BACK', 'LEFT', 'RIGHT']),
+        url: z.string().url(),
+        notes: z.string().optional(),
+      }),
+    )
+    .optional(),
+  checklist: z
+    .array(
+      z.object({
+        itemKey: z.string().min(1),
+        itemLabel: z.string().min(1),
+        status: z.enum(['OK', 'BROKEN']),
+        note: z.string().optional(),
+      }),
+    )
+    .optional(),
+  staffNotes: z.string().optional(),
+  damageFlagged: z.boolean().default(false),
+  damageLineItems: z.array(DamageLineItemInputSchema).optional(),
+});
+
+export const ConfirmCheckoutSchema = z.object({
+  inspectionId: z.string().uuid('inspectionId phải là UUID hợp lệ'),
+});
+
+export const UpdateDamageItemsSchema = z.object({
+  damageLineItems: z.array(DamageLineItemInputSchema).min(0),
+});
+
+export const EscalateDisputeSchema = z.object({
+  inspectionId: z.string().uuid('inspectionId phải là UUID hợp lệ'),
+  note: z.string().min(1, 'Vui lòng nhập mô tả tranh chấp'),
+});

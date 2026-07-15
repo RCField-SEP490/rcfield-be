@@ -115,6 +115,7 @@ router.use('/admin/amenities', adminAmenityRouter);
 router.use('/admin/track-types', adminTrackTypeRouter);
 router.use('/admin/dashboard', adminDashboardRouter);
 router.use('/admin/feature-flags', adminFeatureFlagsRouter);
+router.use('/notifications', notificationRouter);
 router.use('/provider/notifications', notificationRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/staff', staffRouter);

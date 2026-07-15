@@ -6,6 +6,10 @@ import {
   TransferStaffSchema,
   UpdateFnbOrderStatusSchema,
   CreateWalkInBookingSchema,
+  SubmitInspectionV2Schema,
+  ConfirmCheckoutSchema,
+  UpdateDamageItemsSchema,
+  EscalateDisputeSchema,
 } from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
@@ -270,11 +274,8 @@ export const staffController = {
   async submitInspection(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const data = await staffService.submitInspection(
-        req.params.sessionId,
-        req.user.userId,
-        req.body,
-      );
+      const body = SubmitInspectionV2Schema.parse(req.body);
+      const data = await staffService.submitInspection(req.params.sessionId, req.user.userId, body);
       res.status(201).json({ success: true, data });
     } catch (err) {
       next(err);
@@ -387,6 +388,70 @@ export const staffController = {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
       await confirmRefund(req.params.bookingId);
       res.json({ success: true, message: 'Đã xác nhận hoàn tiền thành công' });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/confirm-checkout [auth]
+  async confirmCheckout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { inspectionId } = ConfirmCheckoutSchema.parse(req.body);
+      const data = await staffService.staffConfirmCheckout(
+        req.params.sessionId,
+        inspectionId,
+        req.user.userId,
+      );
+      logger.info('Staff', 'confirmCheckout', {
+        staffId: req.user.userId,
+        sessionId: req.params.sessionId,
+        inspectionId,
+      });
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PUT /api/v1/staff/sessions/:sessionId/inspections/:inspectionId/damage-items [auth]
+  async updateDamageItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { damageLineItems } = UpdateDamageItemsSchema.parse(req.body);
+      const data = await staffService.updateDamageLineItems(
+        req.params.sessionId,
+        req.params.inspectionId,
+        damageLineItems,
+      );
+      logger.info('Staff', 'updateDamageItems', {
+        staffId: req.user.userId,
+        sessionId: req.params.sessionId,
+        inspectionId: req.params.inspectionId,
+      });
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/escalate-dispute [auth]
+  async escalateDispute(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { inspectionId, note } = EscalateDisputeSchema.parse(req.body);
+      const data = await staffService.escalateDisputeToProvider(
+        req.params.sessionId,
+        inspectionId,
+        note,
+        req.user.userId,
+      );
+      logger.info('Staff', 'escalateDispute', {
+        staffId: req.user.userId,
+        sessionId: req.params.sessionId,
+        inspectionId,
+      });
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }
