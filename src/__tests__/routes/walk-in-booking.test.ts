@@ -215,31 +215,20 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   });
 
   it('today bookings tách F&B đặt trước và F&B gọi tại ca cho khách walk-in', async () => {
-    const slotStart = new Date(Date.now() + 10 * 60 * 1000);
-    slotStart.setSeconds(0, 0);
-    const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
-
-    const res = await request(app)
-      .post('/api/v1/staff/bookings')
-      .set('Authorization', `Bearer ${staffToken}`)
-      .send({
-        play_mode: 'BYOC',
-        track_type_id: trackTypeId,
-        slot_start: slotStart.toISOString(),
-        slot_end: slotEnd.toISOString(),
-        payment_method: 'CASH',
-        vehicle_ids: [],
-        participants: [
-          {
-            guest_name: 'Han',
-            guest_phone: '0900000001',
-            participant_type: 'WALK_IN_GUEST',
-          },
-        ],
-      })
-      .expect(201);
-
-    const bookingId = res.body.data.bookingId;
+    // This test verifies the staff list's F&B aggregation, not booking creation.
+    // Anchor the fixture at the database's current time so it remains in the
+    // Vietnam "today" query window even when CI runs close to midnight.
+    const [bookingFixture] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status,
+          slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES
+         ($1, $2, $3, 'BYOC', $4, 'CONFIRMED', NOW(), NOW() + INTERVAL '1 hour', 1,
+          NOW() + INTERVAL '30 minutes', 0)
+       RETURNING id`,
+      [staffUser.id, cafe.id, trackTypeId, BookingSource.STAFF_MANUAL],
+    );
+    const bookingId = bookingFixture.id;
 
     await AppDataSource.query(
       `INSERT INTO fnb_orders (booking_id, session_id, order_type, status, total_amount, created_by, notes)
