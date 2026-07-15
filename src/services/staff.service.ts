@@ -17,6 +17,7 @@ import {
   SessionVehicleStatus,
   InspectionType,
   InspectionSubjectType,
+  DamagePartType,
   PhotoAngle,
   InspectionItemStatus,
   ExtensionProposalStatus,
@@ -45,6 +46,7 @@ import { Cafe } from '../models/cafe.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { Inspection } from '../models/inspection.entity';
+import { DamageLineItem } from '../models/damage-line-item.entity';
 import { InspectionPhoto } from '../models/inspection-photo.entity';
 import { InspectionChecklist } from '../models/inspection-checklist.entity';
 import { ExtensionProposal } from '../models/extension-proposal.entity';
@@ -1284,6 +1286,8 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   const mappedInspections = [];
   let damageClaim = undefined;
 
+  let checkoutInspection: any = undefined;
+
   for (const insp of inspections) {
     const photos = await AppDataSource.getRepository(InspectionPhoto).find({
       where: { inspectionId: insp.id },
@@ -1292,7 +1296,32 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       where: { inspectionId: insp.id },
     });
 
-    mappedInspections.push({
+    let damageLineItemsMapped: any[] = [];
+    let totalDamageCharge = 0;
+    if (insp.type === InspectionType.CHECK_OUT) {
+      const lineItems = await AppDataSource.getRepository(DamageLineItem).find({
+        where: { inspectionId: insp.id },
+      });
+      damageLineItemsMapped = lineItems.map((li) => ({
+        id: li.id,
+        partType: li.partType,
+        customPartName: li.customPartName,
+        partsPrice: Number(li.partsPrice),
+        laborPrice: Number(li.laborPrice),
+        lineTotal: Number(li.partsPrice) + Number(li.laborPrice),
+      }));
+      if (lineItems.length > 0) {
+        totalDamageCharge = lineItems.reduce(
+          (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
+          0,
+        );
+      } else {
+        // Fallback for legacy records without line items
+        totalDamageCharge = (Number(insp.damageCostEstimate) || 0) * 1.5;
+      }
+    }
+
+    const mappedInsp = {
       inspectionId: insp.id,
       type: insp.type,
       photos: photos.map((p) => ({
@@ -1315,43 +1344,36 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       customerConfirmed: insp.customerConfirmed,
       customerConfirmedAt: insp.customerConfirmedAt?.toISOString(),
       damageFlagged: insp.damageNoted,
-      damageDescription: insp.damageDescription,
-      estimatedCost: insp.damageCostEstimate ? Number(insp.damageCostEstimate) : undefined,
-      damageMultiplier: insp.aiAnalysisJson?.damageMultiplier
-        ? Number(insp.aiAnalysisJson.damageMultiplier)
-        : undefined,
-      finalCharge: insp.aiAnalysisJson?.finalCharge
-        ? Number(insp.aiAnalysisJson.finalCharge)
-        : undefined,
-    });
+      damageLineItems: damageLineItemsMapped,
+      totalDamageCharge,
+    };
+    mappedInspections.push(mappedInsp);
 
-    if (insp.type === InspectionType.CHECK_OUT && insp.damageNoted) {
-      const checkInPhoto = inspections.find((i) => i.type === InspectionType.CHECK_IN)?.id;
-      const checkInPhotoUrl = checkInPhoto
-        ? (
-            await AppDataSource.getRepository(InspectionPhoto).findOne({
-              where: { inspectionId: checkInPhoto },
-            })
-          )?.url || ''
-        : '';
-      const checkOutPhotoUrl = photos[0]?.url || '';
+    if (insp.type === InspectionType.CHECK_OUT) {
+      checkoutInspection = mappedInsp;
 
-      const estimatedCost = Number(insp.damageCostEstimate) || 0;
-      const damageMultiplier = Number(insp.aiAnalysisJson?.damageMultiplier) || 1.5;
-      const finalCharge =
-        Number(insp.aiAnalysisJson?.finalCharge) || estimatedCost * damageMultiplier;
+      if (insp.damageNoted) {
+        const checkInPhoto = inspections.find((i) => i.type === InspectionType.CHECK_IN)?.id;
+        const checkInPhotoUrl = checkInPhoto
+          ? (
+              await AppDataSource.getRepository(InspectionPhoto).findOne({
+                where: { inspectionId: checkInPhoto },
+              })
+            )?.url || ''
+          : '';
+        const checkOutPhotoUrl = photos[0]?.url || '';
 
-      damageClaim = {
-        claimId: insp.id,
-        description: insp.damageDescription || 'Hư hỏng thiết bị',
-        estimatedCost,
-        damageMultiplier,
-        finalCharge,
-        checkInPhoto: checkInPhotoUrl,
-        checkOutPhoto: checkOutPhotoUrl,
-        status: session.status === SessionStatus.COMPLETED ? 'CONFIRMED' : 'PENDING',
-        expiresAt: new Date(Date.now() + 24 * 3600000).toISOString(),
-      };
+        damageClaim = {
+          claimId: insp.id,
+          description: insp.damageDescription || 'Hư hỏng thiết bị',
+          damageLineItems: damageLineItemsMapped,
+          totalDamageCharge,
+          checkInPhoto: checkInPhotoUrl,
+          checkOutPhoto: checkOutPhotoUrl,
+          status: session.status === SessionStatus.COMPLETED ? 'CONFIRMED' : 'PENDING',
+          expiresAt: new Date(Date.now() + 24 * 3600000).toISOString(),
+        };
+      }
     }
   }
 
@@ -1442,6 +1464,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     })),
     vehicles: vehiclesList,
     inspections: mappedInspections,
+    checkoutInspection,
     damageClaim,
     extensionProposal,
     approvedExtensionFee,
@@ -1481,7 +1504,7 @@ export async function submitInspection(
     throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
   }
 
-  const { type, photos, checklist, staffNotes, damageFlagged, damageDetails } = data;
+  const { type, photos, checklist, staffNotes, damageFlagged, damageLineItems } = data;
   const inspectionType = type === 'CHECK_IN' ? InspectionType.CHECK_IN : InspectionType.CHECK_OUT;
 
   const existingInspection = await AppDataSource.getRepository(Inspection).findOne({
@@ -1519,24 +1542,8 @@ export async function submitInspection(
   inspection.performedBy = staffUserId;
   inspection.preExistingFlag = type === 'CHECK_IN' ? false : true;
   inspection.damageNoted = !!damageFlagged;
-  inspection.damageDescription = damageDetails?.description || staffNotes || null;
-  inspection.damageCostEstimate = damageDetails ? damageDetails.estimatedCost : null;
-  inspection.aiAnalysisJson = damageDetails
-    ? {
-        damageMultiplier: Number(damageDetails.damageMultiplier) || 1.5,
-        finalCharge:
-          Number(damageDetails.finalCharge) ||
-          Number(damageDetails.estimatedCost || 0) *
-            (Number(damageDetails.damageMultiplier) || 1.5),
-      }
-    : null;
-
-  if (booking && booking.source === BookingSource.STAFF_MANUAL) {
-    inspection.customerConfirmed = true;
-    inspection.customerConfirmedAt = new Date();
-  } else {
-    inspection.customerConfirmed = false;
-  }
+  inspection.damageDescription = staffNotes || null;
+  inspection.customerConfirmed = false;
 
   await AppDataSource.getRepository(Inspection).save(inspection);
 
@@ -1603,46 +1610,30 @@ export async function submitInspection(
       }
     }
   } else {
-    // CHECK_OUT
-    if (booking && booking.source === BookingSource.STAFF_MANUAL) {
-      session.status = SessionStatus.COMPLETED;
-      session.actualEndAt = new Date();
-      session.checkedOutBy = staffUserId;
-      await AppDataSource.getRepository(Session).save(session);
+    // CHECK_OUT — all booking types go to CHECKING_OUT; settlement requires staffConfirmCheckout
+    session.status = SessionStatus.CHECKING_OUT;
+    session.checkedOutBy = staffUserId;
+    await AppDataSource.getRepository(Session).save(session);
 
-      if (activeSVs.length > 0) {
-        const vehicleRepo = AppDataSource.getRepository(Vehicle);
-        for (const sv of activeSVs) {
-          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
-          sv.returnedAt = new Date();
-          await svRepo.save(sv);
-
-          if (sv.vehicleSource === VehicleSource.RENTAL && sv.vehicleId) {
-            const veh = await vehicleRepo.findOne({ where: { id: sv.vehicleId } });
-            if (veh) {
-              veh.status = damageFlagged ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
-              await vehicleRepo.save(veh);
-            }
-          }
-        }
+    if (activeSVs.length > 0) {
+      for (const sv of activeSVs) {
+        sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+        await svRepo.save(sv);
       }
+    }
 
-      booking.status = BookingStatus.COMPLETED;
-      booking.completedAt = new Date();
-      await AppDataSource.getRepository(Booking).save(booking);
-
-      await settleSessionCheckoutBilling(sessionId, inspection);
-    } else {
-      // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
-      session.status = SessionStatus.CHECKING_OUT;
-      session.checkedOutBy = staffUserId;
-      await AppDataSource.getRepository(Session).save(session);
-
-      if (activeSVs.length > 0) {
-        for (const sv of activeSVs) {
-          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
-          await svRepo.save(sv);
-        }
+    // Save damage line items in same transaction context
+    if (Array.isArray(damageLineItems) && damageLineItems.length > 0) {
+      const lineItemRepo = AppDataSource.getRepository(DamageLineItem);
+      for (const item of damageLineItems) {
+        const li = new DamageLineItem();
+        li.inspectionId = inspection.id;
+        li.partType = item.partType as DamagePartType;
+        li.customPartName =
+          item.partType === DamagePartType.OTHER ? (item.customPartName ?? null) : null;
+        li.partsPrice = Number(item.partsPrice) || 0;
+        li.laborPrice = Number(item.laborPrice) || 0;
+        await lineItemRepo.save(li);
       }
     }
   }
@@ -1682,7 +1673,38 @@ export async function submitInspection(
     }
   }
 
-  return inspection;
+  const savedLineItems = await AppDataSource.getRepository(DamageLineItem).find({
+    where: { inspectionId: inspection.id },
+  });
+  const totalDamageCharge = savedLineItems.reduce(
+    (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
+    0,
+  );
+
+  logger.info('Staff', 'submitInspection', {
+    sessionId,
+    inspectionId: inspection.id,
+    type: inspection.type,
+    damageFlagged,
+    lineItemCount: savedLineItems.length,
+    totalDamageCharge,
+  });
+
+  return {
+    inspectionId: inspection.id,
+    sessionId,
+    type: inspection.type,
+    damageNoted: inspection.damageNoted,
+    damageLineItems: savedLineItems.map((li) => ({
+      id: li.id,
+      partType: li.partType,
+      customPartName: li.customPartName,
+      partsPrice: Number(li.partsPrice),
+      laborPrice: Number(li.laborPrice),
+      lineTotal: Number(li.partsPrice) + Number(li.laborPrice),
+    })),
+    totalDamageCharge,
+  };
 }
 
 function getSnapshotTrackConfigId(snapshot: object | null): string | null {
@@ -2664,6 +2686,175 @@ export async function customerRespondExtension(
   };
 }
 
+// ── STAFF CONFIRM CHECKOUT ────────────────────────────────────────────────────
+
+export async function staffConfirmCheckout(
+  sessionId: string,
+  inspectionId: string,
+  staffUserId: string,
+): Promise<any> {
+  const sessionRepo = AppDataSource.getRepository(Session);
+  const session = await sessionRepo.findOne({ where: { id: sessionId } });
+  if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
+  if (session.status !== SessionStatus.CHECKING_OUT) {
+    throw new AppError(
+      'Phiên chạy không ở trạng thái chờ xác nhận trả xe',
+      400,
+      'INVALID_SESSION_STATE',
+    );
+  }
+
+  const inspRepo = AppDataSource.getRepository(Inspection);
+  const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
+  if (!inspection)
+    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
+  if (inspection.type !== InspectionType.CHECK_OUT) {
+    throw new AppError('Biên bản không phải loại CHECK_OUT', 400, 'INVALID_INSPECTION_TYPE');
+  }
+
+  // Staff confirms at counter after customer reviews breakdown
+  inspection.customerConfirmed = true;
+  inspection.customerConfirmedAt = new Date();
+  await inspRepo.save(inspection);
+
+  session.status = SessionStatus.COMPLETED;
+  session.actualEndAt = new Date();
+  await sessionRepo.save(session);
+
+  const svs = await AppDataSource.getRepository(SessionVehicle).find({ where: { sessionId } });
+  for (const sv of svs) {
+    const newStatus = inspection.damageNoted ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
+    if (sv.vehicleId) {
+      await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, { status: newStatus });
+    }
+  }
+
+  await settleSessionCheckoutBilling(sessionId, inspection);
+
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: session.bookingId },
+  });
+  const allSessions = await sessionRepo.find({ where: { bookingId: session.bookingId } });
+  const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
+  if (allDone && booking) {
+    const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
+      where: { bookingId: session.bookingId, status: PaymentComponentStatus.PENDING },
+    });
+    await AppDataSource.getRepository(Booking).update(
+      session.bookingId,
+      pendingCount > 0
+        ? { status: BookingStatus.AWAITING_PAYMENT }
+        : { status: BookingStatus.COMPLETED, completedAt: new Date() },
+    );
+  }
+
+  logger.info('Staff', 'staffConfirmCheckout', { sessionId, inspectionId, staffUserId });
+  return { success: true, sessionId, sessionStatus: SessionStatus.COMPLETED };
+}
+
+// ── UPDATE DAMAGE LINE ITEMS (staff edits before confirming) ─────────────────
+
+export async function updateDamageLineItems(
+  sessionId: string,
+  inspectionId: string,
+  damageLineItems: {
+    partType: DamagePartType;
+    customPartName?: string;
+    partsPrice: number;
+    laborPrice?: number;
+  }[],
+): Promise<{ inspectionId: string; damageLineItems: any[]; totalDamageCharge: number }> {
+  const inspRepo = AppDataSource.getRepository(Inspection);
+  const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
+  if (!inspection)
+    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
+
+  const liRepo = AppDataSource.getRepository(DamageLineItem);
+  const existing = await liRepo.find({ where: { inspectionId } });
+  for (const item of existing) {
+    await liRepo.softDelete(item.id);
+  }
+
+  const saved: DamageLineItem[] = [];
+  for (const li of damageLineItems) {
+    const item = liRepo.create({
+      inspectionId,
+      partType: li.partType,
+      customPartName: li.customPartName ?? null,
+      partsPrice: li.partsPrice,
+      laborPrice: li.laborPrice ?? 0,
+    });
+    saved.push(await liRepo.save(item));
+  }
+
+  const totalDamageCharge = saved.reduce(
+    (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
+    0,
+  );
+
+  inspection.damageNoted = saved.length > 0;
+  await inspRepo.save(inspection);
+
+  return {
+    inspectionId,
+    damageLineItems: saved.map((li) => ({
+      id: li.id,
+      partType: li.partType,
+      customPartName: li.customPartName,
+      partsPrice: Number(li.partsPrice),
+      laborPrice: Number(li.laborPrice),
+      lineTotal: Number(li.partsPrice) + Number(li.laborPrice),
+    })),
+    totalDamageCharge,
+  };
+}
+
+// ── ESCALATE DISPUTE TO PROVIDER ──────────────────────────────────────────────
+
+export async function escalateDisputeToProvider(
+  sessionId: string,
+  inspectionId: string,
+  note: string,
+  staffUserId: string,
+): Promise<any> {
+  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
+  if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
+
+  const inspRepo = AppDataSource.getRepository(Inspection);
+  const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
+  if (!inspection)
+    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
+
+  inspection.damageDescription =
+    (inspection.damageDescription || '') +
+    ` [Leo thang tranh chấp bởi NV ${staffUserId.substring(0, 8)}: ${note}]`;
+  await inspRepo.save(inspection);
+
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: session.bookingId },
+  });
+  if (booking) {
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
+    if (cafe?.providerId) {
+      await createNotification(
+        cafe.providerId,
+        NotificationType.CUSTOMER_INSPECTION_DISPUTED,
+        'Tranh chấp biên bản hư hỏng xe cần xem xét',
+        `Nhân viên báo cáo tranh chấp phiên chơi ${session.id.substring(0, 8)}: "${note}". Vui lòng xem xét và phán quyết.`,
+      );
+      wsService.pushToUser(cafe.providerId, 'CUSTOMER_INSPECTION_DISPUTED', {
+        sessionId,
+        inspectionId,
+        note,
+        staffUserId,
+      });
+    }
+  }
+
+  logger.info('Staff', 'escalateDisputeToProvider', { sessionId, inspectionId, staffUserId });
+  return { success: true, sessionId, inspectionId };
+}
+
 export async function settleSessionCheckoutBilling(
   sessionId: string,
   inspection: Inspection | null,
@@ -2696,9 +2887,19 @@ export async function settleSessionCheckoutBilling(
   // 4. Calculate damage charge from checkout inspection → Asset protection fee
   let damageCharge = 0;
   if (inspection && inspection.type === InspectionType.CHECK_OUT && inspection.damageNoted) {
-    const estimatedCost = Number(inspection.damageCostEstimate) || 0;
-    const damageMultiplier = Number(inspection.aiAnalysisJson?.damageMultiplier) || 1.5;
-    damageCharge = estimatedCost * damageMultiplier;
+    const lineItems = await AppDataSource.getRepository(DamageLineItem).find({
+      where: { inspectionId: inspection.id },
+    });
+    if (lineItems.length > 0) {
+      damageCharge = lineItems.reduce(
+        (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
+        0,
+      );
+    } else {
+      // Fallback for legacy records without line items
+      const estimatedCost = Number(inspection.damageCostEstimate) || 0;
+      damageCharge = estimatedCost * 1.5;
+    }
   }
 
   // ── DEPOSIT RECONCILIATION (Asset Protection Only) ────────────────────────

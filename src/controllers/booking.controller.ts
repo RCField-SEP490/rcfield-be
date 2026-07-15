@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { In, Not } from 'typeorm';
 import { AppDataSource } from '../config/database';
-import { AppError, AuthRequest, UserRole, SessionStatus } from '../types';
+import { AppError, AuthRequest, UserRole, SessionStatus, InspectionType } from '../types';
 import {
   CreateBookingSchema,
   CancelBookingSchema,
@@ -31,6 +31,8 @@ import { MenuItem } from '../models/menu-item.entity';
 import { TrackType } from '../models/track-type.entity';
 import { Session } from '../models/session.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
+import { Inspection } from '../models/inspection.entity';
+import { DamageLineItem } from '../models/damage-line-item.entity';
 
 export const bookingController = {
   // POST /api/v1/bookings  [auth CUSTOMER]
@@ -134,6 +136,55 @@ export const bookingController = {
             order: { createdAt: 'ASC' },
           }),
         ]);
+
+      // Load damage breakdown from CHECK_OUT inspection (for PROVIDER/STAFF visibility)
+      let damageBreakdown: {
+        lineItems: {
+          id: string;
+          partType: string;
+          customPartName: string | null;
+          partsPrice: number;
+          laborPrice: number;
+          subtotal: number;
+        }[];
+        totalDamageCharge: number;
+        status: string;
+      } | null = null;
+      if (session) {
+        const checkoutInspection = await AppDataSource.getRepository(Inspection).findOne({
+          where: { sessionId: session.id, type: InspectionType.CHECK_OUT, damageNoted: true },
+        });
+        if (checkoutInspection) {
+          const lineItems = await AppDataSource.getRepository(DamageLineItem).find({
+            where: { inspectionId: checkoutInspection.id },
+          });
+          const totalDamageCharge =
+            lineItems.length > 0
+              ? lineItems.reduce(
+                  (sum, item) => sum + Number(item.partsPrice) + Number(item.laborPrice),
+                  0,
+                )
+              : Number(checkoutInspection.damageCostEstimate ?? 0) * 1.5;
+          const damageStatus =
+            booking.status === 'COMPLETED'
+              ? 'SETTLED'
+              : booking.status === 'AWAITING_PAYMENT'
+                ? 'AWAITING_PAYMENT'
+                : 'PENDING';
+          damageBreakdown = {
+            lineItems: lineItems.map((item) => ({
+              id: item.id,
+              partType: item.partType,
+              customPartName: item.customPartName,
+              partsPrice: Number(item.partsPrice),
+              laborPrice: Number(item.laborPrice),
+              subtotal: Number(item.partsPrice) + Number(item.laborPrice),
+            })),
+            totalDamageCharge,
+            status: damageStatus,
+          };
+        }
+      }
 
       // Enrich participants: resolve name/phone for registered users
       const userIds = rawParticipants.map((p) => p.userId).filter(Boolean) as string[];
@@ -255,6 +306,7 @@ export const bookingController = {
                 actualEndAt: session.actualEndAt,
               }
             : null,
+          damage_breakdown: damageBreakdown,
         },
       });
     } catch (err) {
