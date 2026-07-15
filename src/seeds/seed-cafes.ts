@@ -247,6 +247,56 @@ async function seed() {
         damage_multiplier: 2.5,
         compatible_track_types: ['DRIFT'],
       },
+      {
+        name: 'Tamiya MB-01 Mazda MX-5',
+        description:
+          'Xe touring 2WD nhỏ gọn với thân Mazda MX-5, dễ điều khiển và phù hợp cho khách lần đầu làm quen với sân RC.',
+        tier: 'STANDARD',
+        hourly_rate: 75000,
+        security_deposit: 0,
+        damage_multiplier: 1.0,
+        compatible_track_types: ['DRIFT', 'OBSTACLE'],
+      },
+      {
+        name: 'Kyosho Fazer Mk2 Dodge Charger',
+        description:
+          'Khung 4WD shaft-drive ổn định, thân Dodge Charger cổ điển. Lựa chọn cân bằng cho các buổi tập drift cơ bản.',
+        tier: 'STANDARD',
+        hourly_rate: 85000,
+        security_deposit: 0,
+        damage_multiplier: 1.0,
+        compatible_track_types: ['DRIFT'],
+      },
+      {
+        name: 'Arrma Senton 4x4 MEGA',
+        description:
+          'Short-course truck 4WD bền bỉ, gầm cao và lốp địa hình. Phù hợp chạy obstacle với các cú nhảy vừa phải.',
+        tier: 'PREMIUM',
+        hourly_rate: 145000,
+        security_deposit: 0,
+        damage_multiplier: 1.7,
+        compatible_track_types: ['OBSTACLE'],
+      },
+      {
+        name: 'Axial SCX10 III Jeep Gladiator',
+        description:
+          'Crawler 4WD mô phỏng Jeep Gladiator, mô-men xoắn lớn và leo chướng ngại vật chậm, chính xác.',
+        tier: 'PREMIUM',
+        hourly_rate: 155000,
+        security_deposit: 0,
+        damage_multiplier: 1.8,
+        compatible_track_types: ['OBSTACLE'],
+      },
+      {
+        name: 'Team Associated B74.2D',
+        description:
+          'Buggy 4WD đua địa hình với khung nhẹ và bộ giảm xóc dầu hiệu năng cao, dành cho người chơi đã có kinh nghiệm.',
+        tier: 'RESTRICTED',
+        hourly_rate: 210000,
+        security_deposit: 0,
+        damage_multiplier: 2.4,
+        compatible_track_types: ['OBSTACLE'],
+      },
     ],
     trackTypes,
   );
@@ -294,6 +344,56 @@ async function seed() {
         hourly_rate: 200000,
         security_deposit: 0,
         damage_multiplier: 3.0,
+        compatible_track_types: ['DRIFT'],
+      },
+      {
+        name: 'MST FXX 2.0 S',
+        description:
+          'Xe drift front-motor RWD với bộ lái góc rộng, giúp người mới dễ cảm nhận chuyển động văng đuôi trên sân epoxy.',
+        tier: 'STANDARD',
+        hourly_rate: 85000,
+        security_deposit: 0,
+        damage_multiplier: 1.0,
+        compatible_track_types: ['DRIFT'],
+      },
+      {
+        name: 'Reve D RDX',
+        description:
+          'Khung RWD hiện đại, trọng tâm thấp và khả năng giữ góc drift ổn định. Phù hợp luyện line và chuyển hướng.',
+        tier: 'STANDARD',
+        hourly_rate: 95000,
+        security_deposit: 0,
+        damage_multiplier: 1.1,
+        compatible_track_types: ['DRIFT'],
+      },
+      {
+        name: 'Yokomo RD2.0',
+        description:
+          'Dòng RWD hiệu năng cao với servo phản hồi nhanh và thiết lập treo tinh chỉnh cho các đoạn cua tốc độ cao.',
+        tier: 'PREMIUM',
+        hourly_rate: 135000,
+        security_deposit: 0,
+        damage_multiplier: 1.5,
+        compatible_track_types: ['DRIFT'],
+      },
+      {
+        name: '3Racing Sakura D5 MR',
+        description:
+          'Xe drift mid-rear motor linh hoạt, thân xe Nissan Silvia. Lựa chọn thực hành tandem và kiểm soát throttle.',
+        tier: 'STANDARD',
+        hourly_rate: 90000,
+        security_deposit: 0,
+        damage_multiplier: 1.0,
+        compatible_track_types: ['DRIFT'],
+      },
+      {
+        name: 'Overdose Vacula II',
+        description:
+          'Khung thi đấu cao cấp bằng carbon, được tinh chỉnh cho người chơi chuyên sâu và các buổi drift nâng cao.',
+        tier: 'RESTRICTED',
+        hourly_rate: 220000,
+        security_deposit: 0,
+        damage_multiplier: 2.5,
         compatible_track_types: ['DRIFT'],
       },
     ],
@@ -584,6 +684,8 @@ async function seedVehicles(
   }[],
   trackTypes: { id: string; code: string }[],
 ) {
+  const targetAvailableUnits = 6;
+
   for (const v of vehicles) {
     const compatibleTrackTypeIds = v.compatible_track_types.map((code) => {
       const match = trackTypes.find((t) => t.code === code);
@@ -632,85 +734,100 @@ async function seedVehicles(
       );
     }
 
-    // 2. Check if physical units exist for this catalog
-    const existingUnits = await AppDataSource.query<{ id: string }[]>(
-      `SELECT id FROM vehicles WHERE catalog_id = $1 AND deleted_at IS NULL`,
+    // 2. Ensure each catalog has enough available units for concurrent booking tests.
+    const [availableCount] = await AppDataSource.query<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM vehicles
+       WHERE catalog_id = $1 AND status = 'AVAILABLE' AND deleted_at IS NULL`,
       [catalogId],
     );
+    const missingAvailableUnits = Math.max(targetAvailableUnits - Number(availableCount.count), 0);
+    const vehicleCode = v.name
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    const availableColors = ['Blue', 'Silver', 'White', 'Orange', 'Green', 'Purple'];
 
-    if (existingUnits.length > 0) {
-      logger.warn('Seed', `  Skip physical units for catalog ${v.name} — already exist`);
-      const states = [
-        { status: 'AVAILABLE', identifier: `${v.name.split(' ')[0]}-01-Blue` },
-        { status: 'IN_USE', identifier: `${v.name.split(' ')[0]}-02-Red` },
-        { status: 'MAINTENANCE', identifier: `${v.name.split(' ')[0]}-03-Maint` },
-        { status: 'RETIRED', identifier: `${v.name.split(' ')[0]}-04-Retired` },
-      ];
-      for (const s of states) {
-        await AppDataSource.query(
-          `UPDATE vehicles SET status = $1 WHERE catalog_id = $2 AND identifier = $3`,
-          [s.status, catalogId, s.identifier],
-        );
-      }
-    } else {
-      // Seed 4 physical units with different states for Postman testing
-      const states = [
-        {
-          status: 'AVAILABLE',
-          color: 'Blue',
-          identifier: `${v.name.split(' ')[0]}-01-Blue`,
-          notes: 'Hoạt động tốt, thân vỏ trầy xước nhẹ.',
-          metadata: { body_shell: 'Subaru Impreza WRX', led: 'Chỉ có đèn trước' },
-          last_maintenance_at: null,
-        },
-        {
-          status: 'IN_USE',
-          color: 'Red',
-          identifier: `${v.name.split(' ')[0]}-02-Red`,
-          notes: 'Đang chạy trong slot đặt trước.',
-          metadata: { body_shell: 'Toyota GR Supra', led: 'Hệ thống led gầm RGB' },
-          last_maintenance_at: null,
-        },
-        {
-          status: 'MAINTENANCE',
-          color: 'Yellow',
-          identifier: `${v.name.split(' ')[0]}-03-Maint`,
-          notes: 'Đang thay thế động cơ brushless và servo lái.',
-          metadata: { body_shell: 'Nissan GT-R R35', led: 'Đầy đủ led trước sau' },
-          last_maintenance_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-        },
-        {
-          status: 'RETIRED',
-          color: 'Black',
-          identifier: `${v.name.split(' ')[0]}-04-Retired`,
-          notes: 'Hỏng hóc nặng khung gầm, ngưng hoạt động chờ thanh lý.',
-          metadata: { body_shell: 'Mazda RX-7', led: 'Không hoạt động' },
-          last_maintenance_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), // 10 days ago
-        },
-      ];
+    for (let i = 0; i < missingAvailableUnits; i += 1) {
+      const sequence = Number(availableCount.count) + i + 1;
+      const color = availableColors[(sequence - 1) % availableColors.length];
+      await AppDataSource.query(
+        `INSERT INTO vehicles (
+          cafe_id, catalog_id, status, identifier, color,
+          distinctive_image_url, notes, metadata
+        ) VALUES ($1, $2, 'AVAILABLE', $3, $4, $5, $6, $7)`,
+        [
+          cafeId,
+          catalogId,
+          `${vehicleCode}-AVAIL-${String(sequence).padStart(2, '0')}`,
+          color,
+          `https://cdn.rcfield.vn/vehicles/unit-${color.toLowerCase()}.jpg`,
+          'Sẵn sàng cho khách thuê và kiểm thử luồng đặt xe.',
+          JSON.stringify({ seeded_for: 'availability_testing', unit_number: sequence }),
+        ],
+      );
+    }
 
-      for (const state of states) {
-        await AppDataSource.query(
-          `INSERT INTO vehicles (
-            cafe_id, catalog_id, status, last_maintenance_at,
-            identifier, color, distinctive_image_url, notes, metadata
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [
-            cafeId,
-            catalogId,
-            state.status,
-            state.last_maintenance_at,
-            state.identifier,
-            state.color,
-            `https://cdn.rcfield.vn/vehicles/unit-${state.color.toLowerCase()}.jpg`,
-            state.notes,
-            JSON.stringify(state.metadata),
-          ],
-        );
-      }
+    if (missingAvailableUnits > 0) {
       logger.info(
         'Seed',
-        `    Seeded 4 physical units (AVAILABLE, IN_USE, MAINTENANCE, RETIRED) under ${v.name}`,
+        `    Added ${missingAvailableUnits} AVAILABLE unit(s) under ${v.name} (${targetAvailableUnits} available total)`,
+      );
+    }
+
+    // Keep one unit in each non-available state for operational test cases.
+    const testStates = [
+      {
+        status: 'IN_USE',
+        identifier: `${vehicleCode}-IN-USE`,
+        color: 'Red',
+        notes: 'Đang chạy trong slot đặt trước.',
+        metadata: { seeded_for: 'state_testing', body_shell: 'Toyota GR Supra' },
+        lastMaintenanceAt: null,
+      },
+      {
+        status: 'MAINTENANCE',
+        identifier: `${vehicleCode}-MAINTENANCE`,
+        color: 'Yellow',
+        notes: 'Đang thay thế động cơ brushless và servo lái.',
+        metadata: { seeded_for: 'state_testing', body_shell: 'Nissan GT-R R35' },
+        lastMaintenanceAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      },
+      {
+        status: 'RETIRED',
+        identifier: `${vehicleCode}-RETIRED`,
+        color: 'Black',
+        notes: 'Hỏng hóc nặng khung gầm, ngưng hoạt động chờ thanh lý.',
+        metadata: { seeded_for: 'state_testing', body_shell: 'Mazda RX-7' },
+        lastMaintenanceAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+      },
+    ];
+
+    for (const state of testStates) {
+      const [stateCount] = await AppDataSource.query<{ count: string }[]>(
+        `SELECT COUNT(*)::text AS count
+         FROM vehicles
+         WHERE catalog_id = $1 AND status = $2 AND deleted_at IS NULL`,
+        [catalogId, state.status],
+      );
+      if (Number(stateCount.count) > 0) continue;
+
+      await AppDataSource.query(
+        `INSERT INTO vehicles (
+          cafe_id, catalog_id, status, last_maintenance_at, identifier, color,
+          distinctive_image_url, notes, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          cafeId,
+          catalogId,
+          state.status,
+          state.lastMaintenanceAt,
+          state.identifier,
+          state.color,
+          `https://cdn.rcfield.vn/vehicles/unit-${state.color.toLowerCase()}.jpg`,
+          state.notes,
+          JSON.stringify(state.metadata),
+        ],
       );
     }
   }
