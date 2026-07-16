@@ -168,6 +168,22 @@ export function meetsMinimumBookingNotice(
   return slotStart.getTime() >= now.getTime() + noticeMinutes * 60 * 1000;
 }
 
+/**
+ * Customer self-service bookings may be made through the final calendar day
+ * configured by the cafe. Both ends of a multi-slot booking must fit in that
+ * window, so a booking cannot spill into an unbookable following day.
+ */
+export function isWithinMaxAdvanceBookingDays(
+  slotStart: Date,
+  slotEnd: Date,
+  maxAdvanceBookingDays: number,
+  now: Date = new Date(),
+): boolean {
+  const todayStart = getVietnamLocalMidnightUtcMs(now);
+  const firstUnbookableDay = todayStart + (maxAdvanceBookingDays + 1) * DAY_MS;
+  return slotStart.getTime() >= todayStart && slotEnd.getTime() <= firstUnbookableDay;
+}
+
 function assertMinimumBookingNotice(slotStart: Date, minBookingNoticeMinutes: number): void {
   if (meetsMinimumBookingNotice(slotStart, minBookingNoticeMinutes)) return;
 
@@ -175,6 +191,20 @@ function assertMinimumBookingNotice(slotStart: Date, minBookingNoticeMinutes: nu
     `Bookings must be made at least ${minBookingNoticeMinutes} minutes in advance`,
     400,
     'MIN_BOOKING_NOTICE_NOT_MET',
+  );
+}
+
+function assertMaxAdvanceBookingDays(
+  slotStart: Date,
+  slotEnd: Date,
+  maxAdvanceBookingDays: number,
+): void {
+  if (isWithinMaxAdvanceBookingDays(slotStart, slotEnd, maxAdvanceBookingDays)) return;
+
+  throw new AppError(
+    `Bookings can only be made up to ${maxAdvanceBookingDays} days in advance`,
+    400,
+    'MAX_ADVANCE_BOOKING_DAYS_EXCEEDED',
   );
 }
 
@@ -213,6 +243,7 @@ async function countOccupiedByocParticipants(
   slotStart: Date,
   slotEnd: Date,
   trackConfigId?: string | null,
+  trackTypeId?: string | null,
 ): Promise<number> {
   const query = AppDataSource.getRepository(Booking)
     .createQueryBuilder('booking')
@@ -225,7 +256,24 @@ async function countOccupiedByocParticipants(
       statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
     });
 
-  if (trackConfigId) {
+  if (trackConfigId && trackTypeId) {
+    query.andWhere(
+      `(
+        booking.track_config_id = :trackConfigId
+        OR (
+          booking.track_config_id IS NULL
+          AND (
+            booking.snapshot ->> 'track_config_id' = CAST(:trackConfigId AS text)
+            OR (
+              booking.snapshot ->> 'track_config_id' IS NULL
+              AND booking.track_type_id = :trackTypeId
+            )
+          )
+        )
+      )`,
+      { trackConfigId, trackTypeId },
+    );
+  } else if (trackConfigId) {
     query.andWhere('booking.track_config_id = :trackConfigId', { trackConfigId });
   }
 
@@ -444,7 +492,17 @@ export async function createBooking(
     throw new AppError('Cannot book a slot in the past', 400, 'SLOT_IN_PAST');
   }
 
-  // Duplicate booking guard
+  const cafeRepo = AppDataSource.getRepository(Cafe);
+  const cafe = await cafeRepo.findOne({ where: { id: body.cafe_id } });
+  if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
+  assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
+  assertMinimumBookingNotice(slotStart, cafe.minBookingNoticeMinutes);
+  assertMaxAdvanceBookingDays(slotStart, slotEnd, cafe.maxAdvanceBookingDays);
+
+  // Validate the current cafe policy before returning an existing pending payment.
+  // This prevents a legacy pending booking outside a newly tightened window from
+  // being resumed through the duplicate-request shortcut.
   const bookingRepo = AppDataSource.getRepository(Booking);
   const existingBooking = await bookingRepo.findOne({
     where: {
@@ -481,13 +539,6 @@ export async function createBooking(
 
     await transition(existingBooking.id, 'PAYMENT_TIMEOUT');
   }
-
-  const cafeRepo = AppDataSource.getRepository(Cafe);
-  const cafe = await cafeRepo.findOne({ where: { id: body.cafe_id } });
-  if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
-  if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
-  assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
-  assertMinimumBookingNotice(slotStart, cafe.minBookingNoticeMinutes);
 
   const slotDuration = cafe.slotDurationMinutes;
   const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;
@@ -655,6 +706,7 @@ export async function createBooking(
         rangeSlotStart,
         rangeSlotEnd,
         resolvedTrackConfig?.id,
+        resolvedTrackConfig?.trackTypeId,
       );
       const locked = await acquireByocSlot(
         body.cafe_id,
@@ -1296,6 +1348,7 @@ export async function createWalkInBooking(
         rangeSlotStart,
         rangeSlotEnd,
         trackConfig.id,
+        trackConfig.trackTypeId,
       );
       const locked = await acquireByocSlot(
         cafeId,

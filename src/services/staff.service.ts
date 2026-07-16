@@ -44,6 +44,7 @@ import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { Cafe } from '../models/cafe.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
+import { TrackType } from '../models/track-type.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { Inspection } from '../models/inspection.entity';
 import { DamageLineItem } from '../models/damage-line-item.entity';
@@ -491,7 +492,25 @@ export async function activateStaffAccount(
   };
 }
 
+function getVietnamCalendarDate(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
 export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem[]> {
+  return getBookingsByDate(cafeId, getVietnamCalendarDate());
+}
+
+export async function getBookingsByDate(
+  cafeId: string,
+  bookingDate: string,
+): Promise<TodayBookingItem[]> {
   const rows = await AppDataSource.query<any[]>(
     `SELECT
        b.id,
@@ -511,10 +530,10 @@ export async function getTodayBookings(cafeId: string): Promise<TodayBookingItem
      JOIN cafes c ON c.id = b.cafe_id
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
      WHERE b.cafe_id = $1
-       AND (b.slot_start AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+       AND (b.slot_start AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = $2::date
        AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'COMPLETED', 'CANCELLED')
      ORDER BY b.slot_start ASC`,
-    [cafeId],
+    [cafeId, bookingDate],
   );
 
   const bookingsList: TodayBookingItem[] = [];
@@ -1143,6 +1162,20 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
   }
 
   const existing = await AppDataSource.getRepository(Session).findOne({ where: { bookingId } });
+  // A session that has already become active is safe to reopen. CHECKED_IN only
+  // means the handover is pending, so it must still obey the check-in deadline.
+  if (existing && existing.status !== SessionStatus.CHECKED_IN) {
+    return existing;
+  }
+
+  if (booking.slotStart.getTime() + 30 * 60 * 1000 < Date.now()) {
+    throw new AppError(
+      'Đơn đã quá thời hạn check-in 30 phút kể từ giờ bắt đầu',
+      400,
+      'CHECK_IN_WINDOW_EXPIRED',
+    );
+  }
+
   if (existing) {
     return existing;
   }
@@ -1233,6 +1266,9 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   if (!cafe) {
     throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
   }
+  const trackType = await AppDataSource.getRepository(TrackType).findOne({
+    where: { id: booking.trackTypeId },
+  });
 
   const participants = await AppDataSource.getRepository(SessionParticipant).find({
     where: { sessionId },
@@ -1444,6 +1480,26 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     };
   }
   const extensionPricingOptions = await buildExtensionPricingOptions(booking, session, cafe);
+  const paymentComponents = await AppDataSource.getRepository(PaymentComponent).find({
+    where: { bookingId: booking.id },
+  });
+  const slotFee = paymentComponents
+    .filter((component) => component.type === PaymentComponentType.SLOT_FEE)
+    .reduce((sum, component) => sum + Number(component.amount), 0);
+  const rentalFee = paymentComponents
+    .filter((component) => component.type === PaymentComponentType.RENTAL_FEE)
+    .reduce((sum, component) => sum + Number(component.amount), 0);
+  const fnbPreorderFee = mappedFnbOrders
+    .filter(
+      (order) =>
+        order.orderType === FnbOrderType.PRE_ORDER && order.status !== FnbOrderStatus.CANCELLED,
+    )
+    .reduce((sum, order) => sum + Number(order.total), 0);
+  const hasPendingPayment = paymentComponents.some(
+    (component) =>
+      component.status === PaymentComponentStatus.PENDING ||
+      component.status === PaymentComponentStatus.PENDING_REFUND,
+  );
 
   return {
     sessionId: session.id,
@@ -1472,6 +1528,45 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     approvedExtensions: mappedApprovedExtensions,
     extensionPricingOptions,
     fnbOrders: mappedFnbOrders,
+    // A session can be opened from the staff's historical list, where the
+    // in-memory "today" context does not contain its booking. Return the
+    // booking summary here so that page can render after a reload as well.
+    booking: {
+      bookingId: booking.id,
+      shortCode: `RCF-${booking.id.substring(0, 4).toUpperCase()}`,
+      cafeId: cafe.id,
+      cafeName: cafe.name,
+      cafeAddress: cafe.address,
+      cafePhone: cafe.phone,
+      trackName: trackType?.name || 'Đường đua',
+      trackType: trackType?.code || '',
+      bookingMode: 'SINGLE',
+      playMode: booking.playMode,
+      source: booking.source,
+      status: booking.status,
+      slotStart: booking.slotStart.toISOString(),
+      slotEnd: booking.slotEnd.toISOString(),
+      slotCount: booking.slotCount,
+      depositAmount: paymentComponents
+        .filter((component) => component.type === PaymentComponentType.SECURITY_DEPOSIT)
+        .reduce((sum, component) => sum + Number(component.amount), 0),
+      slotFee,
+      rentalFee,
+      fnbPreorderFee,
+      discountAmount: Number(booking.discountAmount) || 0,
+      totalAmount: slotFee + rentalFee + fnbPreorderFee,
+      paymentStatus: hasPendingPayment ? 'UNPAID' : 'PAID',
+      payment_components: paymentComponents,
+      plannedParticipants: participants.map(
+        (participant) => participant.displayName || 'Người chơi',
+      ),
+      participantDetails: participants.map((participant) => ({
+        name: participant.displayName || 'Người chơi',
+        isBooker: false,
+      })),
+      plannedVehicles: vehiclesList.map((vehicle) => vehicle.name),
+      sessions: [],
+    },
   };
 }
 
@@ -2715,13 +2810,6 @@ export async function staffConfirmCheckout(
   const sessionRepo = AppDataSource.getRepository(Session);
   const session = await sessionRepo.findOne({ where: { id: sessionId } });
   if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
-  if (session.status !== SessionStatus.CHECKING_OUT) {
-    throw new AppError(
-      'Phiên chạy không ở trạng thái chờ xác nhận trả xe',
-      400,
-      'INVALID_SESSION_STATE',
-    );
-  }
 
   const inspRepo = AppDataSource.getRepository(Inspection);
   const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
@@ -2729,6 +2817,26 @@ export async function staffConfirmCheckout(
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
   if (inspection.type !== InspectionType.CHECK_OUT) {
     throw new AppError('Biên bản không phải loại CHECK_OUT', 400, 'INVALID_INSPECTION_TYPE');
+  }
+
+  // Customer confirmation can complete the checkout while this staff page is
+  // still open. Treat a second confirmation as a successful no-op instead of
+  // leaving the staff UI stuck on stale CHECKING_OUT data.
+  if (session.status === SessionStatus.COMPLETED && inspection.customerConfirmed) {
+    return {
+      success: true,
+      sessionId,
+      sessionStatus: SessionStatus.COMPLETED,
+      alreadyCompleted: true,
+    };
+  }
+
+  if (session.status !== SessionStatus.CHECKING_OUT) {
+    throw new AppError(
+      'Phiên chạy không ở trạng thái chờ xác nhận trả xe',
+      400,
+      'INVALID_SESSION_STATE',
+    );
   }
 
   // Staff confirms at counter after customer reviews breakdown

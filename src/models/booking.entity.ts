@@ -31,9 +31,6 @@ export class Booking {
     name: 'track_config_id',
     type: 'uuid',
     nullable: true,
-    select: false,
-    insert: false,
-    update: false,
   })
   trackConfigId: string | null;
 

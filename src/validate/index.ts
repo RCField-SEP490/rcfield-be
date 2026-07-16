@@ -29,6 +29,16 @@ export const LoginSchema = z.object({
   password: z.string().min(6),
 });
 
+export const StaffBookingsQuerySchema = z.object({
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date phải có định dạng YYYY-MM-DD')
+    .refine((value) => {
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    }, 'date không hợp lệ'),
+});
+
 export const RegisterSchema = z.object({
   full_name: z.string().min(2).max(255),
   email: z.string().email().max(255),
@@ -285,6 +295,9 @@ const CafeUpsertBaseSchema = z.object({
     example: 8,
   }),
   min_booking_notice_minutes: z.number().int().nonnegative().optional().default(60).openapi({
+    example: 30,
+  }),
+  max_advance_booking_days: z.number().int().min(1).max(365).optional().default(30).openapi({
     example: 30,
   }),
   byoc_capacity: z.number().int().nonnegative().optional().default(5).openapi({ example: 4 }),
@@ -1100,6 +1113,7 @@ export const ListCafeBookingsSchema = z.object({
 
 export const ListMyBookingsSchema = z.object({
   status: z.nativeEnum(BookingStatus).optional(),
+  play_mode: z.nativeEnum(BookingMode).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
@@ -1254,11 +1268,12 @@ export const SubmitInspectionV2Schema = z.object({
   photos: z
     .array(
       z.object({
-        angle: z.enum(['FRONT', 'BACK', 'LEFT', 'RIGHT']),
+        angle: z.enum(['FRONT', 'BACK', 'LEFT', 'RIGHT', 'TOP', 'BOTTOM', 'DETAIL', 'OTHER']),
         url: z.string().url(),
         notes: z.string().optional(),
       }),
     )
+    .max(6, 'Tối đa 6 ảnh cho mỗi biên bản kiểm xe')
     .optional(),
   checklist: z
     .array(

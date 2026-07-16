@@ -264,7 +264,22 @@ export const cafeController = {
           .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses });
 
         if (trackConfig) {
-          qb.andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id });
+          qb.andWhere(
+            `(
+              b.track_config_id = :trackConfigId
+              OR (
+                b.track_config_id IS NULL
+                AND (
+                  b.snapshot ->> 'track_config_id' = CAST(:trackConfigId AS text)
+                  OR (
+                    b.snapshot ->> 'track_config_id' IS NULL
+                    AND b.track_type_id = :trackTypeId
+                  )
+                )
+              )
+            )`,
+            { trackConfigId: trackConfig.id, trackTypeId: trackConfig.trackTypeId },
+          );
         }
 
         // BYOC capacity is counted per participant. Legacy bookings without a
@@ -374,7 +389,25 @@ export const cafeController = {
           .createQueryBuilder('b')
           .where('b.cafe_id = :cafeId', { cafeId })
           .andWhere('b.play_mode = :mode', { mode: BookingMode.RENTAL })
-          .andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id })
+          // Preserve the exact track from the booking snapshot for records made
+          // before track_config_id was persisted. Only truly old records with no
+          // snapshot fall back to their track type.
+          .andWhere(
+            `(
+              b.track_config_id = :trackConfigId
+              OR (
+                b.track_config_id IS NULL
+                AND (
+                  b.snapshot ->> 'track_config_id' = CAST(:trackConfigId AS text)
+                  OR (
+                    b.snapshot ->> 'track_config_id' IS NULL
+                    AND b.track_type_id = :trackTypeId
+                  )
+                )
+              )
+            )`,
+            { trackConfigId: trackConfig.id, trackTypeId: trackConfig.trackTypeId },
+          )
           .andWhere('b.slot_start < :slotEnd', { slotEnd })
           .andWhere('b.slot_end > :slotStart', { slotStart })
           .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
