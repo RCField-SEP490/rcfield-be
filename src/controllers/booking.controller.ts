@@ -212,7 +212,9 @@ export const bookingController = {
             tier: vehicle?.catalog?.tier ?? null,
             identifier: vehicle?.identifier ?? null,
             color: vehicle?.color ?? null,
-            coverImageUrl: vehicle?.catalog?.coverImageUrl ?? vehicle?.distinctiveImageUrl ?? null,
+            // A unit's own photo represents the assigned rental car more accurately.
+            // Use the catalog cover only when that unit has no photo.
+            coverImageUrl: vehicle?.distinctiveImageUrl ?? vehicle?.catalog?.coverImageUrl ?? null,
           };
         }),
       );
@@ -343,6 +345,9 @@ export const bookingController = {
       if (query.status) {
         qb = qb.andWhere('b.status = :status', { status: query.status });
       }
+      if (query.play_mode) {
+        qb = qb.andWhere('b.play_mode = :playMode', { playMode: query.play_mode });
+      }
 
       // Tạo câu query đếm tổng số lượng phù hợp với filter status
       let countQb = AppDataSource.getRepository(Booking)
@@ -350,6 +355,9 @@ export const bookingController = {
         .where('b.customer_id = :customerId', { customerId: req.user!.userId });
       if (query.status) {
         countQb = countQb.andWhere('b.status = :status', { status: query.status });
+      }
+      if (query.play_mode) {
+        countQb = countQb.andWhere('b.play_mode = :playMode', { playMode: query.play_mode });
       }
 
       const [rawAndEntities, total] = await Promise.all([
