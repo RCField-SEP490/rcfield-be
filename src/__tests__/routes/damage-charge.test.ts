@@ -24,6 +24,7 @@ async function seedCheckoutScenario(opts: {
   lineItems?: LineItemSeed[];
   damageCostEstimate?: number;
   sessionStatus?: string;
+  customerConfirmed?: boolean;
 }) {
   const customer = await createTestUser({ role: UserRole.CUSTOMER });
   const staff = await createTestUser({ role: UserRole.STAFF });
@@ -58,10 +59,16 @@ async function seedCheckoutScenario(opts: {
   const [inspection] = await AppDataSource.query(
     `INSERT INTO inspections
        (session_id, type, subject_type, performed_by,
-        damage_noted, damage_cost_estimate, pre_existing_flag, customer_confirmed)
-     VALUES ($1, 'CHECK_OUT', 'RENTAL_VEHICLE', $2, $3, $4, true, false)
+       damage_noted, damage_cost_estimate, pre_existing_flag, customer_confirmed)
+     VALUES ($1, 'CHECK_OUT', 'RENTAL_VEHICLE', $2, $3, $4, true, $5)
      RETURNING *`,
-    [session.id, staff.id, damageNoted, opts.damageCostEstimate ?? null],
+    [
+      session.id,
+      staff.id,
+      damageNoted,
+      opts.damageCostEstimate ?? null,
+      opts.customerConfirmed ?? false,
+    ],
   );
 
   for (const li of opts.lineItems ?? []) {
@@ -205,6 +212,25 @@ describe('POST /api/v1/staff/sessions/:id/inspections — submitInspection', () 
 // ── POST /api/v1/staff/sessions/:id/confirm-checkout ──────────────────────────
 
 describe('POST /api/v1/staff/sessions/:id/confirm-checkout', () => {
+  it('trả thành công khi khách đã hoàn tất checkout trước lúc staff làm mới trang', async () => {
+    const { staffToken, session, inspection } = await seedCheckoutScenario({
+      depositAmount: 300000,
+      sessionStatus: 'COMPLETED',
+      customerConfirmed: true,
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/staff/sessions/${session.id}/confirm-checkout`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ inspectionId: inspection.id })
+      .expect(200);
+
+    expect(res.body.data).toMatchObject({
+      sessionStatus: 'COMPLETED',
+      alreadyCompleted: true,
+    });
+  });
+
   it('từ chối khi session không ở CHECKING_OUT', async () => {
     const { staffToken, session, inspection } = await seedCheckoutScenario({
       depositAmount: 300000,

@@ -3,7 +3,8 @@ import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import { transition } from '../services/booking.service';
 import { processRefund } from '../services/payment.service';
-import { UserRole } from '../types';
+import { Session } from '../models/session.entity';
+import { SessionStatus, UserRole } from '../types';
 
 /** Runs every minute — expires PENDING bookings and marks CONFIRMED no-shows */
 export function scheduleBookingTimeout(): void {
@@ -25,14 +26,19 @@ export function scheduleBookingTimeout(): void {
         }
       }
 
-      // NO_SHOW: CONFIRMED bookings where slot_start + 30 min has passed and no session exists
+      // NO_SHOW: a CHECKED_IN session only represents a handover in progress.
+      // If the handover is not completed within 30 minutes, it must not keep the
+      // booking alive indefinitely. Active/checkout sessions represent an actual
+      // attended play session and are therefore excluded.
       const noShows: { id: string }[] = await AppDataSource.query(
         `SELECT b.id FROM bookings b
          WHERE b.status = 'CONFIRMED'
            AND b.slot_start + INTERVAL '30 minutes' < NOW()
            AND b.deleted_at IS NULL
            AND NOT EXISTS (
-             SELECT 1 FROM sessions s WHERE s.booking_id = b.id
+             SELECT 1 FROM sessions s
+             WHERE s.booking_id = b.id
+               AND s.status IN ('ACTIVE', 'EXTENDING', 'CHECKING_OUT', 'COMPLETED')
            )`,
       );
 
@@ -40,7 +46,16 @@ export function scheduleBookingTimeout(): void {
         logger.info('BookingTimeout', `marking ${noShows.length} booking(s) as NO_SHOW`);
         for (const row of noShows) {
           await transition(row.id, 'NO_SHOW')
-            .then(() => processRefund(row.id, UserRole.PROVIDER, true))
+            .then(async () => {
+              await AppDataSource.getRepository(Session)
+                .createQueryBuilder()
+                .update()
+                .set({ status: SessionStatus.CANCELLED, actualEndAt: new Date() })
+                .where('booking_id = :bookingId', { bookingId: row.id })
+                .andWhere('status = :status', { status: SessionStatus.CHECKED_IN })
+                .execute();
+              await processRefund(row.id, UserRole.PROVIDER, true);
+            })
             .catch((err) => {
               logger.error('BookingTimeout', `failed to NO_SHOW bookingId=${row.id}`, err);
             });
