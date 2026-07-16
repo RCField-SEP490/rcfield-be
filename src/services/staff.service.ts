@@ -1681,6 +1681,25 @@ export async function submitInspection(
     0,
   );
 
+  // Create DAMAGE_CHARGE PENDING component immediately so the customer can pay via VNPAY
+  // while session is still CHECKING_OUT. settleSessionCheckoutBilling will skip re-creation
+  // via its !exists guard when the session is eventually confirmed/completed.
+  if (inspection.type === InspectionType.CHECK_OUT && totalDamageCharge > 0 && booking) {
+    const compRepo = AppDataSource.getRepository(PaymentComponent);
+    const existing = await compRepo.findOne({
+      where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
+    });
+    if (!existing) {
+      const damageComp = compRepo.create({
+        bookingId: booking.id,
+        type: PaymentComponentType.DAMAGE_CHARGE,
+        amount: totalDamageCharge,
+        status: PaymentComponentStatus.PENDING,
+      });
+      await compRepo.save(damageComp);
+    }
+  }
+
   logger.info('Staff', 'submitInspection', {
     sessionId,
     inspectionId: inspection.id,
@@ -2794,6 +2813,28 @@ export async function updateDamageLineItems(
 
   inspection.damageNoted = saved.length > 0;
   await inspRepo.save(inspection);
+
+  // Sync the DAMAGE_CHARGE PENDING component amount to match updated line items
+  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
+  if (session) {
+    const compRepo = AppDataSource.getRepository(PaymentComponent);
+    const damageComp = await compRepo.findOne({
+      where: { bookingId: session.bookingId, type: PaymentComponentType.DAMAGE_CHARGE },
+    });
+    if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
+      damageComp.amount = totalDamageCharge;
+      await compRepo.save(damageComp);
+    } else if (!damageComp && totalDamageCharge > 0) {
+      await compRepo.save(
+        compRepo.create({
+          bookingId: session.bookingId,
+          type: PaymentComponentType.DAMAGE_CHARGE,
+          amount: totalDamageCharge,
+          status: PaymentComponentStatus.PENDING,
+        }),
+      );
+    }
+  }
 
   return {
     inspectionId,
