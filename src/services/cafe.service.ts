@@ -79,6 +79,7 @@ export interface CreateCafeBody {
   slot_fee_rate: number;
   max_concurrent_bookings: number;
   min_booking_notice_minutes: number;
+  max_advance_booking_days: number;
   byoc_capacity: number;
   amenity_ids?: string[];
   rules?: string[];
@@ -480,6 +481,7 @@ export async function createCafe(
   cafe.slotFeeRate = body.slot_fee_rate;
   cafe.maxConcurrentBookings = body.max_concurrent_bookings;
   cafe.minBookingNoticeMinutes = body.min_booking_notice_minutes;
+  cafe.maxAdvanceBookingDays = body.max_advance_booking_days;
   cafe.byocCapacity = body.byoc_capacity;
   cafe.amenityIds = body.amenity_ids ?? [];
   cafe.rules = body.rules ?? [];
@@ -558,6 +560,9 @@ export async function updateCafe(
   }
   if (body.min_booking_notice_minutes !== undefined) {
     cafe.minBookingNoticeMinutes = body.min_booking_notice_minutes;
+  }
+  if (body.max_advance_booking_days !== undefined) {
+    cafe.maxAdvanceBookingDays = body.max_advance_booking_days;
   }
   if (body.byoc_capacity !== undefined) cafe.byocCapacity = body.byoc_capacity;
   if (body.amenity_ids !== undefined) cafe.amenityIds = body.amenity_ids;
