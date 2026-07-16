@@ -29,7 +29,7 @@
     "test:kb": "ts-node --transpile-only src/scripts/test-kb.ts",
     "test:staff-customer-flow": "ts-node --transpile-only src/scripts/test-staff-customer-flow.ts",
     "test:staff-flow": "npm run test:staff-customer-flow",
-    "test": "jest --runInBand",
+    "test": "sh scripts/run-jest.sh",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint src",
