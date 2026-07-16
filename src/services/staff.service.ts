@@ -1580,13 +1580,29 @@ export async function submitInspection(
       await settleSessionCheckoutBilling(sessionId, inspection);
     } else {
       // CHECK_OUT — set CHECKING_OUT and notify customer to confirm billing
-      session.status = SessionStatus.CHECKING_OUT;
-      session.checkedOutBy = staffUserId;
-      await AppDataSource.getRepository(Session).save(session);
+      if (booking && booking.playMode === 'BYOC') {
+        session.status = SessionStatus.COMPLETED;
+        session.actualEndAt = new Date();
+        session.checkedOutBy = staffUserId;
+        await AppDataSource.getRepository(Session).save(session);
+
+        booking.status = BookingStatus.COMPLETED;
+        booking.completedAt = new Date();
+        await AppDataSource.getRepository(Booking).save(booking);
+
+        await settleSessionCheckoutBilling(sessionId, inspection);
+      } else {
+        session.status = SessionStatus.CHECKING_OUT;
+        session.checkedOutBy = staffUserId;
+        await AppDataSource.getRepository(Session).save(session);
+      }
 
       if (activeSVs.length > 0) {
         for (const sv of activeSVs) {
           sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+          if (booking && booking.playMode === 'BYOC') {
+            sv.returnedAt = new Date();
+          }
           await svRepo.save(sv);
         }
       }
@@ -1595,26 +1611,42 @@ export async function submitInspection(
 
   // Notify customer via WebSocket and save in DB
   if (booking?.customerId) {
-    const eventType =
-      inspection.type === InspectionType.CHECK_IN
-        ? 'SESSION_CHECKIN_INSPECTION'
-        : 'SESSION_CHECKOUT_INSPECTION';
-    await createNotification(
-      booking.customerId,
-      eventType as any,
-      inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
-      inspection.type === InspectionType.CHECK_IN
-        ? 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.'
-        : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
-    );
+    if (booking.playMode === 'BYOC' && inspection.type === InspectionType.CHECK_OUT) {
+      await createNotification(
+        booking.customerId,
+        NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
+        'Hoàn thành phiên chơi',
+        'Phiên chơi của bạn đã kết thúc thành công. Cảm ơn bạn!',
+      );
 
-    wsService.pushToUser(booking.customerId, eventType, {
-      sessionId,
-      inspectionId: inspection.id,
-      type: inspection.type,
-      route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
-      damageFlagged: !!damageFlagged,
-    });
+      wsService.pushToUser(booking.customerId, 'CUSTOMER_CHECKOUT_CONFIRMED', {
+        sessionId,
+        inspectionId: inspection.id,
+        sessionStatus: session.status,
+      });
+    } else {
+      const eventType =
+        inspection.type === InspectionType.CHECK_IN
+          ? 'SESSION_CHECKIN_INSPECTION'
+          : 'SESSION_CHECKOUT_INSPECTION';
+      await createNotification(
+        booking.customerId,
+        eventType as any,
+        inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
+        inspection.type === InspectionType.CHECK_IN
+          ? 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.'
+          : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
+      );
+
+      wsService.pushToUser(booking.customerId, eventType, {
+        sessionId,
+        bookingId: booking.id,
+        inspectionId: inspection.id,
+        type: inspection.type,
+        route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+        damageFlagged: !!damageFlagged,
+      });
+    }
   }
 
   return inspection;
