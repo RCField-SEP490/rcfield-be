@@ -5,7 +5,7 @@ import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 
 const SEED_CONTEST_PREFIX = '[SEED-CONTEST]';
-const CONTEST_STORY_DATE = new Date('2026-07-14T09:00:00+07:00');
+const CONTEST_STORY_DATE = new Date('2026-07-16T09:00:00+07:00');
 const VICTORY_CHALLENGE_SOURCE_URL =
   'https://baokhanhhoa.vn/the-thao/202605/giai-dua-xe-o-to-the-thao-dia-hinh-quoc-te-victory-challenge-2026-tro-lai-nha-trang-42b4cb8/';
 const VICTORY_CHALLENGE_BANNER_URL =
@@ -16,6 +16,10 @@ const TEST_CUSTOMERS = [
   { email: 'contest.customer2@gmail.com', full_name: 'Trần Gia Bảo' },
   { email: 'contest.customer3@gmail.com', full_name: 'Lê Minh Quân' },
   { email: 'contest.customer4@gmail.com', full_name: 'Phạm Nhật Nam' },
+  { email: 'contest.customer5@gmail.com', full_name: 'Đỗ Khánh Linh' },
+  { email: 'contest.customer6@gmail.com', full_name: 'Võ Quốc Hưng' },
+  { email: 'contest.customer7@gmail.com', full_name: 'Bùi Thành Đạt' },
+  { email: 'contest.customer8@gmail.com', full_name: 'Ngô Tuệ An' },
 ];
 
 type SeedUser = {
@@ -164,6 +168,20 @@ async function cleanupSeedContests(): Promise<void> {
   if (contests.length === 0) return;
 
   const contestIds = contests.map((item) => item.id);
+  await AppDataSource.query(
+    `DELETE FROM payment_transactions
+     WHERE contest_registration_id IN (
+       SELECT id FROM contest_registrations WHERE contest_id = ANY($1::uuid[])
+     )`,
+    [contestIds],
+  );
+  await AppDataSource.query(
+    `DELETE FROM contest_staff_assignments WHERE contest_id = ANY($1::uuid[])`,
+    [contestIds],
+  );
+  await AppDataSource.query(`DELETE FROM contest_bans WHERE contest_id = ANY($1::uuid[])`, [
+    contestIds,
+  ]);
   await AppDataSource.query(`DELETE FROM contest_audit_logs WHERE contest_id = ANY($1::uuid[])`, [
     contestIds,
   ]);
@@ -258,7 +276,10 @@ async function addContestCafe(
 async function insertRegistration(params: {
   contestId: string;
   userId: string;
+  vehicleSource?: 'RENTAL' | 'BYOC';
   vehicleId: string | null;
+  customerVehicleId?: string | null;
+  bookingId?: string | null;
   status: string;
   paymentStatus: string;
   entryFeeAmount: number;
@@ -267,23 +288,27 @@ async function insertRegistration(params: {
   checkedInBy?: string | null;
   checkedInAt?: Date | null;
   cancellationReason?: string | null;
+  metadata?: Record<string, unknown>;
 }): Promise<string> {
   const [registration] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO contest_registrations
-       (contest_id, user_id, participant_role_snapshot, vehicle_source, vehicle_id, booking_id,
+       (contest_id, user_id, participant_role_snapshot, vehicle_source, vehicle_id, customer_vehicle_id, booking_id,
         status, check_in_code, checked_in_cafe_id, checked_in_by, checked_in_at,
         payment_status, entry_fee_amount, entry_fee_due_at, cancelled_by, cancelled_at,
         cancellation_reason, metadata)
      VALUES
-       ($1, $2, 'CUSTOMER', 'RENTAL', $3, NULL,
-        $4, $5, $6, $7, $8,
-        $9, $10, NOW() + INTERVAL '3 days', NULL, NULL,
-        $11, $12)
+       ($1, $2, 'CUSTOMER', $3, $4, $5, $6,
+        $7, $8, $9, $10, $11,
+        $12, $13, NOW() + INTERVAL '3 days', NULL, NULL,
+        $14, $15)
      RETURNING id`,
     [
       params.contestId,
       params.userId,
+      params.vehicleSource ?? 'RENTAL',
       params.vehicleId,
+      params.customerVehicleId ?? null,
+      params.bookingId ?? null,
       params.status,
       params.checkInCode,
       params.checkedInCafeId ?? null,
@@ -292,10 +317,52 @@ async function insertRegistration(params: {
       params.paymentStatus,
       params.entryFeeAmount,
       params.cancellationReason ?? null,
-      JSON.stringify({ seeded: true }),
+      JSON.stringify({ seeded: true, ...(params.metadata ?? {}) }),
     ],
   );
   return registration.id;
+}
+
+async function addContestStaffAssignment(contestId: string, staffId: string, assignedBy: string) {
+  await AppDataSource.query(
+    `INSERT INTO contest_staff_assignments (contest_id, staff_id, assigned_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (contest_id, staff_id) DO NOTHING`,
+    [contestId, staffId, assignedBy],
+  );
+}
+
+async function insertContestBan(params: {
+  providerId: string;
+  contestId: string | null;
+  userId: string;
+  scopeType: 'CONTEST' | 'PROVIDER';
+  reason: string;
+  createdBy: string;
+  expiresAt?: Date | null;
+  liftedAt?: Date | null;
+  liftedBy?: string | null;
+  liftReason?: string | null;
+  evidence?: Record<string, unknown>;
+}) {
+  await AppDataSource.query(
+    `INSERT INTO contest_bans
+       (provider_id, contest_id, user_id, scope_type, reason, evidence, created_by, expires_at, lifted_at, lifted_by, lift_reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
+      params.providerId,
+      params.contestId,
+      params.userId,
+      params.scopeType,
+      params.reason,
+      JSON.stringify(params.evidence ?? { seeded: true }),
+      params.createdBy,
+      params.expiresAt ?? null,
+      params.liftedAt ?? null,
+      params.liftedBy ?? null,
+      params.liftReason ?? null,
+    ],
+  );
 }
 
 async function writeAudit(params: {
@@ -436,11 +503,14 @@ async function main() {
     (secondaryCafe && vehicles.find((item) => item.cafe_id === secondaryCafe.id)?.id) ?? null;
 
   await cleanupSeedContests();
+  await AppDataSource.query(`DELETE FROM contest_bans WHERE provider_id = $1 AND reason LIKE $2`, [
+    providerId,
+    'Seeded %',
+  ]);
 
   const now = new Date(CONTEST_STORY_DATE);
   const oneHour = 60 * 60 * 1000;
   const oneDay = 24 * oneHour;
-
   const draftContestId = await insertContest({
     cafeId: hostCafe.id,
     providerId,
@@ -461,19 +531,27 @@ async function main() {
     vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
     config: {
       format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
       drivers_per_match: 2,
       seeding_mode: 'MANUAL',
       auto_bye: true,
       competition_mechanic: 'HEAD_TO_HEAD_ELIMINATION',
+      resource_locks: [
+        { cafe_id: hostCafe.id, scope: 'FULL_BRANCH', track_config_ids: [] },
+        ...(secondaryCafe
+          ? [{ cafe_id: secondaryCafe.id, scope: 'SELECTED_TRACKS', track_config_ids: [] }]
+          : []),
+      ],
       rulebook: {
         source_reference: VICTORY_CHALLENGE_SOURCE_URL,
-        race_day_date: '2026-07-14',
+        race_day_date: '2026-07-16',
       },
     },
     bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(draftContestId, hostCafe.id, 'HOST', 0);
   if (secondaryCafe) await addContestCafe(draftContestId, secondaryCafe.id, 'PARTICIPATING', 1);
+  if (staffId) await addContestStaffAssignment(draftContestId, staffId, providerId);
   await writeAudit({
     contestId: draftContestId,
     actorId: providerId,
@@ -487,7 +565,7 @@ async function main() {
     providerId,
     name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Sprint Qualifier 2026`,
     description:
-      'Vòng tuyển chọn đang mở đăng ký cho giải đối kháng 1v1. Người chơi đủ điều kiện sẽ được xếp seed theo thứ tự check-in trước ngày đua 14/07/2026.',
+      'Vòng tuyển chọn đang mở đăng ký cho giải đối kháng 1v1. Seed data ưu tiên tạo nhiều registration states để test dashboard ngày 16/07/2026.',
     status: 'OPEN',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -502,10 +580,17 @@ async function main() {
     vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
     config: {
       format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
       drivers_per_match: 2,
       seeding_mode: 'MANUAL',
       auto_bye: true,
       competition_mechanic: 'QUALIFIER_TO_KNOCKOUT',
+      resource_locks: [
+        { cafe_id: hostCafe.id, scope: 'FULL_BRANCH', track_config_ids: [] },
+        ...(secondaryCafe
+          ? [{ cafe_id: secondaryCafe.id, scope: 'SELECTED_TRACKS', track_config_ids: [] }]
+          : []),
+      ],
       source_reference: VICTORY_CHALLENGE_SOURCE_URL,
       prizes: [
         { rank: 1, title: 'Champion', description: 'Cúp vô địch + voucher 1.500.000 VND' },
@@ -517,6 +602,7 @@ async function main() {
   });
   await addContestCafe(openContestId, hostCafe.id, 'HOST', 0);
   if (secondaryCafe) await addContestCafe(openContestId, secondaryCafe.id, 'PARTICIPATING', 1);
+  if (staffId) await addContestStaffAssignment(openContestId, staffId, providerId);
 
   const openPendingId = await insertRegistration({
     contestId: openContestId,
@@ -536,6 +622,38 @@ async function main() {
     entryFeeAmount: 100000,
     checkInCode: 'OPENC001',
   });
+  const openWaivedId = await insertRegistration({
+    contestId: openContestId,
+    userId: customers[2].id,
+    vehicleId: hostVehicleId,
+    status: 'CONFIRMED',
+    paymentStatus: 'WAIVED',
+    entryFeeAmount: 100000,
+    checkInCode: 'OPENW001',
+    metadata: { fee_note: 'Media guest' },
+  });
+  const openCancelledId = await insertRegistration({
+    contestId: openContestId,
+    userId: customers[3].id,
+    vehicleId: hostVehicleId,
+    status: 'CANCELLED',
+    paymentStatus: 'PENDING_PAYMENT',
+    entryFeeAmount: 100000,
+    checkInCode: 'OPENCX01',
+    cancellationReason: 'Customer changed plan',
+  });
+  const openCheckedInId = await insertRegistration({
+    contestId: openContestId,
+    userId: customers[4].id,
+    vehicleId: hostVehicleId,
+    status: 'CHECKED_IN',
+    paymentStatus: 'MARKED_PAID',
+    entryFeeAmount: 100000,
+    checkInCode: 'OPENI001',
+    checkedInCafeId: hostCafe.id,
+    checkedInBy: staffId ?? providerId,
+    checkedInAt: new Date(now.getTime() - 30 * 60 * 1000),
+  });
   await writeAudit({
     contestId: openContestId,
     actorId: providerId,
@@ -552,13 +670,207 @@ async function main() {
     registrationId: openConfirmedId,
     afterJson: { status: 'CONFIRMED' },
   });
+  await writeAudit({
+    contestId: openContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'registration.entry_fee_waived',
+    registrationId: openWaivedId,
+    afterJson: { paymentStatus: 'WAIVED' },
+    reason: 'Media guest',
+  });
+  await writeAudit({
+    contestId: openContestId,
+    actorId: customers[3].id,
+    actorRole: 'CUSTOMER',
+    eventType: 'registration.cancelled',
+    registrationId: openCancelledId,
+    afterJson: { status: 'CANCELLED' },
+    reason: 'Customer changed plan',
+  });
+  await writeAudit({
+    contestId: openContestId,
+    actorId: staffId ?? providerId,
+    actorRole: staffId ? 'STAFF' : 'PROVIDER',
+    eventType: 'registration.checked_in',
+    registrationId: openCheckedInId,
+    afterJson: { status: 'CHECKED_IN', checkedInCafeId: hostCafe.id },
+  });
+
+  const byocContestId = await insertContest({
+    cafeId: hostCafe.id,
+    providerId,
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge Mixed Garage Showcase 2026`,
+    description:
+      'Contest demo cho luồng MIXED/BYOC, dùng để test public detail, provider registration review và hành vi xe cá nhân.',
+    status: 'OPEN',
+    trackTypeId: catalog.driftTrackTypeId,
+    contestTypeId: catalog.contestTypeId,
+    contestFormatId: catalog.timeTrialFormatId,
+    contestTemplateId: catalog.timeTrialTemplateId,
+    registrationOpensAt: new Date(now.getTime() - oneDay),
+    registrationClosesAt: new Date(now.getTime() + oneDay),
+    startsAt: new Date(now.getTime() + oneDay),
+    endsAt: new Date(now.getTime() + oneDay + 4 * oneHour),
+    capacity: 20,
+    entryFee: 0,
+    vehicleRule: { vehicle_policy: 'MIXED', assignment_policy: 'AT_APPROVAL' },
+    config: {
+      format: 'TIME_TRIAL',
+      runtime_format: 'TIME_TRIAL',
+      drivers_per_match: 1,
+      seeding_mode: 'CHECK_IN_ORDER',
+      leaderboard_mode: 'BEST_LAP',
+      resource_locks: [{ cafe_id: hostCafe.id, scope: 'SELECTED_TRACKS', track_config_ids: [] }],
+      prizes: [{ rank: 1, title: 'Best Build + Fastest Line', description: 'Bộ tuning kit' }],
+    },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
+  });
+  await addContestCafe(byocContestId, hostCafe.id, 'HOST', 0);
+  if (staffId) await addContestStaffAssignment(byocContestId, staffId, providerId);
+
+  const byocPendingId = await insertRegistration({
+    contestId: byocContestId,
+    userId: customers[5].id,
+    vehicleSource: 'BYOC',
+    vehicleId: null,
+    status: 'PENDING',
+    paymentStatus: 'PENDING_REVIEW',
+    entryFeeAmount: 0,
+    checkInCode: 'BYOCP001',
+    metadata: {
+      byoc_declaration: {
+        vehicle_name: 'Yokomo MD 2.0',
+        vehicle_brand: 'Yokomo',
+        vehicle_class: 'Drift',
+      },
+    },
+  });
+  const byocConfirmedId = await insertRegistration({
+    contestId: byocContestId,
+    userId: customers[6].id,
+    vehicleSource: 'BYOC',
+    vehicleId: null,
+    status: 'CONFIRMED',
+    paymentStatus: 'PENDING_REVIEW',
+    entryFeeAmount: 0,
+    checkInCode: 'BYOCC001',
+    metadata: {
+      byoc_declaration: {
+        vehicle_name: 'MST RMX 2.5',
+        vehicle_brand: 'MST',
+        vehicle_class: 'Drift',
+        notes: 'Front motor conversion',
+      },
+    },
+  });
+  await writeAudit({
+    contestId: byocContestId,
+    actorId: customers[5].id,
+    actorRole: 'CUSTOMER',
+    eventType: 'registration.created',
+    registrationId: byocPendingId,
+    afterJson: { status: 'PENDING', vehicleSource: 'BYOC' },
+  });
+  await writeAudit({
+    contestId: byocContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'registration.approved',
+    registrationId: byocConfirmedId,
+    afterJson: { status: 'CONFIRMED', vehicleSource: 'BYOC' },
+    reason: 'BYOC declaration accepted',
+  });
+
+  const closedContestId = await insertContest({
+    cafeId: hostCafe.id,
+    providerId,
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge Community Cup 2026 - Closed Grid`,
+    description:
+      'Contest đã đóng đăng ký nhưng chưa vào runtime, dùng để test màn registrations, fee review, disqualify và audit.',
+    status: 'CLOSED',
+    trackTypeId: catalog.driftTrackTypeId,
+    contestTypeId: catalog.contestTypeId,
+    contestFormatId: catalog.knockoutFormatId,
+    contestTemplateId: catalog.knockoutTemplateId,
+    registrationOpensAt: new Date(now.getTime() - oneDay * 3),
+    registrationClosesAt: new Date(now.getTime() - 2 * oneHour),
+    startsAt: new Date(now.getTime() + oneDay),
+    endsAt: new Date(now.getTime() + oneDay + 6 * oneHour),
+    capacity: 12,
+    entryFee: 150000,
+    vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
+    config: {
+      format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
+      drivers_per_match: 2,
+      seeding_mode: 'CHECK_IN_ORDER',
+      auto_bye: true,
+      leaderboard_mode: 'KNOCKOUT_WINS',
+      resource_locks: [{ cafe_id: hostCafe.id, scope: 'FULL_BRANCH', track_config_ids: [] }],
+    },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
+  });
+  await addContestCafe(closedContestId, hostCafe.id, 'HOST', 0);
+  if (secondaryCafe) await addContestCafe(closedContestId, secondaryCafe.id, 'PARTICIPATING', 1);
+  if (staffId) await addContestStaffAssignment(closedContestId, staffId, providerId);
+
+  const closedRegs = await Promise.all([
+    insertRegistration({
+      contestId: closedContestId,
+      userId: customers[0].id,
+      vehicleId: hostVehicleId,
+      status: 'CONFIRMED',
+      paymentStatus: 'MARKED_PAID',
+      entryFeeAmount: 150000,
+      checkInCode: 'CLOSE001',
+    }),
+    insertRegistration({
+      contestId: closedContestId,
+      userId: customers[1].id,
+      vehicleId: hostVehicleId,
+      status: 'CONFIRMED',
+      paymentStatus: 'WAIVED',
+      entryFeeAmount: 150000,
+      checkInCode: 'CLOSE002',
+    }),
+    insertRegistration({
+      contestId: closedContestId,
+      userId: customers[2].id,
+      vehicleId: hostVehicleId,
+      status: 'PENDING',
+      paymentStatus: 'PENDING_PAYMENT',
+      entryFeeAmount: 150000,
+      checkInCode: 'CLOSE003',
+    }),
+    insertRegistration({
+      contestId: closedContestId,
+      userId: customers[7].id,
+      vehicleId: hostVehicleId,
+      status: 'CANCELLED',
+      paymentStatus: 'PENDING_PAYMENT',
+      entryFeeAmount: 150000,
+      checkInCode: 'CLOSE004',
+      cancellationReason: 'Rejected due to duplicate roster',
+      metadata: { disqualified: true },
+    }),
+  ]);
+  await writeAudit({
+    contestId: closedContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'registration.disqualified',
+    registrationId: closedRegs[3],
+    afterJson: { status: 'CANCELLED' },
+    reason: 'Rejected due to duplicate roster',
+  });
 
   const runningContestId = await insertContest({
     cafeId: hostCafe.id,
     providerId,
     name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Cup 2026 - Nhánh Đối Kháng`,
     description:
-      'Giải đang diễn ra trong ngày 14/07/2026. Người chơi check-in tại RC Arena Hà Nội, thi đấu loại trực tiếp 1v1 và staff có thể xử lý tại chi nhánh được phân công.',
+      'Giải đang diễn ra trong ngày 16/07/2026. Người chơi check-in tại RC Arena Hà Nội, staff xử lý event-day và provider theo dõi bracket.',
     status: 'RUNNING',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -568,11 +880,12 @@ async function main() {
     registrationClosesAt: new Date(now.getTime() - oneDay * 2),
     startsAt: new Date(now.getTime() - 6 * oneHour),
     endsAt: new Date(now.getTime() + 6 * oneHour),
-    capacity: 8,
+    capacity: 12,
     entryFee: 0,
     vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
     config: {
       format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
       drivers_per_match: 2,
       seeding_mode: 'CHECK_IN_ORDER',
       auto_bye: true,
@@ -587,6 +900,8 @@ async function main() {
     bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(runningContestId, hostCafe.id, 'HOST', 0);
+  if (secondaryCafe) await addContestCafe(runningContestId, secondaryCafe.id, 'PARTICIPATING', 1);
+  if (staffId) await addContestStaffAssignment(runningContestId, staffId, providerId);
 
   const runningRegs = await Promise.all([
     insertRegistration({
@@ -636,6 +951,54 @@ async function main() {
       checkedInCafeId: hostCafe.id,
       checkedInBy: staffId ?? providerId,
       checkedInAt: new Date(now.getTime() - 7 * oneHour + 15 * 60 * 1000),
+    }),
+    insertRegistration({
+      contestId: runningContestId,
+      userId: customers[4].id,
+      vehicleId: hostVehicleId,
+      status: 'CHECKED_IN',
+      paymentStatus: 'NOT_REQUIRED',
+      entryFeeAmount: 0,
+      checkInCode: 'RUNN005',
+      checkedInCafeId: hostCafe.id,
+      checkedInBy: staffId ?? providerId,
+      checkedInAt: new Date(now.getTime() - 7 * oneHour + 20 * 60 * 1000),
+    }),
+    insertRegistration({
+      contestId: runningContestId,
+      userId: customers[5].id,
+      vehicleId: hostVehicleId,
+      status: 'CHECKED_IN',
+      paymentStatus: 'NOT_REQUIRED',
+      entryFeeAmount: 0,
+      checkInCode: 'RUNN006',
+      checkedInCafeId: hostCafe.id,
+      checkedInBy: staffId ?? providerId,
+      checkedInAt: new Date(now.getTime() - 7 * oneHour + 25 * 60 * 1000),
+    }),
+    insertRegistration({
+      contestId: runningContestId,
+      userId: customers[6].id,
+      vehicleId: hostVehicleId,
+      status: 'CHECKED_IN',
+      paymentStatus: 'NOT_REQUIRED',
+      entryFeeAmount: 0,
+      checkInCode: 'RUNN007',
+      checkedInCafeId: hostCafe.id,
+      checkedInBy: staffId ?? providerId,
+      checkedInAt: new Date(now.getTime() - 7 * oneHour + 30 * 60 * 1000),
+    }),
+    insertRegistration({
+      contestId: runningContestId,
+      userId: customers[7].id,
+      vehicleId: hostVehicleId,
+      status: 'CHECKED_IN',
+      paymentStatus: 'NOT_REQUIRED',
+      entryFeeAmount: 0,
+      checkInCode: 'RUNN008',
+      checkedInCafeId: hostCafe.id,
+      checkedInBy: staffId ?? providerId,
+      checkedInAt: new Date(now.getTime() - 7 * oneHour + 35 * 60 * 1000),
     }),
   ]);
 
@@ -823,6 +1186,7 @@ async function main() {
     bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
   });
   await addContestCafe(completedContestId, hostCafe.id, 'HOST', 0);
+  if (staffId) await addContestStaffAssignment(completedContestId, staffId, providerId);
 
   const completedRegs = await Promise.all([
     insertRegistration({
@@ -1015,10 +1379,54 @@ async function main() {
     eventType: 'contest.leaderboard_published',
     afterJson: { published: true },
   });
+  await insertContestBan({
+    providerId,
+    contestId: byocContestId,
+    userId: customers[5].id,
+    scopeType: 'CONTEST',
+    reason: 'Seeded contest ban for UI review',
+    createdBy: providerId,
+    expiresAt: new Date(now.getTime() + oneDay * 7),
+    evidence: {
+      note: 'Customer repeatedly ignored marshal instructions during practice.',
+      evidence_url: 'https://example.com/contest-ban-evidence',
+    },
+  });
+  await insertContestBan({
+    providerId,
+    contestId: null,
+    userId: customers[6].id,
+    scopeType: 'PROVIDER',
+    reason: 'Seeded provider-wide ban for anti-cheat review',
+    createdBy: providerId,
+    expiresAt: new Date(now.getTime() + oneDay * 30),
+    evidence: {
+      note: 'Provider-scope ban demo record.',
+      evidence_url: 'https://example.com/provider-ban-evidence',
+    },
+  });
+  await writeAudit({
+    contestId: byocContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'contest.participant_banned',
+    afterJson: { scope_type: 'CONTEST', user_id: customers[5].id },
+    reason: 'Seeded contest ban for UI review',
+  });
+  await writeAudit({
+    contestId: byocContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'contest.participant_banned',
+    afterJson: { scope_type: 'PROVIDER', user_id: customers[6].id },
+    reason: 'Seeded provider-wide ban for anti-cheat review',
+  });
 
   logger.info('Seed', `Contest seed ready for provider@gmail.com at cafe ${hostCafe.slug}`);
   logger.info('Seed', `Draft contest: ${draftContestId}`);
   logger.info('Seed', `Open contest: ${openContestId}`);
+  logger.info('Seed', `Mixed/BYOC contest: ${byocContestId}`);
+  logger.info('Seed', `Closed contest: ${closedContestId}`);
   logger.info('Seed', `Running contest: ${runningContestId}`);
   logger.info('Seed', `Completed contest: ${completedContestId}`);
 
