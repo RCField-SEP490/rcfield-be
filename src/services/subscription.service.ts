@@ -86,7 +86,7 @@ export async function transition(
 
   const notifType = TRANSITION_NOTIFICATION[toStatus];
   if (notifType) {
-    const messages: Record<NotificationType, [string, string]> = {
+    const messages: Partial<Record<NotificationType, [string, string]>> = {
       [NotificationType.GRACE_PERIOD_STARTED]: [
         'Thời gian dùng thử đã hết',
         `Bạn có ${GRACE_PERIOD_DAYS} ngày để đăng ký gói để tiếp tục sử dụng.`,
@@ -118,7 +118,7 @@ export async function transition(
       [NotificationType.CUSTOMER_PAYMENT_CONFIRMED]: ['', ''],
       [NotificationType.BOOKING_REVIEW_REQUEST]: ['', ''],
     };
-    const [title, message] = messages[notifType];
+    const [title, message] = messages[notifType] ?? ['', ''];
     if (title) await createNotification(sub.providerId, notifType, title, message);
   }
 

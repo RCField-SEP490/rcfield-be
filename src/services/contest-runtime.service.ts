@@ -330,6 +330,87 @@ async function mapMatchesPayload(contestId: string, viewer?: Viewer) {
   }));
 }
 
+function buildHighlightRounds(matches: Awaited<ReturnType<typeof mapMatchesPayload>>) {
+  const rounds = matches.reduce<
+    Array<{
+      round_no: number;
+      label: string;
+      match_count: number;
+      completed_match_count: number;
+      winners: Array<{
+        registration_id: string;
+        participant_name: string | null;
+        participant_email: string | null;
+        driver_handle: string | null;
+        source_match_id: string;
+        source_match_name: string | null;
+      }>;
+    }>
+  >((acc, match) => {
+    const existing = acc.find((item) => item.round_no === match.round_no);
+    const target =
+      existing ??
+      (() => {
+        const created = {
+          round_no: match.round_no,
+          label: match.name?.trim() || `Round ${match.round_no}`,
+          match_count: 0,
+          completed_match_count: 0,
+          winners: [] as Array<{
+            registration_id: string;
+            participant_name: string | null;
+            participant_email: string | null;
+            driver_handle: string | null;
+            source_match_id: string;
+            source_match_name: string | null;
+          }>,
+        };
+        acc.push(created);
+        return created;
+      })();
+
+    target.match_count += 1;
+    if (match.status === ContestMatchStatus.COMPLETED) target.completed_match_count += 1;
+    for (const participant of match.participants.filter((item) => item.is_winner)) {
+      target.winners.push({
+        registration_id: participant.registration_id,
+        participant_name: participant.registration?.participant_name ?? null,
+        participant_email: participant.registration?.participant_email ?? null,
+        driver_handle: participant.registration?.driver_handle ?? null,
+        source_match_id: match.id,
+        source_match_name: match.name ?? null,
+      });
+    }
+    return acc;
+  }, []);
+
+  return rounds.sort((a, b) => a.round_no - b.round_no);
+}
+
+export async function getContestPublicRuntimeSummary(contestId: string, viewer?: Viewer) {
+  await assertViewerCanViewContestMatches(contestId, viewer);
+  const matches = await mapMatchesPayload(contestId, viewer);
+  const rounds = Array.from(new Set(matches.map((item) => item.round_no))).sort((a, b) => a - b);
+  const currentRound =
+    matches.find((item) =>
+      [ContestMatchStatus.RUNNING, ContestMatchStatus.READY].includes(item.status),
+    )?.round_no ??
+    matches.find((item) => item.status === ContestMatchStatus.COMPLETED)?.round_no ??
+    null;
+  const liveMatch = matches.find((item) => item.status === ContestMatchStatus.RUNNING) ?? null;
+
+  return {
+    total_matches: matches.length,
+    total_rounds: rounds.length,
+    current_round_no: currentRound,
+    has_live_matches: Boolean(liveMatch),
+    live_match_id: liveMatch?.id ?? null,
+    completed_matches: matches.filter((item) => item.status === ContestMatchStatus.COMPLETED)
+      .length,
+    highlight_rounds: buildHighlightRounds(matches),
+  };
+}
+
 async function clearExistingRuntime(contestId: string) {
   const matchRepo = AppDataSource.getRepository(ContestMatch);
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);

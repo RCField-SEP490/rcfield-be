@@ -1,5 +1,6 @@
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
+import { logger } from '../config/logger';
 import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { Cafe } from '../models/cafe.entity';
@@ -21,6 +22,7 @@ import {
   ContestEntryFeePaymentStatus,
   ContestRegistrationStatus,
   ContestStatus,
+  NotificationType,
   PaymentTransactionStatus,
   PaymentTransactionSubjectType,
   PaymentTransactionType,
@@ -45,6 +47,9 @@ import {
 import { createPaymentUrl } from './vnpay.service';
 import { env } from '../config/env';
 import { processMockConfirmation } from './payment.service';
+import { createNotification } from './notification.service';
+import { emailService } from './email.service';
+import { getContestPublicRuntimeSummary } from './contest-runtime.service';
 
 type ListContestsOptions = {
   page: number;
@@ -116,6 +121,38 @@ type ContestBanPayload = {
   evidence?: Record<string, unknown>;
   expires_at?: Date | null;
 };
+
+function getRegistrationStatusLabel(status: ContestRegistrationStatus) {
+  switch (status) {
+    case ContestRegistrationStatus.PENDING:
+      return 'Cho duyet';
+    case ContestRegistrationStatus.CONFIRMED:
+      return 'Da duyet';
+    case ContestRegistrationStatus.CHECKED_IN:
+      return 'Da check-in';
+    case ContestRegistrationStatus.CANCELLED:
+      return 'Da huy';
+    default:
+      return status;
+  }
+}
+
+function getPaymentStatusLabel(status: ContestEntryFeePaymentStatus) {
+  switch (status) {
+    case ContestEntryFeePaymentStatus.NOT_REQUIRED:
+      return 'Khong can thanh toan';
+    case ContestEntryFeePaymentStatus.PENDING_PAYMENT:
+      return 'Cho thanh toan';
+    case ContestEntryFeePaymentStatus.PENDING_REVIEW:
+      return 'Cho xac nhan';
+    case ContestEntryFeePaymentStatus.WAIVED:
+      return 'Da mien phi';
+    case ContestEntryFeePaymentStatus.MARKED_PAID:
+      return 'Da ghi nhan thanh toan';
+    default:
+      return status;
+  }
+}
 
 async function loadContestCatalogMaps(contests: Contest[]) {
   const trackTypeIds = Array.from(
@@ -616,6 +653,87 @@ function buildByocMetadata(body: CreateRegistrationBody) {
   };
 }
 
+async function loadContestNotificationContext(registration: ContestRegistration) {
+  const [row] = await AppDataSource.query<
+    {
+      contest_name: string;
+      contest_starts_at: string;
+      contest_status: string;
+      host_branch_name: string | null;
+      customer_email: string;
+      customer_name: string;
+    }[]
+  >(
+    `SELECT c.name AS contest_name,
+            c.starts_at AS contest_starts_at,
+            c.status AS contest_status,
+            host.name AS host_branch_name,
+            u.email AS customer_email,
+            u.full_name AS customer_name
+       FROM contest_registrations cr
+       JOIN contests c ON c.id = cr.contest_id
+       JOIN users u ON u.id = cr.user_id
+       LEFT JOIN cafes host ON host.id = c.cafe_id
+      WHERE cr.id = $1`,
+    [registration.id],
+  );
+
+  if (!row) return null;
+
+  return {
+    contestName: row.contest_name,
+    contestStartsAt: new Date(row.contest_starts_at),
+    contestStatus: row.contest_status,
+    hostBranchName: row.host_branch_name,
+    customerEmail: row.customer_email,
+    customerName: row.customer_name ?? 'Racer',
+  };
+}
+
+async function sendContestRegistrationCreatedSideEffects(registration: ContestRegistration) {
+  const context = await loadContestNotificationContext(registration);
+  if (!context) return;
+
+  await createNotification(
+    registration.userId,
+    NotificationType.CONTEST_REGISTRATION_CREATED,
+    'Dang ky giai dau thanh cong',
+    `Ban da dang ky ${context.contestName}. RCField se tiep tuc cap nhat trang thai dang ky cho ban.`,
+    {
+      contest_id: registration.contestId,
+      registration_id: registration.id,
+    },
+  );
+
+  try {
+    await emailService.sendContestRegistrationConfirmation({
+      to: context.customerEmail,
+      customerName: context.customerName,
+      contestName: context.contestName,
+      contestStatusLabel: context.contestStatus,
+      hostBranchName: context.hostBranchName,
+      startsAt: context.contestStartsAt,
+      registrationStatusLabel: getRegistrationStatusLabel(registration.status),
+      paymentStatusLabel: getPaymentStatusLabel(registration.paymentStatus),
+      entryFeeAmount: Number(registration.entryFeeAmount ?? 0),
+    });
+  } catch (error) {
+    logger.error('ContestEmail', 'failed to send registration confirmation', error);
+  }
+}
+
+async function sendContestRegistrationStatusNotification(
+  registration: ContestRegistration,
+  type: NotificationType,
+  title: string,
+  message: string,
+) {
+  await createNotification(registration.userId, type, title, message, {
+    contest_id: registration.contestId,
+    registration_id: registration.id,
+  });
+}
+
 export async function listContestTypes() {
   return AppDataSource.getRepository(ContestType).find({
     where: { isActive: true },
@@ -735,6 +853,11 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
     throw new AppError('Contest chưa được công khai', 404, 'CONTEST_NOT_PUBLIC');
   }
   const [payload] = await mapContestPayload([contest]);
+  const runtimeSummary = await getContestPublicRuntimeSummary(contestId, viewer).catch(() => null);
+  const publishedLeaderboard = (contest.config?.published_leaderboard ?? null) as Record<
+    string,
+    unknown
+  > | null;
 
   if (viewer?.role === UserRole.CUSTOMER) {
     const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
@@ -747,6 +870,9 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
       return {
         ...payload,
         my_registration: mappedRegistration,
+        published_leaderboard: publishedLeaderboard,
+        runtime_summary: runtimeSummary,
+        highlight_rounds: runtimeSummary?.highlight_rounds ?? [],
       };
     }
   }
@@ -754,6 +880,9 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
   return {
     ...payload,
     operator_access: isOwner || isAssignedStaff,
+    published_leaderboard: publishedLeaderboard,
+    runtime_summary: runtimeSummary,
+    highlight_rounds: runtimeSummary?.highlight_rounds ?? [],
   };
 }
 
@@ -1152,6 +1281,7 @@ export async function createContestRegistration(
     eventType: 'registration.created',
     afterJson: { status: saved.status, paymentStatus: saved.paymentStatus },
   });
+  await sendContestRegistrationCreatedSideEffects(saved);
 
   const [mapped] = await mapContestRegistrationsPayload([saved], { includeContest: true });
   return mapped;
@@ -1299,6 +1429,12 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
     afterJson: { status: registration.status },
     reason: reason ?? null,
   });
+  await sendContestRegistrationStatusNotification(
+    registration,
+    NotificationType.CONTEST_REGISTRATION_APPROVED,
+    'Dang ky giai dau da duoc duyet',
+    'Dang ky cua ban da duoc duyet. Ban hay theo doi thong bao de den check-in dung gio.',
+  );
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
@@ -1319,6 +1455,12 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
     afterJson: { status: registration.status },
     reason: registration.cancellationReason,
   });
+  await sendContestRegistrationStatusNotification(
+    registration,
+    NotificationType.CONTEST_REGISTRATION_REJECTED,
+    'Dang ky giai dau bi tu choi',
+    `Dang ky cua ban da bi tu choi.${registration.cancellationReason ? ` Ly do: ${registration.cancellationReason}` : ''}`,
+  );
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
@@ -1349,6 +1491,12 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
     afterJson: { status: registration.status },
     reason: registration.cancellationReason,
   });
+  await sendContestRegistrationStatusNotification(
+    registration,
+    NotificationType.CONTEST_REGISTRATION_CANCELLED,
+    'Dang ky giai dau da duoc huy',
+    `Dang ky cua ban da duoc huy.${registration.cancellationReason ? ` Ly do: ${registration.cancellationReason}` : ''}`,
+  );
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
@@ -1454,6 +1602,12 @@ export async function checkInRegistration(
     eventType: 'registration.checked_in',
     afterJson: { status: registration.status, checkedInCafeId },
   });
+  await sendContestRegistrationStatusNotification(
+    registration,
+    NotificationType.CONTEST_CHECKIN_CONFIRMED,
+    'Check-in giai dau thanh cong',
+    'Ban da check-in thanh cong. He thong se cap nhat bracket va luot thi tiep theo cho ban.',
+  );
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: true });
   return mapped;
 }

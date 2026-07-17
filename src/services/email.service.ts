@@ -19,6 +19,28 @@ type SendStaffInviteInput = {
   inviteUrl: string;
 };
 
+type SendContestRegistrationEmailInput = {
+  to: string;
+  customerName: string;
+  contestName: string;
+  contestStatusLabel: string;
+  hostBranchName: string | null;
+  startsAt: Date;
+  registrationStatusLabel: string;
+  paymentStatusLabel: string;
+  entryFeeAmount: number;
+};
+
+type SendContestReminderEmailInput = {
+  to: string;
+  customerName: string;
+  contestName: string;
+  hostBranchName: string | null;
+  startsAt: Date;
+  reminderLabel: string;
+  checkInCode: string | null;
+};
+
 class EmailService {
   private async brevoSend(payload: object): Promise<void> {
     if (env.email.provider !== 'Brevo') {
@@ -462,6 +484,148 @@ class EmailService {
     });
 
     logger.info('EmailService', 'invoice email sent', { bookingId, email: r.customer_email });
+  }
+
+  async sendContestRegistrationConfirmation(
+    input: SendContestRegistrationEmailInput,
+  ): Promise<void> {
+    const startsAtLabel = input.startsAt.toLocaleString('vi-VN', {
+      weekday: 'long',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+
+    await this.brevoSend({
+      sender: { email: env.email.fromEmail, name: env.email.fromName },
+      to: [{ email: input.to, name: input.customerName }],
+      subject: `Xac nhan dang ky giai ${input.contestName} | RCField`,
+      htmlContent: `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
+          <div style="background:#111827;padding:24px 32px">
+            <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
+          </div>
+          <div style="padding:32px">
+            <h2 style="margin:0 0 8px">Dang ky giai dau thanh cong</h2>
+            <p style="color:#6b7280;margin:0 0 24px">
+              Xin chao <strong>${input.customerName}</strong>, ban da gui dang ky cho
+              <strong>${input.contestName}</strong>.
+            </p>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giai dau</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:600">${input.contestName}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chi nhanh</td>
+                <td style="padding:8px 0;font-size:13px">${input.hostBranchName ?? 'Dang cap nhat'}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Bat dau</td>
+                <td style="padding:8px 0;font-size:13px">${startsAtLabel}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Trang thai dang ky</td>
+                <td style="padding:8px 0;font-size:13px">${input.registrationStatusLabel}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Le phi</td>
+                <td style="padding:8px 0;font-size:13px">${
+                  input.entryFeeAmount > 0
+                    ? `${input.entryFeeAmount.toLocaleString('vi-VN')} VND`
+                    : 'Mien phi'
+                }</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Trang thai phi</td>
+                <td style="padding:8px 0;font-size:13px">${input.paymentStatusLabel}</td>
+              </tr>
+            </table>
+
+            <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb">
+              <p style="margin:0 0 8px;font-size:14px;font-weight:700">Buoc tiep theo</p>
+              <ul style="margin:0;padding-left:18px;color:#4b5563;font-size:13px;line-height:1.7">
+                <li>Theo doi thong bao trong ung dung de biet dang ky da duoc duyet hay chua.</li>
+                <li>Neu giai co le phi, vui long hoan tat thanh toan theo huong dan.</li>
+                <li>Gan den gio thi dau, RCField se gui nhac lich cho ban.</li>
+              </ul>
+            </div>
+
+            <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:24px 0 0">
+              Email nay xac nhan thong tin dang ky va lich giai dau hien tai.
+            </p>
+          </div>
+        </div>
+      `,
+    });
+  }
+
+  async sendContestReminder(input: SendContestReminderEmailInput): Promise<void> {
+    const startsAtLabel = input.startsAt.toLocaleString('vi-VN', {
+      weekday: 'long',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+
+    await this.brevoSend({
+      sender: { email: env.email.fromEmail, name: env.email.fromName },
+      to: [{ email: input.to, name: input.customerName }],
+      subject: `Nhac lich thi dau ${input.contestName} | RCField`,
+      htmlContent: `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
+          <div style="background:#111827;padding:24px 32px">
+            <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
+          </div>
+          <div style="padding:32px">
+            <h2 style="margin:0 0 8px">Sap den gio thi dau</h2>
+            <p style="color:#6b7280;margin:0 0 24px">
+              Xin chao <strong>${input.customerName}</strong>, ${input.reminderLabel.toLowerCase()} den gio bat dau
+              <strong>${input.contestName}</strong>.
+            </p>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giai dau</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:600">${input.contestName}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chi nhanh</td>
+                <td style="padding:8px 0;font-size:13px">${input.hostBranchName ?? 'Dang cap nhat'}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Bat dau</td>
+                <td style="padding:8px 0;font-size:13px">${startsAtLabel}</td>
+              </tr>
+              ${
+                input.checkInCode
+                  ? `<tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Check-in code</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:700">${input.checkInCode}</td>
+              </tr>`
+                  : ''
+              }
+            </table>
+
+            <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb">
+              <p style="margin:0 0 8px;font-size:14px;font-weight:700">Luu y truoc khi den</p>
+              <ul style="margin:0;padding-left:18px;color:#4b5563;font-size:13px;line-height:1.7">
+                <li>Den som de check-in va xac nhan thong tin thi dau.</li>
+                <li>Mang theo thong tin dat cho, check-in code hoac email nay de doi chieu neu can.</li>
+                <li>Theo doi thong bao trong ung dung de xem lich bracket va cap nhat ket qua.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      `,
+    });
   }
 
   async sendStaffInvite(input: SendStaffInviteInput): Promise<void> {

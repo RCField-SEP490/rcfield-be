@@ -7,6 +7,8 @@ import {
   BookingStatus,
   CafeStatus,
   ContestBanScopeType,
+  FeaturedPopupAudienceScope,
+  FeaturedPopupPlacement,
   ContestParticipantStatus,
   ContestStatus,
   CustomerPackageStatus,
@@ -524,6 +526,47 @@ export const ContestBanLiftSchema = z.object({
 
 export const ContestCheckInSchema = z.object({
   checked_in_cafe_id: z.string().uuid(),
+});
+
+const FeaturedPopupBaseSchema = z.object({
+  title: z.string().trim().min(3).max(255),
+  subtitle: z.string().trim().max(1000).nullable().optional(),
+  image_url: z.string().url().nullable().optional(),
+  cta_label: z.string().trim().min(1).max(80),
+  cta_url: z.string().url().nullable().optional(),
+  contest_id: z.string().uuid().nullable().optional(),
+  placement: z
+    .nativeEnum(FeaturedPopupPlacement)
+    .optional()
+    .default(FeaturedPopupPlacement.EXPLORE),
+  audience_scope: z
+    .nativeEnum(FeaturedPopupAudienceScope)
+    .optional()
+    .default(FeaturedPopupAudienceScope.ALL),
+  starts_at: z.coerce.date(),
+  ends_at: z.coerce.date(),
+  is_active: z.boolean().optional().default(true),
+  priority: z.coerce.number().int().min(0).max(1000).optional().default(100),
+});
+
+export const CreateFeaturedPopupSchema = FeaturedPopupBaseSchema.refine(
+  (value) => value.ends_at > value.starts_at,
+  {
+    message: 'ends_at phải sau starts_at',
+    path: ['ends_at'],
+  },
+);
+
+export const UpdateFeaturedPopupSchema = FeaturedPopupBaseSchema.partial()
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
+  .refine((value) => !value.starts_at || !value.ends_at || value.ends_at > value.starts_at, {
+    message: 'ends_at phải sau starts_at',
+    path: ['ends_at'],
+  });
+
+export const FeaturedPopupListQuerySchema = z.object({
+  placement: z.nativeEnum(FeaturedPopupPlacement).optional(),
+  is_active: z.coerce.boolean().optional(),
 });
 
 export const ContestGenerateMatchesSchema = z.object({
