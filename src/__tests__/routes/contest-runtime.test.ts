@@ -505,6 +505,28 @@ describe('Contest runtime routes', () => {
     expect(metricsRes.body.data.registration_counts.checked_in).toBe(1);
   });
 
+  it('staff thuộc cafe nhưng chưa được phân công trực tiếp vào contest thì không có quyền vận hành', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const staffToken = generateToken(staff);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL');
+
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
+       VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
+    );
+
+    const res = await request(app)
+      .get(`/api/v1/contests/${contestId}/metrics`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(403);
+
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
   it('customer có thể đăng ký BYOC contest khi contest cho phép và provider duyệt thủ công', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
