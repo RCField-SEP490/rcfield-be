@@ -3,6 +3,12 @@ import 'reflect-metadata';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 
+// `cdn.rcfield.vn` was only a placeholder and does not serve the seeded files.
+// Keep one reachable image source so staff/customer screens can exercise the
+// real image rendering path with seed data.
+const SEEDED_VEHICLE_IMAGE_URL =
+  'https://images.unsplash.com/photo-1594787318286-3d835c1d207f?auto=format&fit=crop&q=80&w=800';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed data: 2 chi nhánh RC cafe thực tế tại Hà Nội và TP.HCM
 // Chạy SAU seed-users.ts (cần provider@gmail.com đã tồn tại)
@@ -720,7 +726,7 @@ async function seedVehicles(
           v.security_deposit,
           v.damage_multiplier,
           compatibleTrackTypeIds,
-          'https://cdn.rcfield.vn/vehicles/tamiya-cover.jpg',
+          SEEDED_VEHICLE_IMAGE_URL,
         ],
       );
       catalogId = newCatalog.id;
@@ -730,9 +736,19 @@ async function seedVehicles(
       await AppDataSource.query(
         `INSERT INTO vehicle_catalog_images (catalog_id, url, sort_order)
          VALUES ($1, $2, $3)`,
-        [catalogId, 'https://cdn.rcfield.vn/vehicles/tamiya-detail1.jpg', 0],
+        [catalogId, SEEDED_VEHICLE_IMAGE_URL, 0],
       );
     }
+
+    // Repair catalogs created by previous seeds that still point to the
+    // non-existent placeholder CDN.
+    await AppDataSource.query(
+      `UPDATE vehicle_catalogs
+       SET cover_image_url = $1
+       WHERE id = $2
+         AND (cover_image_url IS NULL OR cover_image_url LIKE 'https://cdn.rcfield.vn/%')`,
+      [SEEDED_VEHICLE_IMAGE_URL, catalogId],
+    );
 
     // 2. Ensure each catalog has enough available units for concurrent booking tests.
     const [availableCount] = await AppDataSource.query<{ count: string }[]>(
@@ -761,7 +777,7 @@ async function seedVehicles(
           catalogId,
           `${vehicleCode}-AVAIL-${String(sequence).padStart(2, '0')}`,
           color,
-          `https://cdn.rcfield.vn/vehicles/unit-${color.toLowerCase()}.jpg`,
+          SEEDED_VEHICLE_IMAGE_URL,
           'Sẵn sàng cho khách thuê và kiểm thử luồng đặt xe.',
           JSON.stringify({ seeded_for: 'availability_testing', unit_number: sequence }),
         ],
@@ -774,6 +790,14 @@ async function seedVehicles(
         `    Added ${missingAvailableUnits} AVAILABLE unit(s) under ${v.name} (${targetAvailableUnits} available total)`,
       );
     }
+
+    await AppDataSource.query(
+      `UPDATE vehicles
+       SET distinctive_image_url = $1
+       WHERE catalog_id = $2
+         AND (distinctive_image_url IS NULL OR distinctive_image_url LIKE 'https://cdn.rcfield.vn/%')`,
+      [SEEDED_VEHICLE_IMAGE_URL, catalogId],
+    );
 
     // Keep one unit in each non-available state for operational test cases.
     const testStates = [
@@ -824,7 +848,7 @@ async function seedVehicles(
           state.lastMaintenanceAt,
           state.identifier,
           state.color,
-          `https://cdn.rcfield.vn/vehicles/unit-${state.color.toLowerCase()}.jpg`,
+          SEEDED_VEHICLE_IMAGE_URL,
           state.notes,
           JSON.stringify(state.metadata),
         ],

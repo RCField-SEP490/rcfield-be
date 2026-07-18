@@ -531,7 +531,7 @@ export async function getBookingsByDate(
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
      WHERE b.cafe_id = $1
        AND (b.slot_start AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = $2::date
-       AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'COMPLETED', 'CANCELLED')
+       AND b.status IN ('PENDING', 'CONFIRMED', 'NO_SHOW', 'AWAITING_PAYMENT', 'COMPLETED', 'CANCELLED')
      ORDER BY b.slot_start ASC`,
     [cafeId, bookingDate],
   );
@@ -1273,6 +1273,22 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   const participants = await AppDataSource.getRepository(SessionParticipant).find({
     where: { sessionId },
   });
+  const participantUserIds = participants
+    .map((participant) => participant.userId)
+    .filter((userId): userId is string => Boolean(userId));
+  const participantUsers = participantUserIds.length
+    ? await AppDataSource.getRepository(User).findByIds(participantUserIds)
+    : [];
+  const participantUserById = new Map(participantUsers.map((user) => [user.id, user]));
+  // A session keeps a display-name snapshot for walk-in guests, but registered
+  // customers must always be shown by their current profile name. Otherwise a
+  // name change after check-in is never reflected in staff/customer history.
+  const getParticipantName = (participant: SessionParticipant) =>
+    (participant.userId
+      ? participantUserById.get(participant.userId)?.full_name?.trim()
+      : undefined) ||
+    participant.displayName ||
+    'Người chơi';
 
   const sessionVehicles = await AppDataSource.getRepository(SessionVehicle).find({
     where: { sessionId },
@@ -1289,12 +1305,12 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       });
       if (vehicle) {
         name = vehicle.catalog?.name || vehicle.identifier || 'Xe thuê';
-        imageUrl = vehicle.distinctiveImageUrl || undefined;
+        imageUrl = vehicle.distinctiveImageUrl || vehicle.catalog?.coverImageUrl || undefined;
         damageMultiplier = Number(vehicle.catalog?.damageMultiplier) || 1;
       }
     } else if (sv.vehicleSource === VehicleSource.BYOC && sv.assignedToParticipantId) {
       const sp = participants.find((p) => p.id === sv.assignedToParticipantId);
-      if (sp?.displayName) name = `Xe của ${sp.displayName} (BYOC)`;
+      if (sp) name = `Xe của ${getParticipantName(sp)} (BYOC)`;
     }
     vehiclesList.push({
       vehicleId: sv.vehicleId || sv.id,
@@ -1495,11 +1511,22 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
         order.orderType === FnbOrderType.PRE_ORDER && order.status !== FnbOrderStatus.CANCELLED,
     )
     .reduce((sum, order) => sum + Number(order.total), 0);
-  const hasPendingPayment = paymentComponents.some(
-    (component) =>
-      component.status === PaymentComponentStatus.PENDING ||
-      component.status === PaymentComponentStatus.PENDING_REFUND,
+  const pendingPaymentComponents = paymentComponents.filter(
+    (component) => component.status === PaymentComponentStatus.PENDING,
   );
+  const pendingRefundComponents = paymentComponents.filter(
+    (component) => component.status === PaymentComponentStatus.PENDING_REFUND,
+  );
+  const outstandingAmount = pendingPaymentComponents.reduce(
+    (sum, component) => sum + Number(component.amount),
+    0,
+  );
+  const pendingRefundAmount = pendingRefundComponents.reduce(
+    (sum, component) => sum + Number(component.refundedAmount || 0),
+    0,
+  );
+  const requiresSettlement =
+    pendingPaymentComponents.length > 0 || pendingRefundComponents.length > 0;
 
   return {
     sessionId: session.id,
@@ -1515,8 +1542,9 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     actualEnd: session.actualEndAt ? session.actualEndAt.toISOString() : undefined,
     plannedEnd: session.plannedEndAt.toISOString(),
     participants: participants.map((p) => ({
-      name: p.displayName || 'Người chơi',
+      name: getParticipantName(p),
       type: 'PLAYER',
+      avatarUrl: p.userId ? participantUserById.get(p.userId)?.avatar_url || undefined : undefined,
     })),
     vehicles: vehiclesList,
     inspections: mappedInspections,
@@ -1528,6 +1556,13 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     approvedExtensions: mappedApprovedExtensions,
     extensionPricingOptions,
     fnbOrders: mappedFnbOrders,
+    paymentSummary: {
+      outstandingAmount,
+      pendingRefundAmount,
+      pendingPaymentCount: pendingPaymentComponents.length,
+      pendingRefundCount: pendingRefundComponents.length,
+      requiresSettlement,
+    },
     // A session can be opened from the staff's historical list, where the
     // in-memory "today" context does not contain its booking. Return the
     // booking summary here so that page can render after a reload as well.
@@ -1555,13 +1590,11 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       fnbPreorderFee,
       discountAmount: Number(booking.discountAmount) || 0,
       totalAmount: slotFee + rentalFee + fnbPreorderFee,
-      paymentStatus: hasPendingPayment ? 'UNPAID' : 'PAID',
+      paymentStatus: requiresSettlement ? 'UNPAID' : 'PAID',
       payment_components: paymentComponents,
-      plannedParticipants: participants.map(
-        (participant) => participant.displayName || 'Người chơi',
-      ),
+      plannedParticipants: participants.map((participant) => getParticipantName(participant)),
       participantDetails: participants.map((participant) => ({
-        name: participant.displayName || 'Người chơi',
+        name: getParticipantName(participant),
         isBooker: false,
       })),
       plannedVehicles: vehiclesList.map((vehicle) => vehicle.name),
@@ -3226,6 +3259,18 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
   const depositComp = await compRepo.findOne({
     where: { bookingId, type: PaymentComponentType.SECURITY_DEPOSIT },
   });
+  const pendingComponents = await compRepo.find({
+    where: { bookingId, status: PaymentComponentStatus.PENDING },
+  });
+  const hasPendingRefund = depositComp?.status === PaymentComponentStatus.PENDING_REFUND;
+
+  if (!hasPendingRefund && pendingComponents.length === 0) {
+    throw new AppError(
+      'Đơn này không còn khoản thanh toán hoặc hoàn tiền cần xử lý',
+      409,
+      'NO_PENDING_SETTLEMENT',
+    );
+  }
 
   let depositRefundAmount = 0;
   if (depositComp && depositComp.status === PaymentComponentStatus.PENDING_REFUND) {
@@ -3268,10 +3313,6 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
 
   // ── FLOW 2: SERVICE SETTLEMENT (Counter Payment) ──────────────────────────
   // Collect all PENDING service components (F&B, Extension, Damage-exceeding-deposit)
-  const pendingComponents = await compRepo.find({
-    where: { bookingId, status: PaymentComponentStatus.PENDING },
-  });
-
   const totalCounterBill = pendingComponents.reduce((sum, c) => sum + Number(c.amount), 0);
 
   // Net amount the customer actually hands over at the counter:
