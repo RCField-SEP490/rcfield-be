@@ -1469,6 +1469,484 @@ async function main() {
     afterJson: { status: 'CANCELLED' },
     reason: 'Track maintenance — unsafe surface conditions',
   });
+
+  const bracketContestId = await insertContest({
+    cafeId: hostCafe.id,
+    providerId,
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge Grand Prix 2026 - Nhánh 8 Tay Đua`,
+    description:
+      'Bracket knockout đầy đủ 8 tay đua với chuỗi next_match_id hoàn chỉnh: 4 trận tứ kết đã xong, bán kết 1 xong, bán kết 2 sẵn sàng, chung kết nháp.',
+    status: 'RUNNING',
+    trackTypeId: catalog.driftTrackTypeId,
+    contestTypeId: catalog.contestTypeId,
+    contestFormatId: catalog.knockoutFormatId,
+    contestTemplateId: catalog.knockoutTemplateId,
+    registrationOpensAt: new Date(now.getTime() - oneDay * 4),
+    registrationClosesAt: new Date(now.getTime() - oneDay * 2),
+    startsAt: new Date(now.getTime() - 5 * oneHour),
+    endsAt: new Date(now.getTime() + 5 * oneHour),
+    capacity: 8,
+    entryFee: 0,
+    vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
+    config: {
+      format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
+      drivers_per_match: 2,
+      seeding_mode: 'CHECK_IN_ORDER',
+      auto_bye: true,
+      leaderboard_mode: 'KNOCKOUT_WINS',
+      competition_mechanic: 'HEAD_TO_HEAD_ELIMINATION',
+      source_reference: VICTORY_CHALLENGE_SOURCE_URL,
+      prizes: [
+        { rank: 1, title: 'Grand Champion', description: 'Cúp Grand Prix + 2.000.000 VND' },
+        { rank: 2, title: 'Runner-up', description: 'Voucher 1.000.000 VND' },
+      ],
+    },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
+  });
+  await addContestCafe(bracketContestId, hostCafe.id, 'HOST', 0);
+  if (staffId) await addContestStaffAssignment(bracketContestId, staffId, providerId);
+
+  const bracketRegs = await Promise.all(
+    customers.slice(0, 8).map((customer, index) =>
+      insertRegistration({
+        contestId: bracketContestId,
+        userId: customer.id,
+        vehicleId: hostVehicleId,
+        status: 'CHECKED_IN',
+        paymentStatus: 'NOT_REQUIRED',
+        entryFeeAmount: 0,
+        checkInCode: `BRAC${String(index + 1).padStart(3, '0')}`,
+        checkedInCafeId: hostCafe.id,
+        checkedInBy: staffId ?? providerId,
+        checkedInAt: new Date(now.getTime() - 6 * oneHour + index * 5 * 60 * 1000),
+      }),
+    ),
+  );
+
+  const bracketFinalId = await insertMatch({
+    contestId: bracketContestId,
+    cafeId: hostCafe.id,
+    roundNo: 3,
+    matchNo: 1,
+    name: 'Chung kết',
+    matchType: 'FINAL',
+    status: 'DRAFT',
+    scheduledAt: new Date(now.getTime() + 2 * oneHour),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 0, format: 'KNOCKOUT' },
+  });
+  const bracketSemi1Id = await insertMatch({
+    contestId: bracketContestId,
+    cafeId: hostCafe.id,
+    roundNo: 2,
+    matchNo: 1,
+    name: 'Bán kết 1',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'COMPLETED',
+    nextMatchId: bracketFinalId,
+    scheduledAt: new Date(now.getTime() - oneHour),
+    startedAt: new Date(now.getTime() - 55 * 60 * 1000),
+    endedAt: new Date(now.getTime() - 45 * 60 * 1000),
+    decidedAt: new Date(now.getTime() - 45 * 60 * 1000),
+    createdBy: providerId,
+    decidedBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+    resultSummary: { winner_registration_id: bracketRegs[0], participants_count: 2 },
+  });
+  const bracketSemi2Id = await insertMatch({
+    contestId: bracketContestId,
+    cafeId: hostCafe.id,
+    roundNo: 2,
+    matchNo: 2,
+    name: 'Bán kết 2',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'READY',
+    nextMatchId: bracketFinalId,
+    scheduledAt: new Date(now.getTime() + 30 * 60 * 1000),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+  });
+  const bracketQuarterIds: string[] = [];
+  for (let quarter = 0; quarter < 4; quarter += 1) {
+    const winnerReg = bracketRegs[quarter * 2];
+    const quarterId = await insertMatch({
+      contestId: bracketContestId,
+      cafeId: hostCafe.id,
+      roundNo: 1,
+      matchNo: quarter + 1,
+      name: `Tứ kết ${quarter + 1}`,
+      matchType: 'HEAD_TO_HEAD',
+      status: 'COMPLETED',
+      nextMatchId: quarter < 2 ? bracketSemi1Id : bracketSemi2Id,
+      scheduledAt: new Date(now.getTime() - 4 * oneHour + quarter * 30 * 60 * 1000),
+      startedAt: new Date(now.getTime() - 4 * oneHour + quarter * 30 * 60 * 1000),
+      endedAt: new Date(now.getTime() - 4 * oneHour + quarter * 30 * 60 * 1000 + 10 * 60 * 1000),
+      decidedAt: new Date(now.getTime() - 4 * oneHour + quarter * 30 * 60 * 1000 + 10 * 60 * 1000),
+      createdBy: providerId,
+      decidedBy: providerId,
+      advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+      resultSummary: { winner_registration_id: winnerReg, participants_count: 2 },
+    });
+    bracketQuarterIds.push(quarterId);
+    await insertMatchParticipant({
+      matchId: quarterId,
+      registrationId: winnerReg,
+      slotNo: 1,
+      lane: 'L1',
+      seedNo: quarter * 2 + 1,
+      status: 'FINISHED',
+      finishPosition: 1,
+      isWinner: true,
+    });
+    await insertMatchParticipant({
+      matchId: quarterId,
+      registrationId: bracketRegs[quarter * 2 + 1],
+      slotNo: 2,
+      lane: 'L2',
+      seedNo: quarter * 2 + 2,
+      status: 'FINISHED',
+      finishPosition: 2,
+      isWinner: false,
+    });
+  }
+  await insertMatchParticipant({
+    matchId: bracketSemi1Id,
+    registrationId: bracketRegs[0],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 1,
+    status: 'FINISHED',
+    finishPosition: 1,
+    isWinner: true,
+  });
+  await insertMatchParticipant({
+    matchId: bracketSemi1Id,
+    registrationId: bracketRegs[2],
+    slotNo: 2,
+    lane: 'L2',
+    seedNo: 3,
+    status: 'FINISHED',
+    finishPosition: 2,
+    isWinner: false,
+  });
+  await insertMatchParticipant({
+    matchId: bracketSemi2Id,
+    registrationId: bracketRegs[4],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 5,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: bracketSemi2Id,
+    registrationId: bracketRegs[6],
+    slotNo: 2,
+    lane: 'L2',
+    seedNo: 7,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: bracketFinalId,
+    registrationId: bracketRegs[0],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 1,
+    status: 'READY',
+  });
+  await writeAudit({
+    contestId: bracketContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'contest.matches_generated',
+    afterJson: { generated_match_count: 7 },
+  });
+  for (const quarterId of bracketQuarterIds) {
+    await writeAudit({
+      contestId: bracketContestId,
+      actorId: providerId,
+      actorRole: 'PROVIDER',
+      eventType: 'match.results_submitted',
+      matchId: quarterId,
+      afterJson: { status: 'COMPLETED' },
+    });
+  }
+  await writeAudit({
+    contestId: bracketContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'match.results_submitted',
+    matchId: bracketSemi1Id,
+    afterJson: { status: 'COMPLETED' },
+  });
+  await writeAudit({
+    contestId: bracketContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'match.advanced',
+    matchId: bracketSemi1Id,
+    afterJson: { next_match_id: bracketFinalId, winners: [bracketRegs[0]] },
+  });
+
+  const byeContestId = await insertContest({
+    cafeId: hostCafe.id,
+    providerId,
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge Lucky Draw Cup 2026 - Nhánh Bye`,
+    description:
+      'Giải 7 tay đua nên vòng đầu có một suất bye (trận chỉ có 1 participant), dùng để test UI bye-round và luồng auto-advance.',
+    status: 'RUNNING',
+    trackTypeId: catalog.driftTrackTypeId,
+    contestTypeId: catalog.contestTypeId,
+    contestFormatId: catalog.knockoutFormatId,
+    contestTemplateId: catalog.knockoutTemplateId,
+    registrationOpensAt: new Date(now.getTime() - oneDay * 3),
+    registrationClosesAt: new Date(now.getTime() - oneDay),
+    startsAt: new Date(now.getTime() - 4 * oneHour),
+    endsAt: new Date(now.getTime() + 4 * oneHour),
+    capacity: 8,
+    entryFee: 0,
+    vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
+    config: {
+      format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
+      drivers_per_match: 2,
+      seeding_mode: 'CHECK_IN_ORDER',
+      auto_bye: true,
+      leaderboard_mode: 'KNOCKOUT_WINS',
+      competition_mechanic: 'HEAD_TO_HEAD_ELIMINATION',
+      resource_locks: [{ cafe_id: hostCafe.id, scope: 'FULL_BRANCH', track_config_ids: [] }],
+    },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
+  });
+  await addContestCafe(byeContestId, hostCafe.id, 'HOST', 0);
+  if (staffId) await addContestStaffAssignment(byeContestId, staffId, providerId);
+
+  const byeRegs = await Promise.all(
+    customers.slice(0, 7).map((customer, index) =>
+      insertRegistration({
+        contestId: byeContestId,
+        userId: customer.id,
+        vehicleId: hostVehicleId,
+        status: 'CHECKED_IN',
+        paymentStatus: 'NOT_REQUIRED',
+        entryFeeAmount: 0,
+        checkInCode: `BYEC${String(index + 1).padStart(3, '0')}`,
+        checkedInCafeId: hostCafe.id,
+        checkedInBy: staffId ?? providerId,
+        checkedInAt: new Date(now.getTime() - 5 * oneHour + index * 5 * 60 * 1000),
+      }),
+    ),
+  );
+
+  const byeFinalId = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 3,
+    matchNo: 1,
+    name: 'Chung kết',
+    matchType: 'FINAL',
+    status: 'DRAFT',
+    scheduledAt: new Date(now.getTime() + 3 * oneHour),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 0, format: 'KNOCKOUT' },
+  });
+  const byeSemi1Id = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 2,
+    matchNo: 1,
+    name: 'Bán kết 1',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'READY',
+    nextMatchId: byeFinalId,
+    scheduledAt: new Date(now.getTime() + oneHour),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+  });
+  const byeSemi2Id = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 2,
+    matchNo: 2,
+    name: 'Bán kết 2',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'DRAFT',
+    nextMatchId: byeFinalId,
+    scheduledAt: new Date(now.getTime() + 2 * oneHour),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+  });
+  const byeQuarter1Id = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 1,
+    name: 'Tứ kết 1',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'COMPLETED',
+    nextMatchId: byeSemi1Id,
+    scheduledAt: new Date(now.getTime() - 3 * oneHour),
+    startedAt: new Date(now.getTime() - 3 * oneHour),
+    endedAt: new Date(now.getTime() - 3 * oneHour + 10 * 60 * 1000),
+    decidedAt: new Date(now.getTime() - 3 * oneHour + 10 * 60 * 1000),
+    createdBy: providerId,
+    decidedBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+    resultSummary: { winner_registration_id: byeRegs[0], participants_count: 2 },
+  });
+  const byeQuarter2Id = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 2,
+    name: 'Tứ kết 2',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'COMPLETED',
+    nextMatchId: byeSemi1Id,
+    scheduledAt: new Date(now.getTime() - 3 * oneHour + 30 * 60 * 1000),
+    startedAt: new Date(now.getTime() - 3 * oneHour + 30 * 60 * 1000),
+    endedAt: new Date(now.getTime() - 3 * oneHour + 40 * 60 * 1000),
+    decidedAt: new Date(now.getTime() - 3 * oneHour + 40 * 60 * 1000),
+    createdBy: providerId,
+    decidedBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+    resultSummary: { winner_registration_id: byeRegs[2], participants_count: 2 },
+  });
+  const byeQuarter3Id = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 3,
+    name: 'Tứ kết 3',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'READY',
+    nextMatchId: byeSemi2Id,
+    scheduledAt: new Date(now.getTime() + 30 * 60 * 1000),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+  });
+  const byeQuarter4Id = await insertMatch({
+    contestId: byeContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 4,
+    name: 'Tứ kết 4 (Bye)',
+    matchType: 'HEAD_TO_HEAD',
+    status: 'COMPLETED',
+    nextMatchId: byeSemi2Id,
+    scheduledAt: new Date(now.getTime() - 3 * oneHour + oneHour),
+    startedAt: new Date(now.getTime() - 3 * oneHour + oneHour),
+    endedAt: new Date(now.getTime() - 3 * oneHour + oneHour),
+    decidedAt: new Date(now.getTime() - 3 * oneHour + oneHour),
+    createdBy: providerId,
+    decidedBy: providerId,
+    advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
+    resultSummary: {
+      winner_registration_id: byeRegs[6],
+      participants_count: 1,
+      bye: true,
+    },
+    metadata: { seeded: true, bye: true },
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter1Id,
+    registrationId: byeRegs[0],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 1,
+    status: 'FINISHED',
+    finishPosition: 1,
+    isWinner: true,
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter1Id,
+    registrationId: byeRegs[1],
+    slotNo: 2,
+    lane: 'L2',
+    seedNo: 2,
+    status: 'FINISHED',
+    finishPosition: 2,
+    isWinner: false,
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter2Id,
+    registrationId: byeRegs[2],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 3,
+    status: 'FINISHED',
+    finishPosition: 1,
+    isWinner: true,
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter2Id,
+    registrationId: byeRegs[3],
+    slotNo: 2,
+    lane: 'L2',
+    seedNo: 4,
+    status: 'FINISHED',
+    finishPosition: 2,
+    isWinner: false,
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter3Id,
+    registrationId: byeRegs[4],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 5,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter3Id,
+    registrationId: byeRegs[5],
+    slotNo: 2,
+    lane: 'L2',
+    seedNo: 6,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: byeQuarter4Id,
+    registrationId: byeRegs[6],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 7,
+    status: 'FINISHED',
+    finishPosition: 1,
+    isWinner: true,
+  });
+  await insertMatchParticipant({
+    matchId: byeSemi1Id,
+    registrationId: byeRegs[0],
+    slotNo: 1,
+    lane: 'L1',
+    seedNo: 1,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: byeSemi1Id,
+    registrationId: byeRegs[2],
+    slotNo: 2,
+    lane: 'L2',
+    seedNo: 3,
+    status: 'READY',
+  });
+  await writeAudit({
+    contestId: byeContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'contest.matches_generated',
+    afterJson: { generated_match_count: 7, bye_count: 1 },
+  });
+  await writeAudit({
+    contestId: byeContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'match.bye_advanced',
+    matchId: byeQuarter4Id,
+    afterJson: { next_match_id: byeSemi2Id, winners: [byeRegs[6]] },
+    reason: 'Auto-advance: no opponent in bracket slot',
+  });
+
   await insertContestBan({
     providerId,
     contestId: byocContestId,
@@ -1520,6 +1998,8 @@ async function main() {
   logger.info('Seed', `Running contest: ${runningContestId}`);
   logger.info('Seed', `Completed contest: ${completedContestId}`);
   logger.info('Seed', `Cancelled contest: ${cancelledContestId}`);
+  logger.info('Seed', `Full bracket contest: ${bracketContestId}`);
+  logger.info('Seed', `Bye-round contest: ${byeContestId}`);
 
   await AppDataSource.destroy();
 }
