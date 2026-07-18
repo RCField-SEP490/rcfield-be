@@ -15,6 +15,17 @@ jest.mock('bullmq', () => {
   };
 });
 
+jest.mock('../services/email.service', () => ({
+  emailService: {
+    sendBookingConfirmation: jest.fn().mockResolvedValue(undefined),
+    sendBookingInvoice: jest.fn().mockResolvedValue(undefined),
+    sendContestRegistrationConfirmation: jest.fn().mockResolvedValue(undefined),
+    sendContestReminder: jest.fn().mockResolvedValue(undefined),
+    sendStaffInvite: jest.fn().mockResolvedValue(undefined),
+    sendPasswordResetCode: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // Kết nối DB trước khi test file chạy
 beforeAll(async () => {
   if (!AppDataSource.isInitialized) {
