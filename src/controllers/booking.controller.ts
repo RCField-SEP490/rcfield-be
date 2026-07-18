@@ -194,8 +194,10 @@ export const bookingController = {
       const userMap = new Map(users.map((u) => [u.id, u]));
       const participants = rawParticipants.map((p) => ({
         ...p,
-        resolvedName: p.guestName ?? userMap.get(p.userId ?? '')?.full_name ?? null,
-        resolvedPhone: p.guestPhone ?? userMap.get(p.userId ?? '')?.phone ?? null,
+        // A linked account owns its current profile details. guestName/phone is
+        // retained only for walk-in guests without an account.
+        resolvedName: userMap.get(p.userId ?? '')?.full_name ?? p.guestName ?? null,
+        resolvedPhone: userMap.get(p.userId ?? '')?.phone ?? p.guestPhone ?? null,
       }));
 
       // Enrich vehicles with catalog info (name, tier, identifier, color, image)
