@@ -1,4 +1,5 @@
 import { In } from 'typeorm';
+import { randomBytes } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import { Booking } from '../models/booking.entity';
@@ -653,6 +654,19 @@ function buildByocMetadata(body: CreateRegistrationBody) {
   };
 }
 
+async function generateUniqueCheckInCode(
+  manager: import('typeorm').EntityManager,
+  maxAttempts = 5,
+): Promise<string> {
+  const repo = manager.getRepository(ContestRegistration);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const code = randomBytes(4).toString('hex').toUpperCase();
+    const existing = await repo.findOne({ where: { checkInCode: code } });
+    if (!existing) return code;
+  }
+  throw new AppError('Không thể tạo mã check-in duy nhất', 500, 'CHECK_IN_CODE_GENERATION_FAILED');
+}
+
 async function loadContestNotificationContext(registration: ContestRegistration) {
   const [row] = await AppDataSource.query<
     {
@@ -1164,25 +1178,6 @@ export async function createContestRegistration(
     }
   }
 
-  if (contest.capacity && contest.capacity > 0) {
-    const activeCount = await AppDataSource.getRepository(ContestRegistration).count({
-      where: { contestId },
-    });
-    const cancelledCount = await AppDataSource.getRepository(ContestRegistration).count({
-      where: { contestId, status: ContestRegistrationStatus.CANCELLED },
-    });
-    if (activeCount - cancelledCount >= contest.capacity) {
-      throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
-    }
-  }
-
-  const existing = await AppDataSource.getRepository(ContestRegistration).findOne({
-    where: { contestId, userId: viewer.userId },
-  });
-  if (existing && existing.status !== ContestRegistrationStatus.CANCELLED) {
-    throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
-  }
-
   if (body.vehicle_source === VehicleSource.RENTAL) {
     if (!body.booking_id || !body.vehicle_id) {
       throw new AppError(
@@ -1245,34 +1240,63 @@ export async function createContestRegistration(
     }
   }
 
-  const registrationRepo = AppDataSource.getRepository(ContestRegistration);
-  const registration = existing ?? registrationRepo.create();
-  registration.contestId = contestId;
-  registration.userId = viewer.userId;
-  registration.participantRoleSnapshot = UserRole.CUSTOMER;
-  registration.vehicleSource = body.vehicle_source;
-  registration.vehicleId =
-    body.vehicle_source === VehicleSource.RENTAL ? (body.vehicle_id ?? null) : null;
-  registration.bookingId =
-    body.vehicle_source === VehicleSource.RENTAL ? (body.booking_id ?? null) : null;
-  registration.customerVehicleId = null;
-  registration.status = ContestRegistrationStatus.PENDING;
-  registration.checkInCode =
-    registration.checkInCode ?? Math.random().toString(36).slice(2, 10).toUpperCase();
-  registration.entryFeeAmount = Number(contest.entryFee ?? 0);
-  registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
-  registration.paymentStatus =
-    Number(contest.entryFee ?? 0) > 0
-      ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
-      : ContestEntryFeePaymentStatus.PENDING_REVIEW;
-  registration.metadata = {
-    ...(registration.metadata ?? {}),
-    booking_id: body.booking_id ?? null,
-    byoc_declaration:
-      body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
-  };
+  const saved = await AppDataSource.transaction(async (manager) => {
+    const transactionalRepo = manager.getRepository(ContestRegistration);
 
-  const saved = await registrationRepo.save(registration);
+    // Lock existing registrations for this contest to serialize concurrent registrations.
+    const existing = await transactionalRepo
+      .createQueryBuilder('registration')
+      .setLock('pessimistic_write')
+      .where('registration.contest_id = :contestId', { contestId })
+      .andWhere('registration.user_id = :userId', { userId: viewer.userId })
+      .getOne();
+
+    if (existing && existing.status !== ContestRegistrationStatus.CANCELLED) {
+      throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
+    }
+
+    if (contest.capacity && contest.capacity > 0) {
+      const countResult = await manager.query(
+        `SELECT COUNT(*)::int AS count
+         FROM contest_registrations
+         WHERE contest_id = $1 AND status != $2
+         FOR UPDATE`,
+        [contestId, ContestRegistrationStatus.CANCELLED],
+      );
+      const activeCount = Number(countResult[0]?.count ?? 0);
+      if (activeCount >= contest.capacity) {
+        throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
+      }
+    }
+
+    const registration = existing ?? transactionalRepo.create();
+    registration.contestId = contestId;
+    registration.userId = viewer.userId;
+    registration.participantRoleSnapshot = UserRole.CUSTOMER;
+    registration.vehicleSource = body.vehicle_source;
+    registration.vehicleId =
+      body.vehicle_source === VehicleSource.RENTAL ? (body.vehicle_id ?? null) : null;
+    registration.bookingId =
+      body.vehicle_source === VehicleSource.RENTAL ? (body.booking_id ?? null) : null;
+    registration.customerVehicleId = null;
+    registration.status = ContestRegistrationStatus.PENDING;
+    registration.checkInCode = existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
+    registration.entryFeeAmount = Number(contest.entryFee ?? 0);
+    registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
+    registration.paymentStatus =
+      Number(contest.entryFee ?? 0) > 0
+        ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
+        : ContestEntryFeePaymentStatus.PENDING_REVIEW;
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      booking_id: body.booking_id ?? null,
+      byoc_declaration:
+        body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
+    };
+
+    return transactionalRepo.save(registration);
+  });
+
   await writeContestAudit({
     contestId,
     registrationId: saved.id,
@@ -1686,6 +1710,23 @@ export async function createContestEntryPaymentUrl(
     )
   ) {
     throw new AppError('Entry fee đã được xử lý', 409, 'ENTRY_FEE_ALREADY_SETTLED');
+  }
+
+  const existingTxn = await AppDataSource.getRepository(PaymentTransaction).findOne({
+    where: {
+      contestRegistrationId: registration.id,
+      subjectType: PaymentTransactionSubjectType.CONTEST_ENTRY,
+      type: PaymentTransactionType.PAYMENT,
+      status: PaymentTransactionStatus.PENDING,
+    },
+    order: { createdAt: 'DESC' },
+  });
+  if (existingTxn) {
+    throw new AppError(
+      'Một giao dịch entry fee đang chờ xử lý; vui lòng hoàn tất hoặc hủy trước khi tạo mới',
+      409,
+      'ENTRY_FEE_TRANSACTION_PENDING',
+    );
   }
 
   const txnRef = `contest_${registration.id.replace(/-/g, '').slice(0, 18)}_${Date.now().toString().slice(-4)}`;

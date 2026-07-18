@@ -2,6 +2,10 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 
 @Entity('contest_bans')
 @Index(['userId', 'providerId', 'contestId'])
+@Index(['providerId', 'userId', 'contestId'], {
+  unique: true,
+  where: 'lifted_at IS NULL',
+})
 export class ContestBan {
   @PrimaryGeneratedColumn('uuid')
   id: string;

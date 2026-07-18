@@ -10,6 +10,7 @@ import { ContestEntryFeePaymentStatus, ContestRegistrationStatus, VehicleSource 
 
 @Entity('contest_registrations')
 @Index(['contestId', 'userId'], { unique: true })
+@Index(['checkInCode'], { unique: true })
 export class ContestRegistration {
   @PrimaryGeneratedColumn('uuid')
   id: string;
