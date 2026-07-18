@@ -130,6 +130,12 @@ export enum PaymentTransactionType {
   REFUND = 'REFUND',
 }
 
+export enum PaymentTransactionSubjectType {
+  BOOKING = 'BOOKING',
+  CONTEST_ENTRY = 'CONTEST_ENTRY',
+  CUSTOMER_PACKAGE = 'CUSTOMER_PACKAGE',
+}
+
 export enum PaymentTransactionStatus {
   PENDING = 'PENDING',
   SUCCESS = 'SUCCESS',
@@ -171,6 +177,17 @@ export enum InspectionType {
   CHECK_OUT = 'CHECK_OUT',
 }
 
+export enum DamagePartType {
+  TIRE_WHEEL = 'TIRE_WHEEL',
+  SPOILER = 'SPOILER',
+  CHASSIS = 'CHASSIS',
+  MOTOR = 'MOTOR',
+  SHELL = 'SHELL',
+  SERVO = 'SERVO',
+  REMOTE = 'REMOTE',
+  OTHER = 'OTHER',
+}
+
 export enum ParticipantRole {
   DRIVER = 'DRIVER',
   PLAYER = 'PLAYER',
@@ -181,6 +198,79 @@ export enum ParticipantRole {
 export enum VehicleSource {
   RENTAL = 'RENTAL',
   BYOC = 'BYOC',
+}
+
+// ── Contest ──────────────────────────────────────────────────────────────────
+
+export enum ContestStatus {
+  DRAFT = 'DRAFT',
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestResourceScope {
+  FULL_BRANCH = 'FULL_BRANCH',
+  SELECTED_TRACKS = 'SELECTED_TRACKS',
+}
+
+export enum ContestBanScopeType {
+  CONTEST = 'CONTEST',
+  PROVIDER = 'PROVIDER',
+}
+
+export enum ContestRegistrationStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  CANCELLED = 'CANCELLED',
+  CHECKED_IN = 'CHECKED_IN',
+}
+
+export enum ContestEntryFeePaymentStatus {
+  NOT_REQUIRED = 'NOT_REQUIRED',
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  WAIVED = 'WAIVED',
+  MARKED_PAID = 'MARKED_PAID',
+}
+
+export enum ContestMatchType {
+  HEAD_TO_HEAD = 'HEAD_TO_HEAD',
+  MULTI_DRIVER = 'MULTI_DRIVER',
+  TIME_ATTACK = 'TIME_ATTACK',
+  FINAL = 'FINAL',
+}
+
+export enum ContestMatchStatus {
+  DRAFT = 'DRAFT',
+  READY = 'READY',
+  RUNNING = 'RUNNING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ContestParticipantStatus {
+  READY = 'READY',
+  STARTED = 'STARTED',
+  FINISHED = 'FINISHED',
+  DNS = 'DNS',
+  DNF = 'DNF',
+  DQ = 'DQ',
+}
+
+export enum RaceRecordSourceType {
+  CONTEST = 'CONTEST',
+  SESSION_TIME_ATTACK = 'SESSION_TIME_ATTACK',
+  ADMIN_IMPORT = 'ADMIN_IMPORT',
+}
+
+export enum RaceRecordVerificationStatus {
+  PENDING = 'PENDING',
+  VERIFIED = 'VERIFIED',
+  REJECTED = 'REJECTED',
+  SUPERSEDED = 'SUPERSEDED',
 }
 
 export enum SessionVehicleStatus {

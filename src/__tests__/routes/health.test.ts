@@ -1,6 +1,5 @@
 import request from 'supertest';
 import { app } from '../../app';
-import { describe } from 'node:test';
 
 describe('GET /api/v1/health', () => {
   it('trả về 200 và message', async () => {

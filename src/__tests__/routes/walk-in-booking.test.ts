@@ -66,6 +66,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   let staffToken: string;
   let cafe: { id: string };
   let trackTypeId: string;
+  let trackConfigId: string;
   let vehicle: { id: string };
 
   beforeEach(async () => {
@@ -84,11 +85,13 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     const [trackType] = await AppDataSource.query(`SELECT id FROM track_types LIMIT 1`);
     trackTypeId = trackType.id;
 
-    await AppDataSource.query(
+    const [trackConfig] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO cafe_track_configs (cafe_id, track_type_id, max_concurrent, byoc_capacity, is_active)
-       VALUES ($1, $2, 10, 5, true)`,
+       VALUES ($1, $2, 2, 5, true)
+       RETURNING id`,
       [cafe.id, trackTypeId],
     );
+    trackConfigId = trackConfig.id;
 
     // 3. Create a vehicle
     vehicle = await createTestVehicle({ cafe_id: cafe.id, tier: 'STANDARD' });
@@ -104,6 +107,34 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     if (byocKeys.length > 0) {
       await redis.del(byocKeys);
     }
+  });
+
+  it('từ chối check-in khi đã quá 30 phút kể từ giờ bắt đầu', async () => {
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const slotStart = new Date(Date.now() - 31 * 60 * 1000);
+    const booking = await AppDataSource.getRepository(Booking).save({
+      customerId: customer.id,
+      cafeId: cafe.id,
+      trackTypeId,
+      trackConfigId,
+      playMode: BookingMode.RENTAL,
+      source: BookingSource.APP,
+      status: BookingStatus.CONFIRMED,
+      slotStart,
+      slotEnd: new Date(slotStart.getTime() + 60 * 60 * 1000),
+      slotCount: 1,
+      paymentExpiresAt: new Date(slotStart.getTime() - 30 * 60 * 1000),
+      snapshot: {},
+      discountAmount: 0,
+    });
+
+    await expect(staffService.startCheckIn(booking.id, staffUser.id)).rejects.toMatchObject({
+      code: 'CHECK_IN_WINDOW_EXPIRED',
+      statusCode: 400,
+    });
+    await expect(
+      AppDataSource.getRepository(Session).findOne({ where: { bookingId: booking.id } }),
+    ).resolves.toBeNull();
   });
 
   it('tạo booking BYOC thành công, tự sinh tài khoản guest, ghi nhận audit và thanh toán', async () => {
@@ -200,6 +231,11 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
 
     expect(res.body.success).toBe(true);
 
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: res.body.data.bookingId },
+    });
+    expect(booking?.trackConfigId).toBe(trackConfigId);
+
     const compRepo = AppDataSource.getRepository(PaymentComponent);
     const comps = await compRepo.find({ where: { bookingId: res.body.data.bookingId } });
     expect(comps.length).toBe(2); // SLOT_FEE, RENTAL_FEE
@@ -214,32 +250,70 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     });
   });
 
-  it('today bookings tách F&B đặt trước và F&B gọi tại ca cho khách walk-in', async () => {
-    const slotStart = new Date(Date.now() + 10 * 60 * 1000);
-    slotStart.setSeconds(0, 0);
+  it('trừ sức chứa xe thuê của đơn cũ chưa có track config', async () => {
+    await Promise.all([
+      createTestVehicle({ cafe_id: cafe.id, tier: 'STANDARD' }),
+      createTestVehicle({ cafe_id: cafe.id, tier: 'STANDARD' }),
+    ]);
+    const slotStart = nextLocalDateAt(10);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
+    const [legacyBooking] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status,
+          slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', $4, $5, 1,
+               $6, 0)
+       RETURNING id`,
+      [
+        staffUser.id,
+        cafe.id,
+        trackTypeId,
+        slotStart,
+        slotEnd,
+        new Date(slotStart.getTime() + 30 * 60 * 1000),
+      ],
+    );
+
+    await AppDataSource.query(
+      `INSERT INTO booking_vehicles
+         (booking_id, vehicle_id, hourly_rate_snapshot, rental_fee_snapshot,
+          security_deposit_snapshot, damage_multiplier_snapshot)
+       VALUES ($1, $2, 50000, 50000, 0, 1)`,
+      [legacyBooking.id, vehicle.id],
+    );
+
     const res = await request(app)
-      .post('/api/v1/staff/bookings')
-      .set('Authorization', `Bearer ${staffToken}`)
-      .send({
-        play_mode: 'BYOC',
-        track_type_id: trackTypeId,
+      .get(`/api/v1/cafes/${cafe.id}/availability`)
+      .query({
         slot_start: slotStart.toISOString(),
         slot_end: slotEnd.toISOString(),
-        payment_method: 'CASH',
-        vehicle_ids: [],
-        participants: [
-          {
-            guest_name: 'Han',
-            guest_phone: '0900000001',
-            participant_type: 'WALK_IN_GUEST',
-          },
-        ],
+        play_mode: BookingMode.RENTAL,
+        track_config_id: trackConfigId,
       })
-      .expect(201);
+      .expect(200);
 
-    const bookingId = res.body.data.bookingId;
+    expect(res.body.success).toBe(true);
+    // Three vehicles exist; one is assigned to the legacy booking and the
+    // track capacity is two, so exactly one vehicle remains bookable.
+    expect(res.body.data.vehicles).toHaveLength(1);
+  });
+
+  it('today bookings tách F&B đặt trước và F&B gọi tại ca cho khách walk-in', async () => {
+    // This test verifies the staff list's F&B aggregation, not booking creation.
+    // Anchor the fixture at the database's current time so it remains in the
+    // Vietnam "today" query window even when CI runs close to midnight.
+    const [bookingFixture] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status,
+          slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES
+         ($1, $2, $3, 'BYOC', $4, 'CONFIRMED', NOW(), NOW() + INTERVAL '1 hour', 1,
+          NOW() + INTERVAL '30 minutes', 0)
+       RETURNING id`,
+      [staffUser.id, cafe.id, trackTypeId, BookingSource.STAFF_MANUAL],
+    );
+    const bookingId = bookingFixture.id;
 
     await AppDataSource.query(
       `INSERT INTO fnb_orders (booking_id, session_id, order_type, status, total_amount, created_by, notes)
@@ -863,5 +937,45 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
       .expect(409);
 
     expect(res.body.code).toBe('SLOT_LOCKED');
+  });
+
+  it('staff tra cứu được lịch quá khứ hoặc tương lai theo ngày của đúng cơ sở', async () => {
+    const customer = await createTestUser({ role: UserRole.CUSTOMER, full_name: 'Khách xem lịch' });
+    const slotStart = nextLocalDateAt(10);
+    const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
+    const booking = await AppDataSource.getRepository(Booking).save({
+      customerId: customer.id,
+      cafeId: cafe.id,
+      trackTypeId,
+      trackConfigId,
+      playMode: BookingMode.BYOC,
+      source: BookingSource.APP,
+      status: BookingStatus.CONFIRMED,
+      slotStart,
+      slotEnd,
+      slotCount: 1,
+      paymentExpiresAt: slotEnd,
+      snapshot: null,
+      promotionId: null,
+      customerPackageId: null,
+      discountAmount: 0,
+    });
+
+    const date = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(slotStart);
+    const res = await request(app)
+      .get('/api/v1/staff/bookings')
+      .query({ date })
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].bookingId).toBe(booking.id);
+    expect(res.body.data[0].cafeId).toBe(cafe.id);
   });
 });

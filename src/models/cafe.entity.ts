@@ -72,6 +72,9 @@ export class Cafe {
   @Column({ name: 'min_booking_notice_minutes', type: 'int', default: 60 })
   minBookingNoticeMinutes: number;
 
+  @Column({ name: 'max_advance_booking_days', type: 'int', default: 30 })
+  maxAdvanceBookingDays: number;
+
   @Column({ name: 'byoc_capacity', type: 'int', default: 5 })
   byocCapacity: number;
 

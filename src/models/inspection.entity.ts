@@ -4,9 +4,11 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  OneToMany,
   Index,
 } from 'typeorm';
 import { InspectionType, InspectionSubjectType } from '../types';
+import { DamageLineItem } from './damage-line-item.entity';
 
 @Entity('inspections')
 @Index(['sessionId'])
@@ -55,6 +57,9 @@ export class Inspection {
 
   @Column({ name: 'customer_confirmed_at', type: 'timestamptz', nullable: true })
   customerConfirmedAt: Date | null;
+
+  @OneToMany(() => DamageLineItem, (item) => item.inspection)
+  damageLineItems: DamageLineItem[];
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

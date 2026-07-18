@@ -27,6 +27,7 @@ export const env = {
     password: process.env.DB_PASSWORD ?? 'postgres',
     ssl: parseBoolean(process.env.DB_SSL),
     sslRejectUnauthorized: parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, true),
+    autoMigrate: parseBoolean(process.env.DB_AUTO_MIGRATE, true),
   },
 
   jwt: {

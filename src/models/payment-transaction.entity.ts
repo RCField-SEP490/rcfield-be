@@ -6,11 +6,16 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
-import { PaymentTransactionStatus, PaymentTransactionType } from '../types';
+import {
+  PaymentTransactionStatus,
+  PaymentTransactionSubjectType,
+  PaymentTransactionType,
+} from '../types';
 
 @Entity('payment_transactions')
 @Index(['bookingId'])
 @Index('IDX_payment_transactions_customer_package_id', ['customerPackageId'])
+@Index('IDX_payment_transactions_contest_registration_id', ['contestRegistrationId'])
 export class PaymentTransaction {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -20,6 +25,17 @@ export class PaymentTransaction {
 
   @Column({ name: 'customer_package_id', type: 'uuid', nullable: true })
   customerPackageId: string | null;
+
+  @Column({ name: 'contest_registration_id', type: 'uuid', nullable: true })
+  contestRegistrationId: string | null;
+
+  @Column({
+    name: 'subject_type',
+    type: 'varchar',
+    length: 40,
+    default: PaymentTransactionSubjectType.BOOKING,
+  })
+  subjectType: PaymentTransactionSubjectType;
 
   @Column({ name: 'type', type: 'varchar', length: 20 })
   type: PaymentTransactionType;

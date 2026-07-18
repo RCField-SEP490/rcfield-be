@@ -4,7 +4,11 @@ import { env } from '../config/env';
 import { AppDataSource } from '../config/database';
 import { AppError, AuthPayload, AuthRequest, ProviderStatus, UserRole } from '../types';
 
-export function authenticate(req: AuthRequest, _res: Response, next: NextFunction): void {
+export async function authenticate(
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'));
@@ -17,11 +21,16 @@ export function authenticate(req: AuthRequest, _res: Response, next: NextFunctio
       return next(new AppError('Token role invalid', 401, 'TOKEN_INVALID'));
     }
     req.user = payload;
-    // Fire-and-forget: track last active time for staff presence
+    // Complete this update before handing the request back to Express so tests
+    // and graceful shutdown do not leave an orphaned database query behind.
     if (payload.role === UserRole.STAFF) {
-      AppDataSource.query(`UPDATE users SET last_active_at = NOW() WHERE id = $1`, [
-        payload.userId,
-      ]).catch(() => {});
+      try {
+        await AppDataSource.query(`UPDATE users SET last_active_at = NOW() WHERE id = $1`, [
+          payload.userId,
+        ]);
+      } catch {
+        // Presence tracking must never prevent an authenticated request.
+      }
     }
     next();
   } catch {

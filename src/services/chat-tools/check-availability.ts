@@ -47,8 +47,16 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
   >(`SELECT byoc_capacity, slot_duration_minutes, name FROM cafes WHERE id = $1`, [cafeId]);
   if (!cafeRows.length) return JSON.stringify({ error: 'Cafe not found' });
 
-  const byocCapacity = cafeRows[0].byoc_capacity ?? 5;
-  const slotMinutes = cafeRows[0].slot_duration_minutes ?? 60;
+  const byocCapacity = Number(cafeRows[0].byoc_capacity);
+  const slotMinutes = Number(cafeRows[0].slot_duration_minutes);
+  if (
+    !Number.isInteger(byocCapacity) ||
+    byocCapacity < 0 ||
+    !Number.isInteger(slotMinutes) ||
+    slotMinutes <= 0
+  ) {
+    return JSON.stringify({ error: 'Cafe schedule or BYOC capacity is not configured correctly' });
+  }
 
   // RENTAL capacity = number of currently available vehicles
   const vehicleRows = await ds.query<{ count: string }[]>(

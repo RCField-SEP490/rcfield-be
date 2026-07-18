@@ -55,10 +55,22 @@ interface CreateCafeOptions {
   status?: 'PENDING' | 'ACTIVE' | 'SUSPENDED';
   track_types?: string[];
   byoc_capacity?: number;
+  slot_fee_rate?: number;
+  latitude?: number;
+  longitude?: number;
+  amenity_ids?: string[];
 }
 
 export async function createTestCafe(options: CreateCafeOptions = {}) {
-  const { status = 'ACTIVE', track_types = ['DRIFT', 'OBSTACLE'], byoc_capacity = 5 } = options;
+  const {
+    status = 'ACTIVE',
+    track_types = ['DRIFT', 'OBSTACLE'],
+    byoc_capacity = 5,
+    slot_fee_rate = 150000,
+    latitude = 10.7403,
+    longitude = 106.712,
+    amenity_ids = [],
+  } = options;
 
   const provider_id = options.provider_id ?? (await createTestUser({ role: UserRole.PROVIDER })).id;
 
@@ -85,8 +97,8 @@ export async function createTestCafe(options: CreateCafeOptions = {}) {
     `INSERT INTO cafes
        (provider_id, name, slug, address, district, city,
         slot_fee_rate, status, track_types, byoc_capacity,
-        operating_hours)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        operating_hours, latitude, longitude, amenity_ids)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [
       provider_id,
@@ -95,14 +107,49 @@ export async function createTestCafe(options: CreateCafeOptions = {}) {
       '123 Test Street',
       'Quận 7',
       'Hồ Chí Minh',
-      150000,
+      slot_fee_rate,
       status,
       mappedTrackIds,
       byoc_capacity,
-      JSON.stringify({ mon: { open: '09:00', close: '22:00', is_closed: false } }),
+      JSON.stringify(
+        ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].reduce<Record<string, unknown>>(
+          (hours, day) => {
+            hours[day] = { open: '00:00', close: '24:00', is_closed: false };
+            return hours;
+          },
+          {},
+        ),
+      ),
+      latitude,
+      longitude,
+      amenity_ids,
     ],
   );
   return cafe;
+}
+
+interface CreateAmenityOptions {
+  title?: string;
+  description?: string | null;
+  icon?: string;
+  sort_order?: number;
+}
+
+export async function createTestAmenity(options: CreateAmenityOptions = {}) {
+  const {
+    title = 'Serious Inspection',
+    description = 'Khu kiểm tra xe',
+    icon = 'shield',
+    sort_order = 0,
+  } = options;
+
+  const [amenity] = await AppDataSource.query(
+    `INSERT INTO amenity_catalog (title, description, icon, sort_order)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [title, description, icon, sort_order],
+  );
+  return amenity;
 }
 
 // ── Vehicles ─────────────────────────────────────────────────────────────────

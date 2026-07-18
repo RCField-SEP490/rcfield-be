@@ -22,13 +22,28 @@ import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { Cafe } from '../models/cafe.entity';
 import { Booking } from '../models/booking.entity';
+import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { findContestLockConflictForBooking } from '../services/contest-lock.service';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 
 function viewerFromRequest(req: AuthRequest) {
   return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
+}
+
+function normalizeCafeListQuery(query: Request['query']) {
+  const normalized: Record<string, unknown> = { ...query };
+
+  if (normalized.amenities === undefined && normalized['amenities[]'] !== undefined) {
+    normalized.amenities = normalized['amenities[]'];
+  }
+  if (normalized.popular_filters === undefined && normalized['popular_filters[]'] !== undefined) {
+    normalized.popular_filters = normalized['popular_filters[]'];
+  }
+
+  return normalized;
 }
 
 export const cafeController = {
@@ -47,8 +62,23 @@ export const cafeController = {
   // GET /api/v1/cafes
   async listCafes(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { page, limit, scope, slug, district, city, track_type, status } =
-        CafeListQuerySchema.parse(req.query);
+      const {
+        page,
+        limit,
+        scope,
+        query,
+        slug,
+        district,
+        city,
+        track_type,
+        price_min,
+        price_max,
+        amenities,
+        vehicle_type,
+        sort_by,
+        popular_filters,
+        status,
+      } = CafeListQuerySchema.parse(normalizeCafeListQuery(req.query));
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
       const visibleStatus = canFilterStatus ? (status as CafeStatus | undefined) : undefined;
@@ -57,10 +87,17 @@ export const cafeController = {
         page,
         limit,
         scope,
+        query,
         slug,
         district,
         city,
         track_type,
+        price_min,
+        price_max,
+        amenities,
+        vehicle_type,
+        sort_by,
+        popular_filters,
         status: visibleStatus,
         viewer: viewerFromRequest(req),
       });
@@ -195,6 +232,26 @@ export const cafeController = {
       }
 
       if (query.play_mode === BookingMode.BYOC) {
+        const contestLock = await findContestLockConflictForBooking({
+          cafeId,
+          slotStart,
+          slotEnd,
+          trackConfigId: trackConfig?.id ?? null,
+          trackTypeId: trackConfig?.trackTypeId ?? query.track_type_id ?? null,
+        });
+        if (contestLock) {
+          res.json({
+            success: true,
+            data: {
+              play_mode: 'BYOC',
+              available: false,
+              byoc_remaining: 0,
+              vehicles: [],
+            },
+          });
+          return;
+        }
+
         const capacity = trackConfig ? trackConfig.byocCapacity : cafe.byocCapacity;
 
         // Range-overlap query: bookings that overlap [slotStart, slotEnd)
@@ -207,17 +264,40 @@ export const cafeController = {
           .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses });
 
         if (trackConfig) {
-          qb.andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id });
+          qb.andWhere(
+            `(
+              b.track_config_id = :trackConfigId
+              OR (
+                b.track_config_id IS NULL
+                AND (
+                  b.snapshot ->> 'track_config_id' = CAST(:trackConfigId AS text)
+                  OR (
+                    b.snapshot ->> 'track_config_id' IS NULL
+                    AND b.track_type_id = :trackTypeId
+                  )
+                )
+              )
+            )`,
+            { trackConfigId: trackConfig.id, trackTypeId: trackConfig.trackTypeId },
+          );
         }
 
-        const dbCount = await qb.getCount();
+        // BYOC capacity is counted per participant. Legacy bookings without a
+        // participant row still consume one position instead of becoming free.
+        const dbOccupiedRow = await qb
+          .leftJoin(BookingParticipant, 'bp', 'bp.booking_id = b.id')
+          .select('COUNT(bp.id) + COUNT(DISTINCT b.id) FILTER (WHERE bp.id IS NULL)', 'count')
+          .getRawOne<{ count: string }>();
+        const dbOccupied = Number(dbOccupiedRow?.count ?? 0);
 
         // Redis counter covers in-flight checkouts not yet confirmed
         const counterKey = trackConfig
           ? `slot:byoc:${cafeId}:${trackConfig.id}:${slotStart.getTime()}`
           : `slot:byoc:${cafeId}:${slotStart.getTime()}`;
         const redisCount = Number((await redis.get(counterKey)) ?? 0);
-        const occupied = Math.max(dbCount, redisCount);
+        // Redis only represents a checkout that has not committed its booking yet;
+        // committed PENDING/CONFIRMED bookings are counted from the database.
+        const occupied = dbOccupied + redisCount;
         const remaining = Math.max(0, capacity - occupied);
         res.json({
           success: true,
@@ -234,6 +314,25 @@ export const cafeController = {
       // RENTAL: exclude vehicles already booked (DB) or in checkout (Redis) for this slot
       const vehicleRepo = AppDataSource.getRepository(Vehicle);
       const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
+      const contestLock = await findContestLockConflictForBooking({
+        cafeId,
+        slotStart,
+        slotEnd,
+        trackConfigId: trackConfig?.id ?? null,
+        trackTypeId: trackConfig?.trackTypeId ?? query.track_type_id ?? null,
+      });
+
+      if (contestLock) {
+        res.json({
+          success: true,
+          data: {
+            play_mode: 'RENTAL',
+            available: false,
+            vehicles: [],
+          },
+        });
+        return;
+      }
 
       const vehicles = await vehicleRepo.find({
         where: { cafeId, status: VehicleStatus.AVAILABLE },
@@ -290,13 +389,31 @@ export const cafeController = {
           .createQueryBuilder('b')
           .where('b.cafe_id = :cafeId', { cafeId })
           .andWhere('b.play_mode = :mode', { mode: BookingMode.RENTAL })
-          .andWhere('b.track_config_id = :trackConfigId', { trackConfigId: trackConfig.id })
+          // Preserve the exact track from the booking snapshot for records made
+          // before track_config_id was persisted. Only truly old records with no
+          // snapshot fall back to their track type.
+          .andWhere(
+            `(
+              b.track_config_id = :trackConfigId
+              OR (
+                b.track_config_id IS NULL
+                AND (
+                  b.snapshot ->> 'track_config_id' = CAST(:trackConfigId AS text)
+                  OR (
+                    b.snapshot ->> 'track_config_id' IS NULL
+                    AND b.track_type_id = :trackTypeId
+                  )
+                )
+              )
+            )`,
+            { trackConfigId: trackConfig.id, trackTypeId: trackConfig.trackTypeId },
+          )
           .andWhere('b.slot_start < :slotEnd', { slotEnd })
           .andWhere('b.slot_end > :slotStart', { slotStart })
           .andWhere('b.status IN (:...statuses)', { statuses: activeStatuses })
           .getCount();
 
-        const maxConcurrent = trackConfig.maxConcurrent ?? 10;
+        const maxConcurrent = trackConfig.maxConcurrent;
         const remainingSlots = Math.max(0, maxConcurrent - currentRentalCount);
         filteredVehicles = filteredVehicles.slice(0, remainingSlots);
       }
