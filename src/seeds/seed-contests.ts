@@ -464,14 +464,15 @@ async function insertMatchParticipant(params: {
   bestLapMs?: number | null;
   totalTimeMs?: number | null;
   isWinner?: boolean;
+  resultNote?: string | null;
 }) {
   await AppDataSource.query(
     `INSERT INTO contest_match_participants
        (match_id, registration_id, slot_no, lane, seed_no, status, finish_position,
-        best_lap_ms, total_time_ms, is_winner, metadata)
+        best_lap_ms, total_time_ms, is_winner, result_note, metadata)
      VALUES
        ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11)`,
+        $8, $9, $10, $11, $12)`,
     [
       params.matchId,
       params.registrationId,
@@ -483,6 +484,7 @@ async function insertMatchParticipant(params: {
       params.bestLapMs ?? null,
       params.totalTimeMs ?? null,
       params.isWinner ?? false,
+      params.resultNote ?? null,
       JSON.stringify({ seeded: true }),
     ],
   );
@@ -537,6 +539,16 @@ async function main() {
   const hostVehicleId = vehicles.find((item) => item.cafe_id === hostCafe.id)?.id ?? null;
   const secondaryVehicleId =
     (secondaryCafe && vehicles.find((item) => item.cafe_id === secondaryCafe.id)?.id) ?? null;
+
+  const [hostTrackConfig] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id
+     FROM cafe_track_configs
+     WHERE cafe_id = $1 AND track_type_id = $2 AND deleted_at IS NULL
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [hostCafe.id, catalog.driftTrackTypeId],
+  );
+  const hostTrackConfigId = hostTrackConfig?.id ?? null;
 
   await cleanupSeedContests();
   await AppDataSource.query(`DELETE FROM contest_bans WHERE provider_id = $1 AND reason LIKE $2`, [
@@ -1131,9 +1143,10 @@ async function main() {
     slotNo: 2,
     lane: 'L2',
     seedNo: 2,
-    status: 'FINISHED',
-    finishPosition: 2,
+    status: 'DNF',
+    finishPosition: null,
     isWinner: false,
+    resultNote: 'Did not finish: motor overheated on lap 6',
   });
   await insertMatchParticipant({
     matchId: runningSemi2Id,
@@ -1674,9 +1687,10 @@ async function main() {
       slotNo: 2,
       lane: 'L2',
       seedNo: quarter * 2 + 2,
-      status: 'FINISHED',
-      finishPosition: 2,
+      status: quarter === 3 ? 'DQ' : 'FINISHED',
+      finishPosition: quarter === 3 ? null : 2,
       isWinner: false,
+      resultNote: quarter === 3 ? 'Disqualified: car failed post-race tech inspection' : null,
     });
   }
   await insertMatchParticipant({
@@ -1953,9 +1967,10 @@ async function main() {
     slotNo: 2,
     lane: 'L2',
     seedNo: 4,
-    status: 'FINISHED',
-    finishPosition: 2,
+    status: 'DNS',
+    finishPosition: null,
     isWinner: false,
+    resultNote: 'Did not start: vehicle battery failure at the grid',
   });
   await insertMatchParticipant({
     matchId: byeQuarter3Id,
@@ -2201,6 +2216,30 @@ async function main() {
     afterJson: { scope_type: 'PROVIDER', user_id: customers[6].id },
     reason: 'Seeded provider-wide ban for anti-cheat review',
   });
+
+  if (hostTrackConfigId) {
+    await AppDataSource.query(
+      `UPDATE contest_matches
+       SET track_config_id = $1
+       WHERE contest_id = ANY($2::uuid[])
+         AND track_config_id IS NULL`,
+      [
+        hostTrackConfigId,
+        [
+          runningContestId,
+          completedContestId,
+          bracketContestId,
+          byeContestId,
+          runningTimeTrialContestId,
+        ],
+      ],
+    );
+  } else {
+    logger.warn(
+      'Seed',
+      'No cafe_track_configs found for host cafe — match track_config_id left NULL',
+    );
+  }
 
   logger.info('Seed', `Contest seed ready for provider@gmail.com at cafe ${hostCafe.slug}`);
   logger.info('Seed', `Draft contest: ${draftContestId}`);
