@@ -488,6 +488,34 @@ async function insertMatchParticipant(params: {
   );
 }
 
+async function insertContestEntryPayment(params: {
+  registrationId: string;
+  contestId: string;
+  amount: number;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  txnRef: string;
+  gateway?: string;
+  rawResponse?: Record<string, unknown> | null;
+}) {
+  await AppDataSource.query(
+    `INSERT INTO payment_transactions
+       (booking_id, contest_registration_id, subject_type, type, gateway, txn_ref,
+        amount, status, raw_request, raw_response)
+     VALUES
+       (NULL, $1, 'CONTEST_ENTRY', 'PAYMENT', $2, $3,
+        $4, $5, $6, $7)`,
+    [
+      params.registrationId,
+      params.gateway ?? 'VNPAY',
+      params.txnRef,
+      params.amount,
+      params.status,
+      JSON.stringify({ registrationId: params.registrationId, contestId: params.contestId }),
+      JSON.stringify(params.rawResponse ?? null),
+    ],
+  );
+}
+
 async function main() {
   await AppDataSource.initialize();
   logger.database('Connected');
@@ -704,6 +732,21 @@ async function main() {
     registrationId: openCheckedInId,
     afterJson: { status: 'CHECKED_IN', checkedInCafeId: hostCafe.id },
   });
+  await insertContestEntryPayment({
+    registrationId: openConfirmedId,
+    contestId: openContestId,
+    amount: 100000,
+    status: 'SUCCESS',
+    txnRef: 'seed_contest_open_confirmed_paid',
+    rawResponse: { vnp_ResponseCode: '00', vnp_TransactionStatus: '00' },
+  });
+  await insertContestEntryPayment({
+    registrationId: openPendingId,
+    contestId: openContestId,
+    amount: 100000,
+    status: 'PENDING',
+    txnRef: 'seed_contest_open_pending_payment',
+  });
 
   const byocContestId = await insertContest({
     cafeId: hostCafe.id,
@@ -871,6 +914,24 @@ async function main() {
     registrationId: closedRegs[3],
     afterJson: { status: 'CANCELLED' },
     reason: 'Rejected due to duplicate roster',
+  });
+  const closedPendingReviewId = await insertRegistration({
+    contestId: closedContestId,
+    userId: customers[4].id,
+    vehicleId: hostVehicleId,
+    status: 'CONFIRMED',
+    paymentStatus: 'PENDING_REVIEW',
+    entryFeeAmount: 150000,
+    checkInCode: 'CLOSE005',
+    metadata: { fee_note: 'Uploaded bank transfer receipt, awaiting staff review' },
+  });
+  await insertContestEntryPayment({
+    registrationId: closedPendingReviewId,
+    contestId: closedContestId,
+    amount: 150000,
+    status: 'PENDING',
+    txnRef: 'seed_contest_closed_pending_review',
+    rawResponse: { bank_transfer_receipt_url: 'https://example.com/receipts/close005.jpg' },
   });
 
   const runningContestId = await insertContest({
@@ -1469,6 +1530,14 @@ async function main() {
     afterJson: { status: 'CANCELLED' },
     reason: 'Track maintenance — unsafe surface conditions',
   });
+  await insertContestEntryPayment({
+    registrationId: cancelledConfirmedId,
+    contestId: cancelledContestId,
+    amount: 120000,
+    status: 'SUCCESS',
+    txnRef: 'seed_contest_cancelled_paid',
+    rawResponse: { vnp_ResponseCode: '00', vnp_TransactionStatus: '00' },
+  });
 
   const bracketContestId = await insertContest({
     cafeId: hostCafe.id,
@@ -1947,6 +2016,149 @@ async function main() {
     reason: 'Auto-advance: no opponent in bracket slot',
   });
 
+  const runningTimeTrialContestId = await insertContest({
+    cafeId: hostCafe.id,
+    providerId,
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge Midnight Time Attack 2026`,
+    description:
+      'Nội dung time attack đang chạy: một lượt RUNNING, các lượt còn lại READY, dùng để test live leaderboard và màn theo dõi lượt chạy.',
+    status: 'RUNNING',
+    trackTypeId: catalog.driftTrackTypeId,
+    contestTypeId: catalog.contestTypeId,
+    contestFormatId: catalog.timeTrialFormatId,
+    contestTemplateId: catalog.timeTrialTemplateId,
+    registrationOpensAt: new Date(now.getTime() - oneDay * 3),
+    registrationClosesAt: new Date(now.getTime() - oneDay),
+    startsAt: new Date(now.getTime() - 2 * oneHour),
+    endsAt: new Date(now.getTime() + 3 * oneHour),
+    capacity: 12,
+    entryFee: 0,
+    vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
+    config: {
+      format: 'TIME_TRIAL',
+      runtime_format: 'TIME_TRIAL',
+      drivers_per_match: 1,
+      seeding_mode: 'CHECK_IN_ORDER',
+      leaderboard_mode: 'BEST_LAP',
+      competition_mechanic: 'TIME_ATTACK_BEST_LAP',
+      source_reference: VICTORY_CHALLENGE_SOURCE_URL,
+      prizes: [{ rank: 1, title: 'Fastest Lap', description: 'Voucher 500.000 VND' }],
+    },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
+  });
+  await addContestCafe(runningTimeTrialContestId, hostCafe.id, 'HOST', 0);
+  if (staffId) await addContestStaffAssignment(runningTimeTrialContestId, staffId, providerId);
+
+  const runningTimeTrialRegs = await Promise.all(
+    customers.slice(0, 4).map((customer, index) =>
+      insertRegistration({
+        contestId: runningTimeTrialContestId,
+        userId: customer.id,
+        vehicleId: hostVehicleId,
+        status: 'CHECKED_IN',
+        paymentStatus: 'NOT_REQUIRED',
+        entryFeeAmount: 0,
+        checkInCode: `RTTA${String(index + 1).padStart(3, '0')}`,
+        checkedInCafeId: hostCafe.id,
+        checkedInBy: staffId ?? providerId,
+        checkedInAt: new Date(now.getTime() - 3 * oneHour + index * 5 * 60 * 1000),
+      }),
+    ),
+  );
+
+  const runningTimeMatch1Id = await insertMatch({
+    contestId: runningTimeTrialContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 1,
+    name: 'Lượt chạy 1',
+    matchType: 'TIME_ATTACK',
+    status: 'RUNNING',
+    scheduledAt: new Date(now.getTime() - 30 * 60 * 1000),
+    startedAt: new Date(now.getTime() - 5 * 60 * 1000),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 0, format: 'TIME_TRIAL' },
+  });
+  const runningTimeMatch2Id = await insertMatch({
+    contestId: runningTimeTrialContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 2,
+    name: 'Lượt chạy 2',
+    matchType: 'TIME_ATTACK',
+    status: 'READY',
+    scheduledAt: new Date(now.getTime() + 15 * 60 * 1000),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 0, format: 'TIME_TRIAL' },
+  });
+  const runningTimeMatch3Id = await insertMatch({
+    contestId: runningTimeTrialContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 3,
+    name: 'Lượt chạy 3',
+    matchType: 'TIME_ATTACK',
+    status: 'READY',
+    scheduledAt: new Date(now.getTime() + 30 * 60 * 1000),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 0, format: 'TIME_TRIAL' },
+  });
+  const runningTimeMatch4Id = await insertMatch({
+    contestId: runningTimeTrialContestId,
+    cafeId: hostCafe.id,
+    roundNo: 1,
+    matchNo: 4,
+    name: 'Lượt chạy 4',
+    matchType: 'TIME_ATTACK',
+    status: 'READY',
+    scheduledAt: new Date(now.getTime() + 45 * 60 * 1000),
+    createdBy: providerId,
+    advancementRule: { winners_to_advance: 0, format: 'TIME_TRIAL' },
+  });
+  await insertMatchParticipant({
+    matchId: runningTimeMatch1Id,
+    registrationId: runningTimeTrialRegs[0],
+    slotNo: 1,
+    seedNo: 1,
+    status: 'STARTED',
+  });
+  await insertMatchParticipant({
+    matchId: runningTimeMatch2Id,
+    registrationId: runningTimeTrialRegs[1],
+    slotNo: 1,
+    seedNo: 2,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: runningTimeMatch3Id,
+    registrationId: runningTimeTrialRegs[2],
+    slotNo: 1,
+    seedNo: 3,
+    status: 'READY',
+  });
+  await insertMatchParticipant({
+    matchId: runningTimeMatch4Id,
+    registrationId: runningTimeTrialRegs[3],
+    slotNo: 1,
+    seedNo: 4,
+    status: 'READY',
+  });
+  await writeAudit({
+    contestId: runningTimeTrialContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'contest.matches_generated',
+    afterJson: { generated_match_count: 4 },
+  });
+  await writeAudit({
+    contestId: runningTimeTrialContestId,
+    actorId: staffId ?? providerId,
+    actorRole: staffId ? 'STAFF' : 'PROVIDER',
+    eventType: 'match.started',
+    matchId: runningTimeMatch1Id,
+    afterJson: { status: 'RUNNING' },
+  });
+
   await insertContestBan({
     providerId,
     contestId: byocContestId,
@@ -2000,6 +2212,7 @@ async function main() {
   logger.info('Seed', `Cancelled contest: ${cancelledContestId}`);
   logger.info('Seed', `Full bracket contest: ${bracketContestId}`);
   logger.info('Seed', `Bye-round contest: ${byeContestId}`);
+  logger.info('Seed', `Running time-trial contest: ${runningTimeTrialContestId}`);
 
   await AppDataSource.destroy();
 }
