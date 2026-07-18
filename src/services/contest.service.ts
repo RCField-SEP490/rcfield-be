@@ -1,4 +1,4 @@
-import { In } from 'typeorm';
+import { In, Not } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
@@ -8,6 +8,8 @@ import { Cafe } from '../models/cafe.entity';
 import { ContestBan } from '../models/contest-ban.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { ContestFormat } from '../models/contest-format.entity';
+import { ContestMatch } from '../models/contest-match.entity';
+import { ContestMatchParticipant } from '../models/contest-match-participant.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
 import { ContestStaffAssignment } from '../models/contest-staff-assignment.entity';
 import { ContestTemplate } from '../models/contest-template.entity';
@@ -21,6 +23,7 @@ import {
   BookingStatus,
   ContestBanScopeType,
   ContestEntryFeePaymentStatus,
+  ContestMatchStatus,
   ContestRegistrationStatus,
   ContestStatus,
   NotificationType,
@@ -668,6 +671,25 @@ async function generateUniqueCheckInCode(
   throw new AppError('Không thể tạo mã check-in duy nhất', 500, 'CHECK_IN_CODE_GENERATION_FAILED');
 }
 
+async function removeRegistrationFromActiveMatches(registrationId: string) {
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const participants = await participantRepo.find({ where: { registrationId } });
+
+  for (const participant of participants) {
+    const match = await matchRepo.findOne({ where: { id: participant.matchId } });
+    if (!match || match.status === ContestMatchStatus.COMPLETED) continue;
+
+    await participantRepo.remove(participant);
+
+    const remainingCount = await participantRepo.count({ where: { matchId: match.id } });
+    if (match.status === ContestMatchStatus.READY && remainingCount === 0) {
+      match.status = ContestMatchStatus.DRAFT;
+      await matchRepo.save(match);
+    }
+  }
+}
+
 async function loadContestNotificationContext(registration: ContestRegistration) {
   const [row] = await AppDataSource.query<
     {
@@ -1110,6 +1132,34 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   return getContestDetail(contest.id, viewer);
 }
 
+async function cleanUpContestOnCancel(contestId: string, actorId: string) {
+  const registrationRepo = AppDataSource.getRepository(ContestRegistration);
+  const registrations = await registrationRepo.find({
+    where: { contestId, status: Not(ContestRegistrationStatus.CANCELLED) },
+  });
+
+  for (const registration of registrations) {
+    registration.status = ContestRegistrationStatus.CANCELLED;
+    registration.cancelledBy = actorId;
+    registration.cancelledAt = new Date();
+    registration.cancellationReason = 'Contest cancelled';
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      refund_needed: registration.paymentStatus === ContestEntryFeePaymentStatus.MARKED_PAID,
+    };
+    await registrationRepo.save(registration);
+  }
+
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const matches = await matchRepo.find({ where: { contestId } });
+  for (const match of matches) {
+    if (match.status === ContestMatchStatus.CANCELLED) continue;
+    match.status = ContestMatchStatus.CANCELLED;
+    match.endedAt = match.endedAt ?? new Date();
+    await matchRepo.save(match);
+  }
+}
+
 export async function changeContestStatus(
   contestId: string,
   viewer: Viewer,
@@ -1129,6 +1179,10 @@ export async function changeContestStatus(
       400,
       'CONTEST_STATUS_INVALID',
     );
+  }
+
+  if (nextStatus === ContestStatus.CANCELLED) {
+    await cleanUpContestOnCancel(contest.id, viewer.userId);
   }
 
   contest.status = nextStatus;
@@ -1471,6 +1525,7 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
   registration.cancelledAt = new Date();
   registration.cancellationReason = reason ?? 'Rejected by provider';
   await AppDataSource.getRepository(ContestRegistration).save(registration);
+  await removeRegistrationFromActiveMatches(registration.id);
   await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
@@ -1507,6 +1562,7 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
   registration.cancelledAt = new Date();
   registration.cancellationReason = reason ?? 'Cancelled';
   await repo.save(registration);
+  await removeRegistrationFromActiveMatches(registration.id);
   await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
@@ -1862,6 +1918,7 @@ export async function disqualifyRegistration(
     disqualified_at: new Date().toISOString(),
   };
   await AppDataSource.getRepository(ContestRegistration).save(registration);
+  await removeRegistrationFromActiveMatches(registration.id);
   await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
