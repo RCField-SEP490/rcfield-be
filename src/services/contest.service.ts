@@ -481,20 +481,17 @@ function deriveCustomerJourneyStatus(
   if (registration.status === ContestRegistrationStatus.PENDING) return 'PENDING_APPROVAL';
   if (registration.status === ContestRegistrationStatus.CONFIRMED)
     return 'APPROVED_WAITING_CHECKIN';
+
   if (!latestMatch) return 'CHECKED_IN_WAITING_BRACKET';
 
   const matchStatus = String(latestMatch.status ?? '');
   const isWinner = Boolean(latestMatch.is_winner);
   if (contest?.status === ContestStatus.COMPLETED) return 'FINISHED';
-  if (
-    [ContestStatus.RUNNING, ContestStatus.CLOSED].includes(contest?.status ?? ContestStatus.DRAFT)
-  ) {
-    if (['READY', 'RUNNING', 'DRAFT'].includes(matchStatus)) return 'IN_BRACKET';
-    if (matchStatus === 'COMPLETED' && isWinner) return 'ADVANCED';
-    if (matchStatus === 'COMPLETED' && !isWinner) return 'ELIMINATED';
-  }
+  if (matchStatus === 'RUNNING') return 'IN_BRACKET';
+  if (matchStatus === 'COMPLETED' && isWinner) return 'ADVANCED';
+  if (matchStatus === 'COMPLETED' && !isWinner) return 'ELIMINATED';
 
-  return 'CHECKED_IN';
+  return 'CHECKED_IN_WAITING_BRACKET';
 }
 
 async function mapContestRegistrationsPayload(
@@ -1036,15 +1033,24 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   if (body.participating_cafe_ids) {
     const providerId = await resolveContestProviderIdForViewer(viewer, contest);
     const branches = await resolveProviderBranchesOrThrow(providerId, body.participating_cafe_ids);
+    const existingCafes = await AppDataSource.getRepository(ContestCafe).find({
+      where: { contestId: contest.id },
+    });
+    const existingByCafeId = new Map(existingCafes.map((item) => [item.cafeId, item]));
+
     await AppDataSource.getRepository(ContestCafe).delete({ contestId: contest.id });
     await AppDataSource.getRepository(ContestCafe).save(
-      branches.map((branch, index) => ({
-        contestId: contest.id,
-        cafeId: branch.id,
-        role: index === 0 ? 'HOST' : 'PARTICIPATING',
-        displayOrder: index,
-        checkInEnabled: true,
-      })),
+      branches.map((branch, index) => {
+        const existing = existingByCafeId.get(branch.id);
+        return {
+          contestId: contest.id,
+          cafeId: branch.id,
+          role: index === 0 ? 'HOST' : 'PARTICIPATING',
+          displayOrder: index,
+          checkInEnabled: existing?.checkInEnabled ?? true,
+          capacityOverride: existing?.capacityOverride ?? null,
+        };
+      }),
     );
     contest.cafeId = branches[0].id;
   }
@@ -1483,6 +1489,13 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
     );
   }
   const contest = await getContestOrThrow(registration.contestId);
+  if (![ContestStatus.OPEN, ContestStatus.CLOSED].includes(contest.status)) {
+    throw new AppError(
+      'Không thể duyệt registration khi contest không ở trạng thái OPEN hoặc CLOSED',
+      400,
+      'CONTEST_NOT_APPROVABLE',
+    );
+  }
   if (contest.providerId) {
     const activeBan = await getActiveContestBan(
       registration.userId,
@@ -1495,6 +1508,19 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
         409,
         'CONTEST_PARTICIPANT_BANNED',
       );
+    }
+  }
+  if (contest.capacity && contest.capacity > 0) {
+    const activeCount = await AppDataSource.getRepository(ContestRegistration).count({
+      where: {
+        contestId: contest.id,
+        status: Not(ContestRegistrationStatus.CANCELLED),
+      },
+    });
+    // Exclude the current registration from the active count because it is being approved now.
+    const currentIncluded = registration.status !== ContestRegistrationStatus.CANCELLED ? 1 : 0;
+    if (activeCount - currentIncluded >= contest.capacity) {
+      throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
     }
   }
   registration.status = ContestRegistrationStatus.CONFIRMED;
@@ -1635,6 +1661,21 @@ export async function checkInRegistration(
     ].includes(registration.paymentStatus)
   ) {
     throw new AppError('Registration vẫn đang chờ xử lý phí tham gia', 400, 'ENTRY_FEE_PENDING');
+  }
+
+  if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
+    throw new AppError(
+      'Check-in chỉ được thực hiện khi contest ở trạng thái CLOSED hoặc RUNNING',
+      400,
+      'CONTEST_NOT_CHECKIN_READY',
+    );
+  }
+  const now = new Date();
+  if (contest.startsAt && now < contest.startsAt) {
+    throw new AppError('Chưa tới giờ check-in của contest', 400, 'CONTEST_CHECKIN_NOT_STARTED');
+  }
+  if (contest.endsAt && now > contest.endsAt) {
+    throw new AppError('Contest đã kết thúc, không thể check-in', 400, 'CONTEST_CHECKIN_ENDED');
   }
 
   const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
@@ -1848,6 +1889,18 @@ export async function listContestBans(contestId: string, viewer: Viewer) {
 export async function createContestBan(contestId: string, viewer: Viewer, body: ContestBanPayload) {
   const contest = await assertContestProviderOrAssignedStaff(contestId, viewer);
   const providerId = await resolveContestProviderIdForViewer(viewer, contest);
+
+  const targetUser = await AppDataSource.getRepository(User).findOne({
+    where: { id: body.user_id, role: UserRole.CUSTOMER },
+  });
+  if (!targetUser) {
+    throw new AppError(
+      'Người dùng không tồn tại hoặc không phải customer',
+      400,
+      'BAN_TARGET_INVALID',
+    );
+  }
+
   const repo = AppDataSource.getRepository(ContestBan);
   const ban = await repo.save(
     repo.create({

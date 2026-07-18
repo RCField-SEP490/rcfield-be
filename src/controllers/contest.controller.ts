@@ -3,6 +3,7 @@ import { AuthRequest, AppError, ContestStatus, UserRole } from '../types';
 import {
   ContestCatalogTemplateQuerySchema,
   ContestAssignStaffSchema,
+  ContestAuditLogsQuerySchema,
   ContestBanCreateSchema,
   ContestBanLiftSchema,
   ContestCorrectResultsSchema,
@@ -404,8 +405,17 @@ export const contestController = {
   async listAuditLogs(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);
-      const data = await contestRuntimeService.listContestAuditLogs(req.params.contestId, viewer);
-      res.json({ success: true, data });
+      const query = ContestAuditLogsQuerySchema.parse(req.query);
+      const result = await contestRuntimeService.listContestAuditLogs(
+        req.params.contestId,
+        viewer,
+        query,
+      );
+      res.json({
+        success: true,
+        data: result.data,
+        meta: result.meta,
+      });
     } catch (error) {
       next(error);
     }

@@ -1147,6 +1147,14 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
 
 export async function publishContestLeaderboard(contestId: string, viewer: Viewer) {
   const contest = await assertContestOperator(contestId, viewer);
+  if (![ContestStatus.RUNNING, ContestStatus.CLOSED].includes(contest.status)) {
+    throw new AppError(
+      'Chỉ có thể publish leaderboard khi contest đang diễn ra hoặc đã đóng đăng ký',
+      400,
+      'CONTEST_NOT_PUBLISHABLE',
+    );
+  }
+
   const matches = await loadContestMatches(contestId);
   if (matches.length === 0) {
     throw new AppError('Contest chưa có match để publish leaderboard', 400, 'CONTEST_NO_MATCHES');
@@ -1162,6 +1170,27 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
       'Không thể publish leaderboard khi vẫn còn match chưa hoàn tất',
       409,
       'CONTEST_MATCHES_INCOMPLETE',
+    );
+  }
+
+  const participantsByMatch = await loadContestMatchParticipantsByMatch(
+    matches.map((item) => item.id),
+  );
+  const matchWithoutResults = matches.find((match) => {
+    const participants = participantsByMatch.get(match.id) ?? [];
+    return participants.every(
+      (participant) =>
+        participant.finishPosition === null &&
+        participant.bestLapSeconds === null &&
+        participant.totalTimeSeconds === null &&
+        participant.score === null,
+    );
+  });
+  if (matchWithoutResults) {
+    throw new AppError(
+      'Có match hoàn tất nhưng chưa có kết quả hợp lệ',
+      400,
+      'CONTEST_MATCH_WITHOUT_RESULTS',
     );
   }
 
@@ -1196,13 +1225,21 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
   return contest.config.published_leaderboard;
 }
 
-export async function listContestAuditLogs(contestId: string, viewer: Viewer) {
+export async function listContestAuditLogs(
+  contestId: string,
+  viewer: Viewer,
+  options?: { page?: number; limit?: number },
+) {
   await assertContestOperator(contestId, viewer);
-  return AppDataSource.getRepository(ContestAuditLog).find({
+  const page = Math.max(1, options?.page ?? 1);
+  const limit = Math.max(1, Math.min(200, options?.limit ?? 20));
+  const [rows, total] = await AppDataSource.getRepository(ContestAuditLog).findAndCount({
     where: { contestId },
     order: { createdAt: 'DESC' },
-    take: 200,
+    skip: (page - 1) * limit,
+    take: limit,
   });
+  return { data: rows, meta: { total, page, limit } };
 }
 
 export async function getContestMetrics(contestId: string, viewer: Viewer) {

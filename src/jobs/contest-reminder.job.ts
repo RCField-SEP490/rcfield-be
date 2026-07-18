@@ -2,6 +2,8 @@ import cron from 'node-cron';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { Contest } from '../models/contest.entity';
+import { writeContestAudit } from '../services/contest.helpers';
 import { emailService } from '../services/email.service';
 import { createNotification } from '../services/notification.service';
 import { ContestRegistrationStatus, ContestStatus, NotificationType } from '../types';
@@ -128,9 +130,39 @@ export async function processContestReminders() {
   }
 }
 
+export async function processContestAutoClose() {
+  const repo = AppDataSource.getRepository(Contest);
+  const openContests = await repo.find({
+    where: { status: ContestStatus.OPEN },
+  });
+
+  for (const contest of openContests) {
+    try {
+      if (!contest.registrationClosesAt) continue;
+      if (contest.registrationClosesAt.getTime() > Date.now()) continue;
+
+      contest.status = ContestStatus.CLOSED;
+      await repo.save(contest);
+      await writeContestAudit({
+        contestId: contest.id,
+        actorId: null,
+        actorRole: 'SYSTEM',
+        eventType: 'contest.auto_closed',
+        afterJson: { status: ContestStatus.CLOSED },
+      });
+      logger.info('ContestAutoClose', `contest ${contest.id} auto-closed`, {
+        contestId: contest.id,
+      });
+    } catch (error) {
+      logger.error('ContestAutoClose', 'failed to auto-close contest', error);
+    }
+  }
+}
+
 export function startContestReminderJob() {
   cron.schedule('*/15 * * * *', async () => {
     await processContestReminders();
+    await processContestAutoClose();
   });
 
   logger.info('ContestReminder', 'Cron scheduled - runs every 15 minutes');
