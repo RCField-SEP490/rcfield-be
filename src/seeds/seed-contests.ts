@@ -722,7 +722,7 @@ async function main() {
     endsAt: new Date(now.getTime() + oneDay + 4 * oneHour),
     capacity: 20,
     entryFee: 0,
-    vehicleRule: { vehicle_policy: 'MIXED', assignment_policy: 'AT_APPROVAL' },
+    vehicleRule: { vehicle_policy: 'MIXED', assignment_policy: 'PRE_ASSIGNED' },
     config: {
       format: 'TIME_TRIAL',
       runtime_format: 'TIME_TRIAL',
