@@ -5,7 +5,15 @@ import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 
 const SEED_CONTEST_PREFIX = '[SEED-CONTEST]';
-const CONTEST_STORY_DATE = new Date('2026-07-16T09:00:00+07:00');
+// Anchor the whole contest story to "today at 09:00 local time" so that
+// OPEN/RUNNING contests never go stale no matter when the seed is re-run.
+// All registration windows, starts_at and ends_at are expressed as offsets
+// from this anchor inside main().
+const CONTEST_STORY_DATE = (() => {
+  const anchor = new Date();
+  anchor.setHours(9, 0, 0, 0);
+  return anchor;
+})();
 const VICTORY_CHALLENGE_SOURCE_URL =
   'https://baokhanhhoa.vn/the-thao/202605/giai-dua-xe-o-to-the-thao-dia-hinh-quoc-te-victory-challenge-2026-tro-lai-nha-trang-42b4cb8/';
 const VICTORY_CHALLENGE_BANNER_URL =
@@ -544,7 +552,7 @@ async function main() {
       ],
       rulebook: {
         source_reference: VICTORY_CHALLENGE_SOURCE_URL,
-        race_day_date: '2026-07-16',
+        race_day_date: now.toISOString().slice(0, 10),
       },
     },
     bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
@@ -565,7 +573,7 @@ async function main() {
     providerId,
     name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Sprint Qualifier 2026`,
     description:
-      'Vòng tuyển chọn đang mở đăng ký cho giải đối kháng 1v1. Seed data ưu tiên tạo nhiều registration states để test dashboard ngày 16/07/2026.',
+      'Vòng tuyển chọn đang mở đăng ký cho giải đối kháng 1v1. Seed data ưu tiên tạo nhiều registration states để test dashboard.',
     status: 'OPEN',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
@@ -870,7 +878,7 @@ async function main() {
     providerId,
     name: `${SEED_CONTEST_PREFIX} Victory Challenge RC Cup 2026 - Nhánh Đối Kháng`,
     description:
-      'Giải đang diễn ra trong ngày 16/07/2026. Người chơi check-in tại RC Arena Hà Nội, staff xử lý event-day và provider theo dõi bracket.',
+      'Giải đang diễn ra trong ngày hôm nay. Người chơi check-in tại RC Arena Hà Nội, staff xử lý event-day và provider theo dõi bracket.',
     status: 'RUNNING',
     trackTypeId: catalog.driftTrackTypeId,
     contestTypeId: catalog.contestTypeId,
