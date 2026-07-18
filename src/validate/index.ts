@@ -526,6 +526,16 @@ export const CreateContestRegistrationSchema = z.object({
   booking_id: z.string().uuid().optional(),
   vehicle_id: z.string().uuid().optional(),
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
+  rental_slot: z
+    .object({
+      cafe_id: z.string().uuid(),
+      slot_start: z.coerce.date(),
+      slot_end: z.coerce.date(),
+      track_config_id: z.string().uuid().optional().nullable(),
+      vehicle_catalog_id: z.string().uuid().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
   byoc_vehicle_name: z.string().trim().min(2).max(120).optional(),
   byoc_vehicle_brand: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_class: z.string().trim().min(1).max(120).optional(),

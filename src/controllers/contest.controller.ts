@@ -24,6 +24,7 @@ import {
 } from '../validate';
 import * as contestService from '../services/contest.service';
 import * as contestRuntimeService from '../services/contest-runtime.service';
+import * as contestRentalService from '../services/contest-rental.service';
 import * as racingNetworkService from '../services/racing-network.service';
 
 function requireViewer(req: AuthRequest) {
@@ -547,6 +548,37 @@ export const contestController = {
         req.params.registrationId,
         viewer,
         body.reason,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getRentalOptions(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      requireViewer(req);
+      const data = await contestRentalService.getContestRentalOptions(req.params.contestId);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getAvailableRentalVehicles(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      requireViewer(req);
+      const { cafe_id, slot_start, slot_end, track_config_id, vehicle_catalog_id } = req.query;
+      const slot: contestRentalService.ContestRentalSlotInput = {
+        cafe_id: String(cafe_id),
+        slot_start: String(slot_start),
+        slot_end: String(slot_end),
+        track_config_id: track_config_id ? String(track_config_id) : null,
+        vehicle_catalog_id: vehicle_catalog_id ? String(vehicle_catalog_id) : null,
+      };
+      const data = await contestRentalService.getContestAvailableRentalVehicles(
+        req.params.contestId,
+        slot,
       );
       res.json({ success: true, data });
     } catch (error) {

@@ -102,6 +102,7 @@ export async function processContestReminders() {
           to: row.customer_email,
           customerName: row.customer_name ?? 'Racer',
           contestName: row.contest_name,
+          contestId: row.contest_id,
           hostBranchName: row.host_branch_name,
           startsAt,
           reminderLabel,

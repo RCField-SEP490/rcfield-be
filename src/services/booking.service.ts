@@ -407,6 +407,7 @@ export interface CreateBookingBody {
   track_type_id?: string;
   track_config_id?: string;
   customer_package_id?: string;
+  contest_id?: string;
 }
 
 export interface BookingBreakdown {
@@ -644,6 +645,7 @@ export async function createBooking(
     slotEnd,
     trackConfigId: resolvedTrackConfig?.id ?? null,
     trackTypeId: resolvedTrackConfig?.trackTypeId ?? body.track_type_id ?? null,
+    contestId: body.contest_id ?? null,
   });
 
   if (body.play_mode === BookingMode.BYOC) {
@@ -811,6 +813,9 @@ export async function createBooking(
           discount_amount: discountAmount,
           discount_type: appliedPromotion.discountType,
         };
+      }
+      if (body.contest_id) {
+        snapshot.contest_id = body.contest_id;
       }
 
       const newBooking = em.create(Booking, {

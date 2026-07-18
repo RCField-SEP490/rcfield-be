@@ -23,6 +23,7 @@ type SendContestRegistrationEmailInput = {
   to: string;
   customerName: string;
   contestName: string;
+  contestId: string;
   contestStatusLabel: string;
   hostBranchName: string | null;
   startsAt: Date;
@@ -35,6 +36,7 @@ type SendContestReminderEmailInput = {
   to: string;
   customerName: string;
   contestName: string;
+  contestId: string;
   hostBranchName: string | null;
   startsAt: Date;
   reminderLabel: string;
@@ -553,6 +555,10 @@ class EmailService {
                 <li>Neu giai co le phi, vui long hoan tat thanh toan theo huong dan.</li>
                 <li>Gan den gio thi dau, RCField se gui nhac lich cho ban.</li>
               </ul>
+              <a href="${env.frontendUrl}/contests/${input.contestId}"
+                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
+                Xem chi tiet giai dau
+              </a>
             </div>
 
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:24px 0 0">
@@ -621,6 +627,10 @@ class EmailService {
                 <li>Mang theo thong tin dat cho, check-in code hoac email nay de doi chieu neu can.</li>
                 <li>Theo doi thong bao trong ung dung de xem lich bracket va cap nhat ket qua.</li>
               </ul>
+              <a href="${env.frontendUrl}/contests/${input.contestId}"
+                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
+                Xem bracket / ket qua
+              </a>
             </div>
           </div>
         </div>

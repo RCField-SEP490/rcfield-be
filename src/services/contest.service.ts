@@ -53,6 +53,7 @@ import { createPaymentUrl } from './vnpay.service';
 import { env } from '../config/env';
 import { processMockConfirmation } from './payment.service';
 import { createNotification } from './notification.service';
+import { createContestRentalBooking, ContestRentalSlotInput } from './contest-rental.service';
 import { emailService } from './email.service';
 import { getContestPublicRuntimeSummary } from './contest-runtime.service';
 
@@ -93,6 +94,13 @@ type CreateRegistrationBody = {
   booking_id?: string;
   vehicle_id?: string;
   vehicle_source: VehicleSource;
+  rental_slot?: {
+    cafe_id: string;
+    slot_start: string | Date;
+    slot_end: string | Date;
+    track_config_id?: string | null;
+    vehicle_catalog_id?: string | null;
+  } | null;
   byoc_vehicle_name?: string;
   byoc_vehicle_brand?: string;
   byoc_vehicle_class?: string;
@@ -744,6 +752,7 @@ async function sendContestRegistrationCreatedSideEffects(registration: ContestRe
       to: context.customerEmail,
       customerName: context.customerName,
       contestName: context.contestName,
+      contestId: registration.contestId,
       contestStatusLabel: context.contestStatus,
       hostBranchName: context.hostBranchName,
       startsAt: context.contestStartsAt,
@@ -1239,8 +1248,37 @@ export async function createContestRegistration(
     }
   }
 
+  const vehiclePolicy = String(contest.vehicleRule?.vehicle_policy ?? 'RENTAL_ONLY');
+  if (vehiclePolicy === 'RENTAL_ONLY' && body.vehicle_source !== VehicleSource.RENTAL) {
+    throw new AppError(
+      'Giải đấu chỉ chấp nhận thuê xe của cafe',
+      400,
+      'CONTEST_VEHICLE_POLICY_VIOLATED',
+    );
+  }
+  if (vehiclePolicy === 'BYOC_ONLY' && body.vehicle_source !== VehicleSource.BYOC) {
+    throw new AppError(
+      'Giải đấu chỉ chấp nhận xe cá nhân (BYOC)',
+      400,
+      'CONTEST_VEHICLE_POLICY_VIOLATED',
+    );
+  }
+
+  let resolvedBookingId: string | undefined = body.booking_id;
+  let resolvedVehicleId: string | undefined = body.vehicle_id;
+
   if (body.vehicle_source === VehicleSource.RENTAL) {
-    if (!body.booking_id || !body.vehicle_id) {
+    if (body.rental_slot && !body.booking_id) {
+      const rentalResult = await createContestRentalBooking(
+        contest,
+        viewer.userId,
+        body.rental_slot as ContestRentalSlotInput,
+      );
+      resolvedBookingId = rentalResult.booking_id;
+      resolvedVehicleId = rentalResult.vehicle_id;
+    }
+
+    if (!resolvedBookingId || !resolvedVehicleId) {
       throw new AppError(
         'Đăng ký RENTAL yêu cầu booking_id và vehicle_id',
         400,
@@ -1248,12 +1286,9 @@ export async function createContestRegistration(
       );
     }
     const booking = await AppDataSource.getRepository(Booking).findOne({
-      where: { id: body.booking_id, customerId: viewer.userId },
+      where: { id: resolvedBookingId, customerId: viewer.userId },
     });
     if (!booking) throw new AppError('Booking không tồn tại', 404, 'BOOKING_NOT_FOUND');
-    if (booking.status !== BookingStatus.CONFIRMED) {
-      throw new AppError('Booking phải ở trạng thái CONFIRMED', 400, 'BOOKING_NOT_CONFIRMED');
-    }
     if (contest.trackTypeId && booking.trackTypeId !== contest.trackTypeId) {
       throw new AppError(
         'Booking không khớp loại track của contest',
@@ -1278,20 +1313,12 @@ export async function createContestRegistration(
     }
 
     const bookingVehicle = await AppDataSource.getRepository(BookingVehicle).findOne({
-      where: { bookingId: booking.id, vehicleId: body.vehicle_id },
+      where: { bookingId: booking.id, vehicleId: resolvedVehicleId },
     });
     if (!bookingVehicle) {
       throw new AppError('Vehicle không thuộc booking này', 400, 'BOOKING_VEHICLE_MISMATCH');
     }
   } else {
-    const vehiclePolicy = String(contest.vehicleRule?.vehicle_policy ?? 'RENTAL_ONLY');
-    if (vehiclePolicy === 'RENTAL_ONLY') {
-      throw new AppError(
-        'Contest này không cho đăng ký xe cá nhân',
-        400,
-        'CONTEST_BYOC_NOT_ALLOWED',
-      );
-    }
     if (!body.byoc_vehicle_name?.trim()) {
       throw new AppError(
         'Đăng ký BYOC yêu cầu khai báo tên xe',
@@ -1336,9 +1363,9 @@ export async function createContestRegistration(
     registration.participantRoleSnapshot = UserRole.CUSTOMER;
     registration.vehicleSource = body.vehicle_source;
     registration.vehicleId =
-      body.vehicle_source === VehicleSource.RENTAL ? (body.vehicle_id ?? null) : null;
+      body.vehicle_source === VehicleSource.RENTAL ? (resolvedVehicleId ?? null) : null;
     registration.bookingId =
-      body.vehicle_source === VehicleSource.RENTAL ? (body.booking_id ?? null) : null;
+      body.vehicle_source === VehicleSource.RENTAL ? (resolvedBookingId ?? null) : null;
     registration.customerVehicleId = null;
     registration.status = ContestRegistrationStatus.PENDING;
     registration.checkInCode = existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
@@ -1350,7 +1377,7 @@ export async function createContestRegistration(
         : ContestEntryFeePaymentStatus.PENDING_REVIEW;
     registration.metadata = {
       ...(registration.metadata ?? {}),
-      booking_id: body.booking_id ?? null,
+      booking_id: resolvedBookingId ?? null,
       byoc_declaration:
         body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
     };
@@ -1488,6 +1515,20 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
       'ENTRY_FEE_PENDING',
     );
   }
+
+  if (registration.vehicleSource === VehicleSource.RENTAL && registration.bookingId) {
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: registration.bookingId },
+    });
+    if (!booking || booking.status !== BookingStatus.CONFIRMED) {
+      throw new AppError(
+        'Booking thuê xe phải được thanh toán (CONFIRMED) trước khi duyệt đăng ký',
+        400,
+        'BOOKING_NOT_CONFIRMED',
+      );
+    }
+  }
+
   const contest = await getContestOrThrow(registration.contestId);
   if (![ContestStatus.OPEN, ContestStatus.CLOSED].includes(contest.status)) {
     throw new AppError(
