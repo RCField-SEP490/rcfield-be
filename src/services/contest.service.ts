@@ -36,6 +36,7 @@ import {
   assertProviderViewer,
   getActiveContestBan,
   getContestOrThrow,
+  isStaffAssignedToCafe,
   isStaffAssignedToContest,
   writeContestAudit,
 } from './contest.helpers';
@@ -1590,8 +1591,9 @@ export async function checkInRegistration(
   if (viewer.role === UserRole.PROVIDER) {
     await assertContestProviderOrAssignedStaff(contest.id, viewer);
   } else if (viewer.role === UserRole.STAFF) {
-    const assigned = await isStaffAssignedToContest(contest.id, viewer.userId);
-    if (!assigned) {
+    const assignedToContest = await isStaffAssignedToContest(contest.id, viewer.userId);
+    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, checkedInCafeId);
+    if (!assignedToContest || !assignedToCafe) {
       throw new AppError('Staff không được check-in ở chi nhánh này', 403, 'FORBIDDEN');
     }
   } else {

@@ -22,6 +22,7 @@ import { Viewer } from './cafe.service';
 import {
   assertContestOperator,
   getContestOrThrow,
+  isStaffAssignedToCafe,
   isStaffAssignedToContest,
   writeContestAudit,
 } from './contest.helpers';
@@ -217,8 +218,9 @@ async function assertViewerCanOperateMatch(match: ContestMatch, viewer: Viewer) 
   }
 
   if (viewer.role === UserRole.STAFF) {
-    const assigned = await isStaffAssignedToContest(match.contestId, viewer.userId);
-    if (!assigned) {
+    const assignedToContest = await isStaffAssignedToContest(match.contestId, viewer.userId);
+    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, match.cafeId);
+    if (!assignedToContest || !assignedToCafe) {
       throw new AppError('Staff không được thao tác match ở chi nhánh này', 403, 'FORBIDDEN');
     }
     return;
@@ -542,6 +544,14 @@ export async function generateContestMatches(
   const contest = await assertContestOperator(contestId, viewer);
   await ensureContestRuntimeEditable(contest);
   await validateContestCafe(contestId, body.cafe_id);
+
+  if (viewer.role === UserRole.STAFF) {
+    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, body.cafe_id);
+    if (!assignedToCafe) {
+      throw new AppError('Staff không được tạo runtime ở chi nhánh này', 403, 'FORBIDDEN');
+    }
+  }
+
   const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
   const matchRepo = AppDataSource.getRepository(ContestMatch);
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
