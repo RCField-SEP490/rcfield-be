@@ -1387,6 +1387,88 @@ async function main() {
     eventType: 'contest.leaderboard_published',
     afterJson: { published: true },
   });
+
+  const cancelledContestId = await insertContest({
+    cafeId: hostCafe.id,
+    providerId,
+    name: `${SEED_CONTEST_PREFIX} Victory Challenge Night Rush 2026 - Đã Hủy`,
+    description:
+      'Giải đêm bị hủy do sân thi đấu bảo trì đột xuất, dùng để test trạng thái CANCELLED, thông báo cho ngườ chơi và luồng hoàn phí.',
+    status: 'CANCELLED',
+    trackTypeId: catalog.driftTrackTypeId,
+    contestTypeId: catalog.contestTypeId,
+    contestFormatId: catalog.knockoutFormatId,
+    contestTemplateId: catalog.knockoutTemplateId,
+    registrationOpensAt: new Date(now.getTime() - oneDay * 2),
+    registrationClosesAt: new Date(now.getTime() + oneDay),
+    startsAt: new Date(now.getTime() + oneDay * 2),
+    endsAt: new Date(now.getTime() + oneDay * 2 + 3 * oneHour),
+    capacity: 8,
+    entryFee: 120000,
+    vehicleRule: { vehicle_policy: 'RENTAL_ONLY', assignment_policy: 'AT_CHECK_IN' },
+    config: {
+      format: 'KNOCKOUT',
+      runtime_format: 'KNOCKOUT',
+      drivers_per_match: 2,
+      seeding_mode: 'CHECK_IN_ORDER',
+      auto_bye: true,
+      competition_mechanic: 'HEAD_TO_HEAD_ELIMINATION',
+      resource_locks: [{ cafe_id: hostCafe.id, scope: 'FULL_BRANCH', track_config_ids: [] }],
+      cancellation: {
+        cancelled_at: new Date(now.getTime() - 3 * oneHour).toISOString(),
+        cancelled_by: providerId,
+        reason: 'Track maintenance — unsafe surface conditions',
+      },
+    },
+    bannerImageUrl: VICTORY_CHALLENGE_BANNER_URL,
+  });
+  await addContestCafe(cancelledContestId, hostCafe.id, 'HOST', 0);
+  if (staffId) await addContestStaffAssignment(cancelledContestId, staffId, providerId);
+
+  const cancelledConfirmedId = await insertRegistration({
+    contestId: cancelledContestId,
+    userId: customers[0].id,
+    vehicleId: hostVehicleId,
+    status: 'CONFIRMED',
+    paymentStatus: 'MARKED_PAID',
+    entryFeeAmount: 120000,
+    checkInCode: 'CANCC001',
+  });
+  const cancelledCancelledId = await insertRegistration({
+    contestId: cancelledContestId,
+    userId: customers[1].id,
+    vehicleId: hostVehicleId,
+    status: 'CANCELLED',
+    paymentStatus: 'PENDING_PAYMENT',
+    entryFeeAmount: 120000,
+    checkInCode: 'CANCC002',
+    cancellationReason: 'Cancelled together with the contest',
+  });
+  await writeAudit({
+    contestId: cancelledContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'registration.approved',
+    registrationId: cancelledConfirmedId,
+    afterJson: { status: 'CONFIRMED' },
+  });
+  await writeAudit({
+    contestId: cancelledContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'registration.cancelled',
+    registrationId: cancelledCancelledId,
+    afterJson: { status: 'CANCELLED' },
+    reason: 'Cancelled together with the contest',
+  });
+  await writeAudit({
+    contestId: cancelledContestId,
+    actorId: providerId,
+    actorRole: 'PROVIDER',
+    eventType: 'contest.cancelled',
+    afterJson: { status: 'CANCELLED' },
+    reason: 'Track maintenance — unsafe surface conditions',
+  });
   await insertContestBan({
     providerId,
     contestId: byocContestId,
@@ -1437,6 +1519,7 @@ async function main() {
   logger.info('Seed', `Closed contest: ${closedContestId}`);
   logger.info('Seed', `Running contest: ${runningContestId}`);
   logger.info('Seed', `Completed contest: ${completedContestId}`);
+  logger.info('Seed', `Cancelled contest: ${cancelledContestId}`);
 
   await AppDataSource.destroy();
 }
