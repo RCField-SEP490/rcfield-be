@@ -467,6 +467,26 @@ describe('Contest runtime routes', () => {
       .send({ staff_id: staff.id })
       .expect(200);
 
+    // Staff must also be assigned to the cafe to operate there.
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
+       VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
+    );
+
+    // Check-in requires the contest to be CLOSED or RUNNING and within the race window.
+    await AppDataSource.query(
+      `UPDATE contests
+       SET starts_at = NOW() - INTERVAL '1 hour', ends_at = NOW() + INTERVAL '1 hour'
+       WHERE id = $1`,
+      [contestId],
+    );
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/close`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
+
     await request(app)
       .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
       .set('Authorization', `Bearer ${staffToken}`)

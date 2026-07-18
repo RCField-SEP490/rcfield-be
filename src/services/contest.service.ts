@@ -1317,14 +1317,14 @@ export async function createContestRegistration(
     }
 
     if (contest.capacity && contest.capacity > 0) {
-      const countResult = await manager.query(
-        `SELECT COUNT(*)::int AS count
+      const lockedRegistrations = await manager.query(
+        `SELECT id
          FROM contest_registrations
          WHERE contest_id = $1 AND status != $2
          FOR UPDATE`,
         [contestId, ContestRegistrationStatus.CANCELLED],
       );
-      const activeCount = Number(countResult[0]?.count ?? 0);
+      const activeCount = lockedRegistrations.length;
       if (activeCount >= contest.capacity) {
         throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
       }
