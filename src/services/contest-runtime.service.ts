@@ -468,19 +468,33 @@ function buildKnockoutResultSummary(
 }
 
 async function protectDownstreamCorrection(match: ContestMatch, forceCascade: boolean) {
-  if (!match.nextMatchId) return;
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
 
-  const nextParticipants = await AppDataSource.getRepository(ContestMatchParticipant).find({
-    where: { matchId: match.nextMatchId },
-  });
-  const linkedParticipants = nextParticipants.filter(
-    (item) => item.metadata?.source_match_id === match.id,
-  );
-  if (linkedParticipants.length === 0) return;
+  // Walk the entire downstream chain (next_match_id -> next_match_id -> ...).
+  const downstreamChain: ContestMatch[] = [];
+  let currentId: string | null = match.nextMatchId;
+  while (currentId) {
+    const current = await matchRepo.findOne({ where: { id: currentId } });
+    if (!current) break;
+    downstreamChain.push(current);
+    currentId = current.nextMatchId;
+  }
 
-  const nextMatch = await AppDataSource.getRepository(ContestMatch).findOne({
-    where: { id: match.nextMatchId },
-  });
+  if (downstreamChain.length === 0) return;
+
+  const hasLinkedParticipants = await participantRepo
+    .createQueryBuilder('participant')
+    .where('participant.match_id IN (:...matchIds)', {
+      matchIds: downstreamChain.map((item) => item.id),
+    })
+    .andWhere("participant.metadata ->> 'source_match_id' = :sourceMatchId", {
+      sourceMatchId: match.id,
+    })
+    .getExists();
+
+  if (!hasLinkedParticipants) return;
+
   if (!forceCascade) {
     throw new AppError(
       'Match này đã advance participant sang round sau; dùng force_cascade để sửa',
@@ -488,28 +502,32 @@ async function protectDownstreamCorrection(match: ContestMatch, forceCascade: bo
       'MATCH_CORRECTION_REQUIRES_FORCE',
     );
   }
-  if (nextMatch?.status === ContestMatchStatus.COMPLETED) {
-    throw new AppError(
-      'Không thể force correction khi match kế tiếp đã hoàn tất',
-      409,
-      'MATCH_CORRECTION_DOWNSTREAM_COMPLETED',
-    );
+
+  for (const downstream of downstreamChain) {
+    if (downstream.status === ContestMatchStatus.COMPLETED) {
+      throw new AppError(
+        'Không thể force correction khi có match hạ nguồn đã hoàn tất',
+        409,
+        'MATCH_CORRECTION_DOWNSTREAM_COMPLETED',
+      );
+    }
   }
 
-  if (linkedParticipants.length > 0) {
-    await AppDataSource.getRepository(ContestMatchParticipant).delete(
-      linkedParticipants.map((item) => item.id),
-    );
-  }
-
-  if (nextMatch) {
-    nextMatch.status = ContestMatchStatus.DRAFT;
-    nextMatch.startedAt = null;
-    nextMatch.endedAt = null;
-    nextMatch.decidedAt = null;
-    nextMatch.decidedBy = null;
-    nextMatch.resultSummary = {};
-    await AppDataSource.getRepository(ContestMatch).save(nextMatch);
+  // Clear all downstream participants and reset match state to DRAFT.
+  for (const downstream of downstreamChain) {
+    const downstreamParticipants = await participantRepo.find({
+      where: { matchId: downstream.id },
+    });
+    if (downstreamParticipants.length > 0) {
+      await participantRepo.remove(downstreamParticipants);
+    }
+    downstream.status = ContestMatchStatus.DRAFT;
+    downstream.startedAt = null;
+    downstream.endedAt = null;
+    downstream.decidedAt = null;
+    downstream.decidedBy = null;
+    downstream.resultSummary = {};
+    await matchRepo.save(downstream);
   }
 }
 
@@ -555,6 +573,19 @@ export async function generateContestMatches(
   const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
   const matchRepo = AppDataSource.getRepository(ContestMatch);
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+
+  const existingMatches = await matchRepo.find({ where: { contestId } });
+  if (
+    existingMatches.some((match) =>
+      [ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status),
+    )
+  ) {
+    throw new AppError(
+      'Không thể tạo lại bracket khi đã có match đang diễn ra hoặc đã hoàn tất',
+      409,
+      'CONTEST_RUNTIME_LOCKED',
+    );
+  }
 
   const orderedRegistrations =
     getSeedingMode(contest, body.seeding_mode) === 'CHECK_IN_ORDER'
@@ -703,8 +734,12 @@ export async function updateMatchParticipants(
   const { match, participants } = await loadMatchBundle(matchId);
   await assertViewerCanOperateMatch(match, viewer);
 
-  if (match.status === ContestMatchStatus.COMPLETED) {
-    throw new AppError('Không thể đổi participant khi match đã hoàn tất', 400, 'MATCH_COMPLETED');
+  if ([ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status)) {
+    throw new AppError(
+      'Không thể đổi participant khi match đang diễn ra hoặc đã hoàn tất',
+      400,
+      'MATCH_LOCKED',
+    );
   }
 
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
@@ -722,24 +757,41 @@ export async function updateMatchParticipants(
     seenSlots.add(item.slot_no);
   }
 
+  const existingByRegistrationId = new Map(participants.map((item) => [item.registrationId, item]));
+  const requestedRegistrationIds = new Set(body.participants.map((item) => item.registration_id));
+
+  // Delete participants that are no longer in the requested list.
   for (const participant of participants) {
-    await participantRepo.delete(participant.id);
+    if (!requestedRegistrationIds.has(participant.registrationId)) {
+      await participantRepo.remove(participant);
+    }
   }
 
-  await participantRepo.save(
-    body.participants.map((item) =>
-      participantRepo.create({
-        matchId: match.id,
-        registrationId: registrationMap.get(item.registration_id)!.id,
-        slotNo: item.slot_no,
-        lane: item.lane ?? null,
-        gridPosition: item.grid_position ?? null,
-        seedNo: item.seed_no ?? null,
-        status: ContestParticipantStatus.READY,
-        metadata: {},
-      }),
-    ),
-  );
+  // Upsert participants to preserve any already-submitted result data.
+  for (const item of body.participants) {
+    const registration = registrationMap.get(item.registration_id)!;
+    const existing = existingByRegistrationId.get(item.registration_id);
+    if (existing) {
+      existing.slotNo = item.slot_no;
+      existing.lane = item.lane ?? null;
+      existing.gridPosition = item.grid_position ?? null;
+      existing.seedNo = item.seed_no ?? null;
+      await participantRepo.save(existing);
+    } else {
+      await participantRepo.save(
+        participantRepo.create({
+          matchId: match.id,
+          registrationId: registration.id,
+          slotNo: item.slot_no,
+          lane: item.lane ?? null,
+          gridPosition: item.grid_position ?? null,
+          seedNo: item.seed_no ?? null,
+          status: ContestParticipantStatus.READY,
+          metadata: {},
+        }),
+      );
+    }
+  }
 
   await writeContestAudit({
     contestId: match.contestId,
