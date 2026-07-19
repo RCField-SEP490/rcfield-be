@@ -827,6 +827,7 @@ async function main(): Promise<void> {
     checkedInBy?: string | null;
     checkedInAt?: Date | null;
     cancellationReason?: string | null;
+    metadata?: Record<string, unknown>;
   }) => {
     const id = await insertRegistration({
       contestId,
@@ -842,6 +843,7 @@ async function main(): Promise<void> {
       checkedInBy: params.checkedInBy,
       checkedInAt: params.checkedInAt,
       cancellationReason: params.cancellationReason,
+      metadata: params.metadata,
     });
     regs.push({
       id,

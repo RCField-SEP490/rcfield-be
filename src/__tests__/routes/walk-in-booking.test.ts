@@ -376,8 +376,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   });
 
   it('cho phép gia hạn nếu booking overlap khác track và không còn giữ slot', async () => {
-    const slotStart = new Date(Date.now() + 7 * 60 * 60 * 1000);
-    slotStart.setMinutes(0, 0, 0);
+    const slotStart = nextLocalDateAt(10);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
     const res = await request(app)
