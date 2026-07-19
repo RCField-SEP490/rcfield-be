@@ -140,6 +140,19 @@ contestRouter.post(
   contestController.liftBan,
 );
 
+contestRouter.get(
+  '/contests/:contestId/rental-options',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  contestController.getRentalOptions,
+);
+contestRouter.get(
+  '/contests/:contestId/available-rental-vehicles',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  contestController.getAvailableRentalVehicles,
+);
+
 contestRouter.post(
   '/contests/:contestId/register',
   authenticate,

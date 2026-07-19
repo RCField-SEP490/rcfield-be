@@ -1,7 +1,14 @@
 import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
-import { ProviderStatus, SubscriptionStatus, UserRole, VehicleSource } from '../../types';
+import { processContestReminders } from '../../jobs/contest-reminder.job';
+import {
+  NotificationType,
+  ProviderStatus,
+  SubscriptionStatus,
+  UserRole,
+  VehicleSource,
+} from '../../types';
 import { createTestCafe, createTestUser, createTestVehicle, generateToken } from '../helpers';
 
 async function activateProvider(providerId: string): Promise<void> {
@@ -460,6 +467,26 @@ describe('Contest runtime routes', () => {
       .send({ staff_id: staff.id })
       .expect(200);
 
+    // Staff must also be assigned to the cafe to operate there.
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
+       VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
+    );
+
+    // Check-in requires the contest to be CLOSED or RUNNING and within the race window.
+    await AppDataSource.query(
+      `UPDATE contests
+       SET starts_at = NOW() - INTERVAL '1 hour', ends_at = NOW() + INTERVAL '1 hour'
+       WHERE id = $1`,
+      [contestId],
+    );
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/close`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
+
     await request(app)
       .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
       .set('Authorization', `Bearer ${staffToken}`)
@@ -498,6 +525,28 @@ describe('Contest runtime routes', () => {
     expect(metricsRes.body.data.registration_counts.checked_in).toBe(1);
   });
 
+  it('staff thuộc cafe nhưng chưa được phân công trực tiếp vào contest thì không có quyền vận hành', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const staffToken = generateToken(staff);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL');
+
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
+       VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
+    );
+
+    const res = await request(app)
+      .get(`/api/v1/contests/${contestId}/metrics`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(403);
+
+    expect(res.body.code).toBe('FORBIDDEN');
+  });
+
   it('customer có thể đăng ký BYOC contest khi contest cho phép và provider duyệt thủ công', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
@@ -530,6 +579,51 @@ describe('Contest runtime routes', () => {
       .expect(200);
 
     expect(approvedRes.body.data.status).toBe('CONFIRMED');
+  });
+
+  it('chặn đăng ký BYOC khi contest yêu cầu RENTAL_ONLY', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      vehiclePolicy: 'RENTAL_ONLY',
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'BYOC',
+        byoc_vehicle_name: 'MST RMX 2.5',
+      })
+      .expect(400);
+
+    expect(res.body.code).toBe('CONTEST_VEHICLE_POLICY_VIOLATED');
+  });
+
+  it('chặn đăng ký RENTAL khi contest chỉ cho BYOC_ONLY', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      vehiclePolicy: 'BYOC_ONLY',
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        booking_id: '00000000-0000-0000-0000-000000000000',
+        vehicle_id: '00000000-0000-0000-0000-000000000000',
+      })
+      .expect(400);
+
+    expect(res.body.code).toBe('CONTEST_VEHICLE_POLICY_VIOLATED');
   });
 
   it('ban contest sẽ chặn customer đăng ký mới', async () => {
@@ -618,5 +712,319 @@ describe('Contest runtime routes', () => {
 
     expect(paymentRes.body.data.payment_url).toContain('vnp');
     expect(paymentRes.body.data.txn_ref).toContain('contest_');
+  });
+
+  it('tao notification khi customer dang ky contest thanh cong', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const { contestId, trackTypeId } = await createContestFixture(
+      provider.id,
+      cafe.id,
+      'TIME_TRIAL',
+    );
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [trackTypeId],
+    });
+
+    const [booking] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES
+         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0)
+       RETURNING id`,
+      [customer.id, cafe.id, trackTypeId],
+    );
+
+    await AppDataSource.query(
+      `INSERT INTO booking_vehicles
+         (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
+       VALUES ($1, $2, 50000, 0, 1.0)`,
+      [booking.id, vehicle.id],
+    );
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        booking_id: booking.id,
+        vehicle_id: vehicle.id,
+        vehicle_source: 'RENTAL',
+      })
+      .expect(201);
+
+    expect(registerRes.body.success).toBe(true);
+
+    const notifications = await AppDataSource.query<{ type: string; title: string }[]>(
+      `SELECT type, title FROM notifications WHERE user_id = $1 ORDER BY created_at DESC`,
+      [customer.id],
+    );
+
+    expect(notifications[0]).toMatchObject({
+      type: NotificationType.CONTEST_REGISTRATION_CREATED,
+    });
+  });
+
+  it('customer co the dang ky contest voi rental_slot va provider duyet sau khi booking duoc thanh toan', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const providerToken = generateToken(provider);
+    const customerToken = generateToken(customer);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      vehiclePolicy: 'RENTAL_ONLY',
+    });
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [],
+    });
+
+    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
+    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: slotStart,
+          slot_end: slotEnd,
+          vehicle_catalog_id: vehicle.catalog_id,
+        },
+      })
+      .expect(201);
+
+    expect(registerRes.body.data.booking_id).toBeTruthy();
+    expect(registerRes.body.data.vehicle_id).toBeTruthy();
+    expect(registerRes.body.data.status).toBe('PENDING');
+    expect(registerRes.body.data.payment_status).toBe('PENDING_REVIEW');
+
+    const bookingId = registerRes.body.data.booking_id;
+    const [booking] = await AppDataSource.query<{ status: string }[]>(
+      'SELECT status FROM bookings WHERE id = $1',
+      [bookingId],
+    );
+    expect(booking.status).toBe('PENDING');
+
+    const approveBeforePayRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ reason: 'Duyet truoc thanh toan' })
+      .expect(400);
+
+    expect(approveBeforePayRes.body.code).toBe('BOOKING_NOT_CONFIRMED');
+
+    await AppDataSource.query('UPDATE bookings SET status = $1 WHERE id = $2', [
+      'CONFIRMED',
+      bookingId,
+    ]);
+
+    const approveAfterPayRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ reason: 'Duyet sau thanh toan' })
+      .expect(200);
+
+    expect(approveAfterPayRes.body.data.status).toBe('CONFIRMED');
+  });
+
+  it('provider co the xem rental options va available vehicles cua contest', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const providerToken = generateToken(provider);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      vehiclePolicy: 'RENTAL_ONLY',
+    });
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [],
+    });
+
+    const optionsRes = await request(app)
+      .get(`/api/v1/contests/${contestId}/rental-options`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .expect(200);
+
+    expect(optionsRes.body.success).toBe(true);
+    expect(optionsRes.body.data.cafes.map((c: { id: string }) => c.id)).toContain(cafe.id);
+    expect(optionsRes.body.data.vehicle_catalogs.map((c: { id: string }) => c.id)).toContain(
+      vehicle.catalog_id,
+    );
+
+    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
+    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
+
+    const availableRes = await request(app)
+      .get(`/api/v1/contests/${contestId}/available-rental-vehicles`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .query({
+        cafe_id: cafe.id,
+        slot_start: slotStart,
+        slot_end: slotEnd,
+      })
+      .expect(200);
+
+    const group = availableRes.body.data.find(
+      (g: { catalog_id: string }) => g.catalog_id === vehicle.catalog_id,
+    );
+    expect(group).toBeTruthy();
+    expect(group.available_units.length).toBeGreaterThan(0);
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: slotStart,
+          slot_end: slotEnd,
+          vehicle_catalog_id: vehicle.catalog_id,
+        },
+      })
+      .expect(201);
+
+    const availableAfterRes = await request(app)
+      .get(`/api/v1/contests/${contestId}/available-rental-vehicles`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .query({
+        cafe_id: cafe.id,
+        slot_start: slotStart,
+        slot_end: slotEnd,
+      })
+      .expect(200);
+
+    const groupAfter = availableAfterRes.body.data.find(
+      (g: { catalog_id: string }) => g.catalog_id === vehicle.catalog_id,
+    );
+    expect(groupAfter.available_units.length).toBeLessThan(group.available_units.length);
+  });
+
+  it('admin co the tao featured popup va public lay popup active uu tien cao nhat', async () => {
+    const admin = await createTestUser({ role: UserRole.ADMIN });
+    const adminToken = generateToken(admin);
+
+    const inactive = await request(app)
+      .post('/api/v1/admin/featured-popups')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        title: 'Popup het han',
+        subtitle: 'Khong nen hien ra',
+        image_url: 'https://example.com/popup-old.jpg',
+        cta_label: 'Xem ngay',
+        cta_url: 'https://example.com/old',
+        starts_at: '2026-07-10T00:00:00.000Z',
+        ends_at: '2026-07-12T00:00:00.000Z',
+        is_active: true,
+        priority: 10,
+      })
+      .expect(201);
+
+    expect(inactive.body.data.id).toBeTruthy();
+
+    const active = await request(app)
+      .post('/api/v1/admin/featured-popups')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        title: 'Giai dang hot',
+        subtitle: 'Popup dang active',
+        image_url: 'https://example.com/popup-hot.jpg',
+        cta_label: 'Dang ky ngay',
+        cta_url: 'https://example.com/hot',
+        starts_at: '2026-07-16T00:00:00.000Z',
+        ends_at: '2026-07-20T00:00:00.000Z',
+        is_active: true,
+        priority: 200,
+      })
+      .expect(201);
+
+    expect(active.body.data.title).toBe('Giai dang hot');
+
+    const publicRes = await request(app).get('/api/v1/explore/featured-popup').expect(200);
+
+    expect(publicRes.body.data).toMatchObject({
+      title: 'Giai dang hot',
+      priority: 200,
+    });
+  });
+
+  it('contest reminder chi gui mot lan cho moi moc nhac', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+
+    const [trackType] = await AppDataSource.query<{ id: string; code: string }[]>(
+      `SELECT id, code FROM track_types ORDER BY created_at ASC LIMIT 1`,
+    );
+    const [contestType] = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM contest_types WHERE code = 'PROVIDER_STANDARD' LIMIT 1`,
+    );
+    const [contestFormat] = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM contest_formats WHERE code = 'TIME_TRIAL' LIMIT 1`,
+    );
+    const [contestTemplate] = await AppDataSource.query<
+      { id: string; default_config: Record<string, unknown> }[]
+    >(`SELECT id, default_config FROM contest_templates WHERE contest_format_id = $1 LIMIT 1`, [
+      contestFormat.id,
+    ]);
+
+    const [contest] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO contests
+         (cafe_id, provider_id, name, description, track_type, track_type_id, contest_type_id,
+          contest_format_id, contest_template_id, registration_opens_at, registration_closes_at,
+          banner_image_url, vehicle_rule, config, starts_at, ends_at, capacity, entry_fee, status, created_by)
+       VALUES
+         ($1, $2, 'Reminder Contest', 'Contest sap dien ra', $3, $4, $5,
+          $6, $7, NOW() - INTERVAL '1 day', NOW() + INTERVAL '30 minutes',
+          NULL, '{"vehicle_policy":"MIXED","assignment_policy":"AT_CHECK_IN"}'::jsonb, $8, NOW() + INTERVAL '90 minutes', NOW() + INTERVAL '3 hours', 16, 0, 'OPEN', $2)
+       RETURNING id`,
+      [
+        cafe.id,
+        provider.id,
+        trackType.code,
+        trackType.id,
+        contestType.id,
+        contestFormat.id,
+        contestTemplate.id,
+        JSON.stringify(contestTemplate.default_config ?? {}),
+      ],
+    );
+
+    await AppDataSource.query(
+      `INSERT INTO contest_cafes (contest_id, cafe_id, role, display_order, check_in_enabled)
+       VALUES ($1, $2, 'HOST', 0, TRUE)`,
+      [contest.id, cafe.id],
+    );
+
+    await AppDataSource.query(
+      `INSERT INTO contest_registrations
+         (contest_id, user_id, participant_role_snapshot, vehicle_source, status, check_in_code, payment_status, metadata)
+       VALUES
+         ($1, $2, 'CUSTOMER', 'BYOC', 'CONFIRMED', 'ABC12345', 'PENDING_REVIEW', '{}'::jsonb)`,
+      [contest.id, customer.id],
+    );
+
+    await processContestReminders();
+    await processContestReminders();
+
+    const reminderNotifications = await AppDataSource.query<{ total: string }[]>(
+      `SELECT COUNT(*)::text AS total
+         FROM notifications
+        WHERE user_id = $1
+          AND type = $2`,
+      [customer.id, NotificationType.CONTEST_REMINDER],
+    );
+
+    expect(Number(reminderNotifications[0].total)).toBe(1);
   });
 });

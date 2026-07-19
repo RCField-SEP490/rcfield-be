@@ -34,16 +34,7 @@ export async function isStaffAssignedToContest(
   const direct = await AppDataSource.getRepository(ContestStaffAssignment).findOne({
     where: { contestId, staffId },
   });
-  if (direct) return true;
-  const cafeAssigned = await AppDataSource.query(
-    `SELECT 1
-     FROM staff_cafe_assignments a
-     JOIN contest_cafes cc ON cc.cafe_id = a.cafe_id
-     WHERE a.staff_id = $1 AND cc.contest_id = $2
-     LIMIT 1`,
-    [staffId, contestId],
-  );
-  return cafeAssigned.length > 0;
+  return Boolean(direct);
 }
 
 export async function isStaffAssignedToCafe(staffId: string, cafeId: string): Promise<boolean> {

@@ -7,6 +7,8 @@ import {
   BookingStatus,
   CafeStatus,
   ContestBanScopeType,
+  FeaturedPopupAudienceScope,
+  FeaturedPopupPlacement,
   ContestParticipantStatus,
   ContestStatus,
   CustomerPackageStatus,
@@ -410,7 +412,11 @@ export const UpdatePromotionSchema = PromotionBaseSchema.partial()
 export const ContestCatalogTemplateQuerySchema = z.object({
   contest_type_id: z.string().uuid().optional(),
   contest_format_id: z.string().uuid().optional(),
-  active_only: z.coerce.boolean().optional().default(true),
+  active_only: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true')
+    .default('true'),
 });
 
 export const ContestListQuerySchema = z.object({
@@ -496,15 +502,53 @@ export const CreateContestSchema = ContestUpsertBaseSchema.refine(
     path: ['registration_closes_at'],
   });
 
-export const UpdateContestSchema = ContestUpsertBaseSchema.partial().refine(
-  (value: Record<string, unknown>) => Object.keys(value).length > 0,
-  'Cần ít nhất một trường để cập nhật',
-);
+export const UpdateContestSchema = ContestUpsertBaseSchema.partial()
+  .refine((value: Record<string, unknown>) => Object.keys(value).length > 0, {
+    message: 'Cần ít nhất một trường để cập nhật',
+  })
+  .refine(
+    (value) =>
+      !value.starts_at || !value.ends_at || (value.ends_at as Date) > (value.starts_at as Date),
+    {
+      message: 'ends_at phải sau starts_at',
+      path: ['ends_at'],
+    },
+  )
+  .refine(
+    (value) =>
+      !value.registration_opens_at ||
+      !value.registration_closes_at ||
+      (value.registration_closes_at as Date) > (value.registration_opens_at as Date),
+    {
+      message: 'registration_closes_at phải sau registration_opens_at',
+      path: ['registration_closes_at'],
+    },
+  )
+  .refine(
+    (value) =>
+      !value.registration_closes_at ||
+      !value.starts_at ||
+      (value.registration_closes_at as Date) <= (value.starts_at as Date),
+    {
+      message: 'registration_closes_at phải trước hoặc bằng starts_at',
+      path: ['registration_closes_at'],
+    },
+  );
 
 export const CreateContestRegistrationSchema = z.object({
   booking_id: z.string().uuid().optional(),
   vehicle_id: z.string().uuid().optional(),
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
+  rental_slot: z
+    .object({
+      cafe_id: z.string().uuid(),
+      slot_start: z.coerce.date(),
+      slot_end: z.coerce.date(),
+      track_config_id: z.string().uuid().optional().nullable(),
+      vehicle_catalog_id: z.string().uuid().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
   byoc_vehicle_name: z.string().trim().min(2).max(120).optional(),
   byoc_vehicle_brand: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_class: z.string().trim().min(1).max(120).optional(),
@@ -539,6 +583,47 @@ export const ContestCheckInSchema = z.object({
   checked_in_cafe_id: z.string().uuid(),
 });
 
+const FeaturedPopupBaseSchema = z.object({
+  title: z.string().trim().min(3).max(255),
+  subtitle: z.string().trim().max(1000).nullable().optional(),
+  image_url: z.string().url().nullable().optional(),
+  cta_label: z.string().trim().min(1).max(80),
+  cta_url: z.string().url().nullable().optional(),
+  contest_id: z.string().uuid().nullable().optional(),
+  placement: z
+    .nativeEnum(FeaturedPopupPlacement)
+    .optional()
+    .default(FeaturedPopupPlacement.EXPLORE),
+  audience_scope: z
+    .nativeEnum(FeaturedPopupAudienceScope)
+    .optional()
+    .default(FeaturedPopupAudienceScope.ALL),
+  starts_at: z.coerce.date(),
+  ends_at: z.coerce.date(),
+  is_active: z.boolean().optional().default(true),
+  priority: z.coerce.number().int().min(0).max(1000).optional().default(100),
+});
+
+export const CreateFeaturedPopupSchema = FeaturedPopupBaseSchema.refine(
+  (value) => value.ends_at > value.starts_at,
+  {
+    message: 'ends_at phải sau starts_at',
+    path: ['ends_at'],
+  },
+);
+
+export const UpdateFeaturedPopupSchema = FeaturedPopupBaseSchema.partial()
+  .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật')
+  .refine((value) => !value.starts_at || !value.ends_at || value.ends_at > value.starts_at, {
+    message: 'ends_at phải sau starts_at',
+    path: ['ends_at'],
+  });
+
+export const FeaturedPopupListQuerySchema = z.object({
+  placement: z.nativeEnum(FeaturedPopupPlacement).optional(),
+  is_active: z.coerce.boolean().optional(),
+});
+
 export const ContestGenerateMatchesSchema = z.object({
   cafe_id: z.string().uuid(),
   track_config_id: z.string().uuid().nullable().optional(),
@@ -564,23 +649,62 @@ export const ContestMatchParticipantsUpdateSchema = z.object({
 export const ContestSubmitResultsSchema = z.object({
   results: z
     .array(
-      z.object({
-        registration_id: z.string().uuid(),
-        finish_position: z.number().int().positive().nullable().optional(),
-        score: z.coerce.number().nullable().optional(),
-        best_lap_seconds: z.coerce.number().positive().nullable().optional(),
-        total_time_seconds: z.coerce.number().positive().nullable().optional(),
-        is_winner: z.boolean().optional().default(false),
-        result_note: z.string().trim().max(1000).nullable().optional(),
-        status: z.nativeEnum(ContestParticipantStatus).optional(),
-      }),
+      z
+        .object({
+          registration_id: z.string().uuid(),
+          finish_position: z.number().int().positive().nullable().optional(),
+          score: z.coerce.number().nullable().optional(),
+          best_lap_seconds: z.coerce.number().positive().nullable().optional(),
+          total_time_seconds: z.coerce.number().positive().nullable().optional(),
+          is_winner: z.boolean().optional().default(false),
+          result_note: z.string().trim().max(1000).nullable().optional(),
+          status: z.nativeEnum(ContestParticipantStatus).optional(),
+        })
+        .refine(
+          (value) =>
+            value.best_lap_seconds === null ||
+            value.best_lap_seconds === undefined ||
+            value.total_time_seconds === null ||
+            value.total_time_seconds === undefined ||
+            value.total_time_seconds >= value.best_lap_seconds,
+          {
+            message: 'total_time_seconds phải lớn hơn hoặc bằng best_lap_seconds',
+            path: ['total_time_seconds'],
+          },
+        ),
     )
-    .min(1),
+    .min(1)
+    .superRefine((results, ctx) => {
+      const finishPositions = new Map<number, number[]>();
+      for (const [index, result] of results.entries()) {
+        if (result.finish_position !== null && result.finish_position !== undefined) {
+          const indices = finishPositions.get(result.finish_position) ?? [];
+          indices.push(index);
+          finishPositions.set(result.finish_position, indices);
+        }
+      }
+      for (const [position, indices] of finishPositions.entries()) {
+        if (indices.length > 1) {
+          for (const index of indices) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `finish_position ${position} bị trùng trong cùng match`,
+              path: [index, 'finish_position'],
+            });
+          }
+        }
+      }
+    }),
   reason: z.string().trim().min(1).max(1000),
 });
 
 export const ContestCorrectResultsSchema = ContestSubmitResultsSchema.extend({
   force_cascade: z.boolean().optional().default(false),
+});
+
+export const ContestAuditLogsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  limit: z.coerce.number().int().positive().max(200).optional().default(20),
 });
 
 export const ContestEntryPaymentCreateSchema = z.object({

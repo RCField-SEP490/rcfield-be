@@ -11,7 +11,6 @@ import { User } from '../models/user.entity';
 import {
   AppError,
   ContestMatchStatus,
-  ContestMatchType,
   ContestParticipantStatus,
   ContestRegistrationStatus,
   ContestStatus,
@@ -22,9 +21,11 @@ import { Viewer } from './cafe.service';
 import {
   assertContestOperator,
   getContestOrThrow,
+  isStaffAssignedToCafe,
   isStaffAssignedToContest,
   writeContestAudit,
 } from './contest.helpers';
+import { ContestFormatEngine, getContestFormatEngine } from './contest-format.engine';
 
 type GenerateMatchesBody = {
   cafe_id: string;
@@ -90,10 +91,8 @@ function getLeaderboardMode(contest: Contest): 'BEST_LAP' | 'TOTAL_TIME' | 'KNOC
   return 'BEST_LAP';
 }
 
-function getRuntimeFormat(contest: Contest): 'TIME_TRIAL' | 'KNOCKOUT' {
-  return contest.config?.runtime_format === 'TIME_TRIAL' || contest.config?.format === 'TIME_TRIAL'
-    ? 'TIME_TRIAL'
-    : 'KNOCKOUT';
+function getEngine(contest: Contest): ContestFormatEngine {
+  return getContestFormatEngine(contest);
 }
 
 async function validateContestCafe(contestId: string, cafeId: string): Promise<ContestCafe> {
@@ -217,46 +216,15 @@ async function assertViewerCanOperateMatch(match: ContestMatch, viewer: Viewer) 
   }
 
   if (viewer.role === UserRole.STAFF) {
-    const assigned = await isStaffAssignedToContest(match.contestId, viewer.userId);
-    if (!assigned) {
+    const assignedToContest = await isStaffAssignedToContest(match.contestId, viewer.userId);
+    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, match.cafeId);
+    if (!assignedToContest || !assignedToCafe) {
       throw new AppError('Staff không được thao tác match ở chi nhánh này', 403, 'FORBIDDEN');
     }
     return;
   }
 
   throw new AppError('Forbidden', 403, 'FORBIDDEN');
-}
-
-function inferMatchWinners(
-  participants: ContestMatchParticipant[],
-  winnersToAdvance: number,
-): ContestMatchParticipant[] {
-  const explicitWinners = participants.filter((item) => item.isWinner);
-  if (explicitWinners.length > 0) {
-    return explicitWinners.slice(0, winnersToAdvance);
-  }
-
-  const ranked = [...participants].sort((a, b) => {
-    const aFinish = a.finishPosition ?? Number.MAX_SAFE_INTEGER;
-    const bFinish = b.finishPosition ?? Number.MAX_SAFE_INTEGER;
-    if (aFinish !== bFinish) return aFinish - bFinish;
-
-    const aBestLap = a.bestLapSeconds ?? Number.MAX_SAFE_INTEGER;
-    const bBestLap = b.bestLapSeconds ?? Number.MAX_SAFE_INTEGER;
-    if (aBestLap !== bBestLap) return aBestLap - bBestLap;
-
-    const aTotal = a.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER;
-    const bTotal = b.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER;
-    if (aTotal !== bTotal) return aTotal - bTotal;
-
-    const aScore = a.score ?? Number.NEGATIVE_INFINITY;
-    const bScore = b.score ?? Number.NEGATIVE_INFINITY;
-    if (aScore !== bScore) return bScore - aScore;
-
-    return a.slotNo - b.slotNo;
-  });
-
-  return ranked.slice(0, winnersToAdvance);
 }
 
 async function mapMatchesPayload(contestId: string, viewer?: Viewer) {
@@ -330,6 +298,87 @@ async function mapMatchesPayload(contestId: string, viewer?: Viewer) {
   }));
 }
 
+function buildHighlightRounds(matches: Awaited<ReturnType<typeof mapMatchesPayload>>) {
+  const rounds = matches.reduce<
+    Array<{
+      round_no: number;
+      label: string;
+      match_count: number;
+      completed_match_count: number;
+      winners: Array<{
+        registration_id: string;
+        participant_name: string | null;
+        participant_email: string | null;
+        driver_handle: string | null;
+        source_match_id: string;
+        source_match_name: string | null;
+      }>;
+    }>
+  >((acc, match) => {
+    const existing = acc.find((item) => item.round_no === match.round_no);
+    const target =
+      existing ??
+      (() => {
+        const created = {
+          round_no: match.round_no,
+          label: match.name?.trim() || `Round ${match.round_no}`,
+          match_count: 0,
+          completed_match_count: 0,
+          winners: [] as Array<{
+            registration_id: string;
+            participant_name: string | null;
+            participant_email: string | null;
+            driver_handle: string | null;
+            source_match_id: string;
+            source_match_name: string | null;
+          }>,
+        };
+        acc.push(created);
+        return created;
+      })();
+
+    target.match_count += 1;
+    if (match.status === ContestMatchStatus.COMPLETED) target.completed_match_count += 1;
+    for (const participant of match.participants.filter((item) => item.is_winner)) {
+      target.winners.push({
+        registration_id: participant.registration_id,
+        participant_name: participant.registration?.participant_name ?? null,
+        participant_email: participant.registration?.participant_email ?? null,
+        driver_handle: participant.registration?.driver_handle ?? null,
+        source_match_id: match.id,
+        source_match_name: match.name ?? null,
+      });
+    }
+    return acc;
+  }, []);
+
+  return rounds.sort((a, b) => a.round_no - b.round_no);
+}
+
+export async function getContestPublicRuntimeSummary(contestId: string, viewer?: Viewer) {
+  await assertViewerCanViewContestMatches(contestId, viewer);
+  const matches = await mapMatchesPayload(contestId, viewer);
+  const rounds = Array.from(new Set(matches.map((item) => item.round_no))).sort((a, b) => a - b);
+  const currentRound =
+    matches.find((item) =>
+      [ContestMatchStatus.RUNNING, ContestMatchStatus.READY].includes(item.status),
+    )?.round_no ??
+    matches.find((item) => item.status === ContestMatchStatus.COMPLETED)?.round_no ??
+    null;
+  const liveMatch = matches.find((item) => item.status === ContestMatchStatus.RUNNING) ?? null;
+
+  return {
+    total_matches: matches.length,
+    total_rounds: rounds.length,
+    current_round_no: currentRound,
+    has_live_matches: Boolean(liveMatch),
+    live_match_id: liveMatch?.id ?? null,
+    completed_matches: matches.filter((item) => item.status === ContestMatchStatus.COMPLETED)
+      .length,
+    highlight_rounds: buildHighlightRounds(matches),
+  };
+}
+
 async function clearExistingRuntime(contestId: string) {
   const matchRepo = AppDataSource.getRepository(ContestMatch);
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
@@ -349,55 +398,34 @@ async function ensureContestRuntimeEditable(contest: Contest) {
   }
 }
 
-function buildTimeTrialResultSummary(
-  contest: Contest,
-  participants: ContestMatchParticipant[],
-): Record<string, unknown> {
-  const leaderboardMode = getLeaderboardMode(contest);
-  const sorted = [...participants].sort((a, b) => {
-    if (leaderboardMode === 'TOTAL_TIME') {
-      return (
-        (a.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER) -
-        (b.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER)
-      );
-    }
-    return (
-      (a.bestLapSeconds ?? Number.MAX_SAFE_INTEGER) - (b.bestLapSeconds ?? Number.MAX_SAFE_INTEGER)
-    );
-  });
-  const winner = sorted[0] ?? null;
-  return {
-    leaderboard_mode: leaderboardMode,
-    winner_registration_id: winner?.registrationId ?? null,
-    best_lap_seconds: normalizeContestTimeSeconds(winner?.bestLapSeconds),
-    total_time_seconds: normalizeContestTimeSeconds(winner?.totalTimeSeconds),
-  };
-}
-
-function buildKnockoutResultSummary(
-  participants: ContestMatchParticipant[],
-): Record<string, unknown> {
-  const winner = participants.find((item) => item.isWinner) ?? null;
-  return {
-    winner_registration_id: winner?.registrationId ?? null,
-    participants_count: participants.length,
-  };
-}
-
 async function protectDownstreamCorrection(match: ContestMatch, forceCascade: boolean) {
-  if (!match.nextMatchId) return;
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
 
-  const nextParticipants = await AppDataSource.getRepository(ContestMatchParticipant).find({
-    where: { matchId: match.nextMatchId },
-  });
-  const linkedParticipants = nextParticipants.filter(
-    (item) => item.metadata?.source_match_id === match.id,
-  );
-  if (linkedParticipants.length === 0) return;
+  // Walk the entire downstream chain (next_match_id -> next_match_id -> ...).
+  const downstreamChain: ContestMatch[] = [];
+  let currentId: string | null = match.nextMatchId;
+  while (currentId) {
+    const current = await matchRepo.findOne({ where: { id: currentId } });
+    if (!current) break;
+    downstreamChain.push(current);
+    currentId = current.nextMatchId;
+  }
 
-  const nextMatch = await AppDataSource.getRepository(ContestMatch).findOne({
-    where: { id: match.nextMatchId },
-  });
+  if (downstreamChain.length === 0) return;
+
+  const hasLinkedParticipants = await participantRepo
+    .createQueryBuilder('participant')
+    .where('participant.match_id IN (:...matchIds)', {
+      matchIds: downstreamChain.map((item) => item.id),
+    })
+    .andWhere("participant.metadata ->> 'source_match_id' = :sourceMatchId", {
+      sourceMatchId: match.id,
+    })
+    .getExists();
+
+  if (!hasLinkedParticipants) return;
+
   if (!forceCascade) {
     throw new AppError(
       'Match này đã advance participant sang round sau; dùng force_cascade để sửa',
@@ -405,28 +433,32 @@ async function protectDownstreamCorrection(match: ContestMatch, forceCascade: bo
       'MATCH_CORRECTION_REQUIRES_FORCE',
     );
   }
-  if (nextMatch?.status === ContestMatchStatus.COMPLETED) {
-    throw new AppError(
-      'Không thể force correction khi match kế tiếp đã hoàn tất',
-      409,
-      'MATCH_CORRECTION_DOWNSTREAM_COMPLETED',
-    );
+
+  for (const downstream of downstreamChain) {
+    if (downstream.status === ContestMatchStatus.COMPLETED) {
+      throw new AppError(
+        'Không thể force correction khi có match hạ nguồn đã hoàn tất',
+        409,
+        'MATCH_CORRECTION_DOWNSTREAM_COMPLETED',
+      );
+    }
   }
 
-  if (linkedParticipants.length > 0) {
-    await AppDataSource.getRepository(ContestMatchParticipant).delete(
-      linkedParticipants.map((item) => item.id),
-    );
-  }
-
-  if (nextMatch) {
-    nextMatch.status = ContestMatchStatus.DRAFT;
-    nextMatch.startedAt = null;
-    nextMatch.endedAt = null;
-    nextMatch.decidedAt = null;
-    nextMatch.decidedBy = null;
-    nextMatch.resultSummary = {};
-    await AppDataSource.getRepository(ContestMatch).save(nextMatch);
+  // Clear all downstream participants and reset match state to DRAFT.
+  for (const downstream of downstreamChain) {
+    const downstreamParticipants = await participantRepo.find({
+      where: { matchId: downstream.id },
+    });
+    if (downstreamParticipants.length > 0) {
+      await participantRepo.remove(downstreamParticipants);
+    }
+    downstream.status = ContestMatchStatus.DRAFT;
+    downstream.startedAt = null;
+    downstream.endedAt = null;
+    downstream.decidedAt = null;
+    downstream.decidedBy = null;
+    downstream.resultSummary = {};
+    await matchRepo.save(downstream);
   }
 }
 
@@ -461,9 +493,30 @@ export async function generateContestMatches(
   const contest = await assertContestOperator(contestId, viewer);
   await ensureContestRuntimeEditable(contest);
   await validateContestCafe(contestId, body.cafe_id);
+
+  if (viewer.role === UserRole.STAFF) {
+    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, body.cafe_id);
+    if (!assignedToCafe) {
+      throw new AppError('Staff không được tạo runtime ở chi nhánh này', 403, 'FORBIDDEN');
+    }
+  }
+
   const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
   const matchRepo = AppDataSource.getRepository(ContestMatch);
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+
+  const existingMatches = await matchRepo.find({ where: { contestId } });
+  if (
+    existingMatches.some((match) =>
+      [ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status),
+    )
+  ) {
+    throw new AppError(
+      'Không thể tạo lại bracket khi đã có match đang diễn ra hoặc đã hoàn tất',
+      409,
+      'CONTEST_RUNTIME_LOCKED',
+    );
+  }
 
   const orderedRegistrations =
     getSeedingMode(contest, body.seeding_mode) === 'CHECK_IN_ORDER'
@@ -478,103 +531,81 @@ export async function generateContestMatches(
 
   await clearExistingRuntime(contestId);
 
-  const format = getRuntimeFormat(contest);
-  const isTimeTrial = format === 'TIME_TRIAL';
+  const engine = getEngine(contest);
   const driversPerMatch = Math.max(1, getDriversPerMatch(contest, body.drivers_per_match));
+  const generatedMatches = engine.generateMatches({
+    contest,
+    cafeId: body.cafe_id,
+    trackConfigId: body.track_config_id,
+    registrations,
+    registrationOrder: orderedRegistrations.map((item) => item.id),
+    driversPerMatch,
+    seedingMode: getSeedingMode(contest, body.seeding_mode),
+    createdBy: viewer.userId,
+  });
+
+  const roundMap = new Map<number, ContestMatch[]>();
   const createdMatches: ContestMatch[] = [];
 
-  if (isTimeTrial) {
-    for (const [index, registration] of orderedRegistrations.entries()) {
-      const match = await matchRepo.save(
-        matchRepo.create({
-          contestId,
-          cafeId: body.cafe_id,
-          trackConfigId: body.track_config_id ?? null,
-          roundNo: 1,
-          matchNo: index + 1,
-          name: `Lượt thi đấu ${index + 1}`,
-          matchType: ContestMatchType.TIME_ATTACK,
-          status: ContestMatchStatus.READY,
-          scheduledAt: new Date(contest.startsAt.getTime() + index * 5 * 60 * 1000),
-          advancementRule: { winners_to_advance: 0, format: 'TIME_TRIAL' },
-          metadata: { generated_from: 'contest-runtime.generate', registration_count: 1, format },
-          createdBy: viewer.userId,
-        }),
-      );
-      createdMatches.push(match);
+  for (const generated of generatedMatches) {
+    const match = await matchRepo.save(
+      matchRepo.create({
+        contestId,
+        cafeId: body.cafe_id,
+        trackConfigId: body.track_config_id ?? null,
+        roundNo: generated.roundNo,
+        matchNo: generated.matchNo,
+        name: generated.name,
+        matchType: generated.matchType,
+        status: generated.status,
+        scheduledAt: generated.scheduledAt,
+        advancementRule: generated.advancementRule,
+        metadata: generated.metadata,
+        createdBy: viewer.userId,
+      }),
+    );
+    createdMatches.push(match);
+    const list = roundMap.get(generated.roundNo) ?? [];
+    list.push(match);
+    roundMap.set(generated.roundNo, list);
+  }
 
-      await participantRepo.save(
-        participantRepo.create({
-          matchId: match.id,
-          registrationId: registration.id,
-          slotNo: 1,
-          seedNo: index + 1,
-          status: ContestParticipantStatus.READY,
-          metadata: { generated_seed_order: index + 1 },
-        }),
-      );
-    }
-  } else {
-    const firstRoundMatches = Math.ceil(orderedRegistrations.length / driversPerMatch);
-    const totalRounds = Math.max(1, Math.ceil(Math.log2(firstRoundMatches || 1)) + 1);
-    const rounds: ContestMatch[][] = [];
-
-    for (let roundNo = 1; roundNo <= totalRounds; roundNo += 1) {
-      const matchesInRound =
-        roundNo === 1
-          ? firstRoundMatches
-          : Math.max(1, Math.ceil((rounds[roundNo - 2]?.length ?? firstRoundMatches) / 2));
-      rounds[roundNo - 1] = [];
-
-      for (let matchNo = 1; matchNo <= matchesInRound; matchNo += 1) {
-        const match = await matchRepo.save(
-          matchRepo.create({
-            contestId,
-            cafeId: body.cafe_id,
-            trackConfigId: body.track_config_id ?? null,
-            roundNo,
-            matchNo,
-            name:
-              roundNo === totalRounds
-                ? `Chung kết ${matchNo}`
-                : `Vòng ${roundNo} · Trận ${matchNo}`,
-            matchType:
-              roundNo === totalRounds ? ContestMatchType.FINAL : ContestMatchType.HEAD_TO_HEAD,
-            status: roundNo === 1 ? ContestMatchStatus.READY : ContestMatchStatus.DRAFT,
-            scheduledAt: new Date(
-              contest.startsAt.getTime() + (createdMatches.length + matchNo - 1) * 10 * 60 * 1000,
-            ),
-            advancementRule: { winners_to_advance: 1, format: 'KNOCKOUT' },
-            metadata: { generated_from: 'contest-runtime.generate', format },
-            createdBy: viewer.userId,
-          }),
-        );
-        rounds[roundNo - 1].push(match);
-        createdMatches.push(match);
-      }
-    }
-
-    for (let roundIndex = 0; roundIndex < rounds.length - 1; roundIndex += 1) {
-      for (const match of rounds[roundIndex]) {
-        const nextMatch = rounds[roundIndex + 1][Math.floor((match.matchNo - 1) / 2)];
+  // Link next matches using generated nextMatchIndex pointers.
+  for (const [index, generated] of generatedMatches.entries()) {
+    if (generated.nextMatchIndex !== undefined) {
+      const nextRoundMatches = roundMap.get(generated.roundNo + 1) ?? [];
+      const nextMatch = nextRoundMatches[generated.nextMatchIndex];
+      if (nextMatch) {
+        const match = createdMatches[index];
         match.nextMatchId = nextMatch.id;
         await matchRepo.save(match);
       }
     }
+  }
 
-    for (const [index, registration] of orderedRegistrations.entries()) {
-      const match = rounds[0][Math.floor(index / driversPerMatch)];
+  // Create participants.
+  for (const [index, generated] of generatedMatches.entries()) {
+    const match = createdMatches[index];
+    for (const participant of generated.participants) {
       await participantRepo.save(
         participantRepo.create({
           matchId: match.id,
-          registrationId: registration.id,
-          slotNo: (index % driversPerMatch) + 1,
-          lane: `L${(index % driversPerMatch) + 1}`,
-          seedNo: index + 1,
-          status: ContestParticipantStatus.READY,
-          metadata: { generated_seed_order: index + 1 },
+          registrationId: participant.registrationId,
+          slotNo: participant.slotNo,
+          lane: participant.lane ?? null,
+          gridPosition: participant.gridPosition ?? null,
+          seedNo: participant.seedNo ?? null,
+          status: participant.status,
+          metadata: participant.metadata ?? {},
         }),
       );
+    }
+  }
+
+  // Auto-advance bye winners so staff does not need to create fake results.
+  for (const [index, generated] of generatedMatches.entries()) {
+    if (generated.isBye && generated.byeWinnerRegistrationId) {
+      await advanceByeWinner(createdMatches[index], generated.byeWinnerRegistrationId, viewer);
     }
   }
 
@@ -591,13 +622,14 @@ export async function generateContestMatches(
     afterJson: {
       generated_match_count: createdMatches.length,
       registration_count: orderedRegistrations.length,
-      format,
+      format: engine.code,
     },
     metadata: {
       cafe_id: body.cafe_id,
       track_config_id: body.track_config_id ?? null,
       seeding_mode: getSeedingMode(contest, body.seeding_mode),
       drivers_per_match: driversPerMatch,
+      format: engine.code,
     },
   });
 
@@ -612,8 +644,12 @@ export async function updateMatchParticipants(
   const { match, participants } = await loadMatchBundle(matchId);
   await assertViewerCanOperateMatch(match, viewer);
 
-  if (match.status === ContestMatchStatus.COMPLETED) {
-    throw new AppError('Không thể đổi participant khi match đã hoàn tất', 400, 'MATCH_COMPLETED');
+  if ([ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status)) {
+    throw new AppError(
+      'Không thể đổi participant khi match đang diễn ra hoặc đã hoàn tất',
+      400,
+      'MATCH_LOCKED',
+    );
   }
 
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
@@ -631,24 +667,41 @@ export async function updateMatchParticipants(
     seenSlots.add(item.slot_no);
   }
 
+  const existingByRegistrationId = new Map(participants.map((item) => [item.registrationId, item]));
+  const requestedRegistrationIds = new Set(body.participants.map((item) => item.registration_id));
+
+  // Delete participants that are no longer in the requested list.
   for (const participant of participants) {
-    await participantRepo.delete(participant.id);
+    if (!requestedRegistrationIds.has(participant.registrationId)) {
+      await participantRepo.remove(participant);
+    }
   }
 
-  await participantRepo.save(
-    body.participants.map((item) =>
-      participantRepo.create({
-        matchId: match.id,
-        registrationId: registrationMap.get(item.registration_id)!.id,
-        slotNo: item.slot_no,
-        lane: item.lane ?? null,
-        gridPosition: item.grid_position ?? null,
-        seedNo: item.seed_no ?? null,
-        status: ContestParticipantStatus.READY,
-        metadata: {},
-      }),
-    ),
-  );
+  // Upsert participants to preserve any already-submitted result data.
+  for (const item of body.participants) {
+    const registration = registrationMap.get(item.registration_id)!;
+    const existing = existingByRegistrationId.get(item.registration_id);
+    if (existing) {
+      existing.slotNo = item.slot_no;
+      existing.lane = item.lane ?? null;
+      existing.gridPosition = item.grid_position ?? null;
+      existing.seedNo = item.seed_no ?? null;
+      await participantRepo.save(existing);
+    } else {
+      await participantRepo.save(
+        participantRepo.create({
+          matchId: match.id,
+          registrationId: registration.id,
+          slotNo: item.slot_no,
+          lane: item.lane ?? null,
+          gridPosition: item.grid_position ?? null,
+          seedNo: item.seed_no ?? null,
+          status: ContestParticipantStatus.READY,
+          metadata: {},
+        }),
+      );
+    }
+  }
 
   await writeContestAudit({
     contestId: match.contestId,
@@ -666,6 +719,7 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
   const { match, participants } = await loadMatchBundle(matchId);
   await assertViewerCanOperateMatch(match, viewer);
   const contest = await getContestOrThrow(match.contestId);
+  const engine = getEngine(contest);
   if (participants.length === 0) {
     throw new AppError('Match chưa có participant', 400, 'MATCH_HAS_NO_PARTICIPANTS');
   }
@@ -711,7 +765,7 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
       : match.nextMatchId
         ? 1
         : 0;
-  const inferredWinners = inferMatchWinners(
+  const inferredWinners = engine.inferWinners(
     refreshedParticipants,
     Math.max(1, winnersToAdvance || 1),
   );
@@ -730,10 +784,7 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
   match.endedAt = new Date();
   match.decidedAt = new Date();
   match.decidedBy = viewer.userId;
-  match.resultSummary =
-    match.matchType === ContestMatchType.TIME_ATTACK
-      ? buildTimeTrialResultSummary(contest, refreshedParticipants)
-      : buildKnockoutResultSummary(refreshedParticipants);
+  match.resultSummary = engine.buildResultSummary(contest, match, refreshedParticipants);
   await AppDataSource.getRepository(ContestMatch).save(match);
 
   if (contest.status !== ContestStatus.RUNNING) {
@@ -831,11 +882,14 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
     throw new AppError('Match kế tiếp không tồn tại', 404, 'NEXT_MATCH_NOT_FOUND');
   }
 
+  const contest = await getContestOrThrow(match.contestId);
+  const engine = getEngine(contest);
+
   const winnersToAdvance =
     typeof match.advancementRule?.winners_to_advance === 'number'
       ? Number(match.advancementRule.winners_to_advance)
       : 1;
-  const winners = inferMatchWinners(participants, Math.max(1, winnersToAdvance));
+  const winners = engine.inferWinners(participants, Math.max(1, winnersToAdvance));
   if (winners.length === 0) {
     throw new AppError('Chưa xác định được winner để advance', 400, 'MATCH_WINNER_NOT_FOUND');
   }
@@ -888,6 +942,68 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
   });
 
   return mapMatchesPayload(match.contestId, viewer);
+}
+
+async function advanceByeWinner(match: ContestMatch, winnerRegistrationId: string, viewer: Viewer) {
+  if (!match.nextMatchId) return;
+
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+
+  const winnerParticipant = await participantRepo.findOne({
+    where: { matchId: match.id, registrationId: winnerRegistrationId },
+  });
+  if (!winnerParticipant) return;
+
+  const nextMatch = await matchRepo.findOne({ where: { id: match.nextMatchId } });
+  if (!nextMatch) return;
+
+  const nextParticipants = await participantRepo.find({
+    where: { matchId: nextMatch.id },
+    order: { slotNo: 'ASC' },
+  });
+  const existing = nextParticipants.find(
+    (item) =>
+      item.metadata?.source_match_id === match.id &&
+      item.registrationId === winnerParticipant.registrationId,
+  );
+  if (existing) return;
+
+  const usedSlots = new Set(nextParticipants.map((item) => item.slotNo));
+  let slotNo = 1;
+  while (usedSlots.has(slotNo)) slotNo += 1;
+
+  const advancedParticipant = participantRepo.create({
+    matchId: nextMatch.id,
+    registrationId: winnerParticipant.registrationId,
+    slotNo,
+    lane: `L${slotNo}`,
+    seedNo: winnerParticipant.seedNo,
+    status: ContestParticipantStatus.READY,
+    metadata: {
+      source_match_id: match.id,
+      source_match_no: match.matchNo,
+      source_round_no: match.roundNo,
+      bye_advance: true,
+    },
+  });
+  await participantRepo.save(advancedParticipant);
+
+  nextMatch.status = ContestMatchStatus.READY;
+  await matchRepo.save(nextMatch);
+
+  await writeContestAudit({
+    contestId: match.contestId,
+    matchId: match.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'match.advanced',
+    afterJson: {
+      next_match_id: nextMatch.id,
+      winners: [winnerParticipant.registrationId],
+      bye: true,
+    },
+  });
 }
 
 type LeaderboardEntry = {
@@ -1004,6 +1120,14 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
 
 export async function publishContestLeaderboard(contestId: string, viewer: Viewer) {
   const contest = await assertContestOperator(contestId, viewer);
+  if (![ContestStatus.RUNNING, ContestStatus.CLOSED].includes(contest.status)) {
+    throw new AppError(
+      'Chỉ có thể publish leaderboard khi contest đang diễn ra hoặc đã đóng đăng ký',
+      400,
+      'CONTEST_NOT_PUBLISHABLE',
+    );
+  }
+
   const matches = await loadContestMatches(contestId);
   if (matches.length === 0) {
     throw new AppError('Contest chưa có match để publish leaderboard', 400, 'CONTEST_NO_MATCHES');
@@ -1019,6 +1143,27 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
       'Không thể publish leaderboard khi vẫn còn match chưa hoàn tất',
       409,
       'CONTEST_MATCHES_INCOMPLETE',
+    );
+  }
+
+  const participantsByMatch = await loadContestMatchParticipantsByMatch(
+    matches.map((item) => item.id),
+  );
+  const matchWithoutResults = matches.find((match) => {
+    const participants = participantsByMatch.get(match.id) ?? [];
+    return participants.every(
+      (participant) =>
+        participant.finishPosition === null &&
+        participant.bestLapSeconds === null &&
+        participant.totalTimeSeconds === null &&
+        participant.score === null,
+    );
+  });
+  if (matchWithoutResults) {
+    throw new AppError(
+      'Có match hoàn tất nhưng chưa có kết quả hợp lệ',
+      400,
+      'CONTEST_MATCH_WITHOUT_RESULTS',
     );
   }
 
@@ -1053,13 +1198,21 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
   return contest.config.published_leaderboard;
 }
 
-export async function listContestAuditLogs(contestId: string, viewer: Viewer) {
+export async function listContestAuditLogs(
+  contestId: string,
+  viewer: Viewer,
+  options?: { page?: number; limit?: number },
+) {
   await assertContestOperator(contestId, viewer);
-  return AppDataSource.getRepository(ContestAuditLog).find({
+  const page = Math.max(1, options?.page ?? 1);
+  const limit = Math.max(1, Math.min(200, options?.limit ?? 20));
+  const [rows, total] = await AppDataSource.getRepository(ContestAuditLog).findAndCount({
     where: { contestId },
     order: { createdAt: 'DESC' },
-    take: 200,
+    skip: (page - 1) * limit,
+    take: limit,
   });
+  return { data: rows, meta: { total, page, limit } };
 }
 
 export async function getContestMetrics(contestId: string, viewer: Viewer) {

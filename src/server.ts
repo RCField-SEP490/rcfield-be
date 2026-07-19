@@ -10,6 +10,7 @@ import { scheduleQuotaReset } from './jobs/quota-reset.job';
 import { startSubscriptionLifecycleJobs } from './jobs/subscription-lifecycle.job';
 import { scheduleBookingTimeout } from './jobs/booking-timeout.job';
 import { startPackageExpiryJob } from './jobs/package-expiry.job';
+import { startContestReminderJob } from './jobs/contest-reminder.job';
 import { fbChatWorker } from './workers/fb-chat.worker';
 
 async function bootstrap() {
@@ -40,6 +41,7 @@ async function bootstrap() {
     startSubscriptionLifecycleJobs();
     scheduleBookingTimeout();
     startPackageExpiryJob();
+    startContestReminderJob();
 
     httpServer.listen(env.PORT, () => {
       logger.server(`Running on http://localhost:${env.PORT}`);

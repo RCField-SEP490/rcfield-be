@@ -234,6 +234,7 @@ export async function findContestLockConflictForBooking(params: {
   slotEnd: Date;
   trackConfigId?: string | null;
   trackTypeId?: string | null;
+  contestId?: string | null;
 }) {
   const contests = await AppDataSource.getRepository(Contest)
     .createQueryBuilder('contest')
@@ -245,6 +246,8 @@ export async function findContestLockConflictForBooking(params: {
     .getMany();
 
   for (const contest of contests) {
+    if (params.contestId && contest.id === params.contestId) continue;
+
     const locks = getContestResourceLocks(contest.config);
     const matchingLock = locks.find((item) => item.cafe_id === params.cafeId);
     if (
@@ -273,6 +276,7 @@ export async function assertBookingNotBlockedByContest(params: {
   slotEnd: Date;
   trackConfigId?: string | null;
   trackTypeId?: string | null;
+  contestId?: string | null;
 }) {
   const conflict = await findContestLockConflictForBooking(params);
   if (!conflict) return;

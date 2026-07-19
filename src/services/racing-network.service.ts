@@ -15,7 +15,7 @@ import {
   UserRole,
   VehicleSource,
 } from '../types';
-import { assertContestOwner, writeContestAudit } from './contest.helpers';
+import { assertContestOperator, writeContestAudit } from './contest.helpers';
 import { Viewer } from './cafe.service';
 
 type RacingProfile = {
@@ -670,7 +670,7 @@ async function loadSyncSourceRows(contestId: string) {
 }
 
 export async function syncContestRaceRecords(contestId: string, viewer: Viewer) {
-  const contest = await assertContestOwner(contestId, viewer);
+  const contest = await assertContestOperator(contestId, viewer);
   const publishedLeaderboard = contest.config?.published_leaderboard;
   if (!publishedLeaderboard) {
     throw new AppError(
