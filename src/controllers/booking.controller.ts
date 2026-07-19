@@ -194,8 +194,10 @@ export const bookingController = {
       const userMap = new Map(users.map((u) => [u.id, u]));
       const participants = rawParticipants.map((p) => ({
         ...p,
-        resolvedName: p.guestName ?? userMap.get(p.userId ?? '')?.full_name ?? null,
-        resolvedPhone: p.guestPhone ?? userMap.get(p.userId ?? '')?.phone ?? null,
+        // A linked account owns its current profile details. guestName/phone is
+        // retained only for walk-in guests without an account.
+        resolvedName: userMap.get(p.userId ?? '')?.full_name ?? p.guestName ?? null,
+        resolvedPhone: userMap.get(p.userId ?? '')?.phone ?? p.guestPhone ?? null,
       }));
 
       // Enrich vehicles with catalog info (name, tier, identifier, color, image)
@@ -212,7 +214,9 @@ export const bookingController = {
             tier: vehicle?.catalog?.tier ?? null,
             identifier: vehicle?.identifier ?? null,
             color: vehicle?.color ?? null,
-            coverImageUrl: vehicle?.catalog?.coverImageUrl ?? vehicle?.distinctiveImageUrl ?? null,
+            // A unit's own photo represents the assigned rental car more accurately.
+            // Use the catalog cover only when that unit has no photo.
+            coverImageUrl: vehicle?.distinctiveImageUrl ?? vehicle?.catalog?.coverImageUrl ?? null,
           };
         }),
       );
@@ -343,6 +347,9 @@ export const bookingController = {
       if (query.status) {
         qb = qb.andWhere('b.status = :status', { status: query.status });
       }
+      if (query.play_mode) {
+        qb = qb.andWhere('b.play_mode = :playMode', { playMode: query.play_mode });
+      }
 
       // Tạo câu query đếm tổng số lượng phù hợp với filter status
       let countQb = AppDataSource.getRepository(Booking)
@@ -350,6 +357,9 @@ export const bookingController = {
         .where('b.customer_id = :customerId', { customerId: req.user!.userId });
       if (query.status) {
         countQb = countQb.andWhere('b.status = :status', { status: query.status });
+      }
+      if (query.play_mode) {
+        countQb = countQb.andWhere('b.play_mode = :playMode', { playMode: query.play_mode });
       }
 
       const [rawAndEntities, total] = await Promise.all([

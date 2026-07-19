@@ -10,6 +10,7 @@ import {
   ConfirmCheckoutSchema,
   UpdateDamageItemsSchema,
   EscalateDisputeSchema,
+  StaffBookingsQuerySchema,
 } from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
@@ -196,6 +197,20 @@ export const staffController = {
       if (!req.user.cafeId)
         throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
       const data = await staffService.getTodayBookings(req.user.cafeId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/bookings?date=YYYY-MM-DD  [auth]
+  async bookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const { date } = StaffBookingsQuerySchema.parse(req.query);
+      const data = await staffService.getBookingsByDate(req.user.cafeId, date);
       res.json({ success: true, data });
     } catch (err) {
       next(err);
