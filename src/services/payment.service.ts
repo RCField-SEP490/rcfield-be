@@ -912,7 +912,10 @@ export async function mockConfirmPayment(
 
   const mockCreationSnapshot = booking.snapshot as unknown as Record<string, unknown> | null;
   const slotMultiplier = (mockCreationSnapshot?.slot_fee_multiplier as number | undefined) ?? 1;
-  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier);
+  const rawSlotFee = Math.round(
+    Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier,
+  );
+  const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
   const grossMockTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
   const mockDiscountAmount = Number(booking.discountAmount) || 0;
   const totalCharged = Math.max(0, grossMockTotal - mockDiscountAmount);
@@ -930,6 +933,8 @@ export async function mockConfirmPayment(
       mockPreservedFields[key] = mockCreationSnapshot[key];
   }
 
+  const packageUsed = (mockCreationSnapshot as unknown as BookingSnapshot | null)?.package_used;
+
   const snapshot: BookingSnapshot = {
     slot_fee_total: slotFee,
     vehicles: bookingVehicles.map((v) => ({
@@ -941,6 +946,7 @@ export async function mockConfirmPayment(
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
+    ...(packageUsed ? { package_used: packageUsed } : {}),
     ...mockPreservedFields,
   } as BookingSnapshot;
 
@@ -966,6 +972,31 @@ export async function mockConfirmPayment(
   await transition(bookingId, 'PAYMENT_CONFIRMED');
   await incrementPromoUsesCount(bookingId).catch(() => {}); // best-effort
   await createPaymentComponents(booking, snapshot, bookingVehicles);
+
+  // Deduct slots if package was used
+  if (snapshot.package_used) {
+    const qr = AppDataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await deductSlots(
+        snapshot.package_used.customer_package_id,
+        snapshot.package_used.slots_used,
+        qr,
+      );
+      await qr.commitTransaction();
+      logger.info('PaymentService', `mock deductSlots success bookingId=${bookingId}`);
+    } catch (err) {
+      await qr.rollbackTransaction();
+      logger.error(
+        'PaymentService',
+        `deductSlots failed (mock-checkout) bookingId=${bookingId}`,
+        err,
+      );
+    } finally {
+      await qr.release();
+    }
+  }
 
   Promise.all([
     emailService.sendBookingConfirmation(bookingId),

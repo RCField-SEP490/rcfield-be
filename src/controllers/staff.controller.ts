@@ -471,4 +471,55 @@ export const staffController = {
       next(err);
     }
   },
+
+  // GET /api/v1/staff/maintenance-logs [auth]
+  async getMaintenanceLogs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const data = await staffService.getMaintenanceLogs(req.user.cafeId, status, search);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/maintenance-logs [auth]
+  async createMaintenanceLog(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const data = await staffService.createMaintenanceLog(
+        req.user.userId,
+        req.user.cafeId,
+        req.body,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/staff/maintenance-logs/:id/status [auth]
+  async updateMaintenanceStatus(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.updateMaintenanceStatus(
+        req.user.userId,
+        req.params.id,
+        req.body,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

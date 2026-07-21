@@ -34,6 +34,11 @@ staffRouter.post(
 );
 staffRouter.post('/bookings/:bookingId/confirm-refund', staffController.confirmRefund);
 
+// Maintenance Logs Routes
+staffRouter.get('/maintenance-logs', staffController.getMaintenanceLogs);
+staffRouter.post('/maintenance-logs', staffController.createMaintenanceLog);
+staffRouter.patch('/maintenance-logs/:id/status', staffController.updateMaintenanceStatus);
+
 // Client Simulators
 staffRouter.post(
   '/sessions/:sessionId/simulate-check-in-response',
