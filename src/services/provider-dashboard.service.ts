@@ -159,6 +159,153 @@ export async function getProviderKpi(
   };
 }
 
+export interface RevenueTrendItem {
+  label: string;
+  slotFee: number;
+  rentalFee: number;
+  fnbPreorder: number;
+  extensionFee: number;
+  damageCharge: number;
+  packageFee: number;
+  total: number;
+}
+
+export interface RevenueBreakdownItem {
+  type: string;
+  label: string;
+  amount: number;
+}
+
+export interface BranchPerformanceItem {
+  cafeId: string;
+  cafeName: string;
+  totalRevenue: number;
+  bookingCount: number;
+}
+
+export interface RecentBookingItem {
+  bookingId: string;
+  cafeName: string;
+  customerName: string;
+  playMode: string;
+  slotStart: string;
+  status: string;
+  totalCharged: number;
+}
+
+export async function getProviderKpi(
+  providerId: string,
+  from?: string,
+  to?: string,
+  cafeId?: string,
+): Promise<ProviderKpi> {
+  const fromDate = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const toDate = to || new Date().toISOString();
+
+  // 1. Doanh thu và booking hoàn tất
+  const revenueRes = await AppDataSource.query<
+    [{ totalRevenue: string; completedBookings: string }]
+  >(
+    `SELECT
+      COALESCE(SUM(pc.amount), 0)::float AS "totalRevenue",
+      COUNT(DISTINCT CASE WHEN b.status = 'COMPLETED' THEN b.id END)::int AS "completedBookings"
+    FROM bookings b
+    JOIN payment_components pc ON pc.booking_id = b.id
+    JOIN cafes c ON c.id = b.cafe_id
+    WHERE c.provider_id = $1
+      AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.type != 'SECURITY_DEPOSIT'
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)`,
+    [providerId, fromDate, toDate, cafeId || null],
+  );
+
+  // 2. Tổng booking và cancellation rate
+  const bookingsRes = await AppDataSource.query<
+    [{ totalBookings: string; cancellationRate: string }]
+  >(
+    `SELECT
+      COUNT(b.id)::int AS "totalBookings",
+      COALESCE(
+        COUNT(CASE WHEN b.status = 'CANCELLED' THEN 1 END)::float / NULLIF(COUNT(b.id), 0),
+        0
+      )::float AS "cancellationRate"
+    FROM bookings b
+    JOIN cafes c ON c.id = b.cafe_id
+    WHERE c.provider_id = $1
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)`,
+    [providerId, fromDate, toDate, cafeId || null],
+  );
+
+  // 3. Fleet status
+  const fleetRes = await AppDataSource.query<
+    [
+      {
+        totalVehicles: string;
+        inUseVehicles: string;
+        availableVehicles: string;
+        maintenanceVehicles: string;
+      },
+    ]
+  >(
+    `SELECT
+      COUNT(v.id)::int AS "totalVehicles",
+      COUNT(CASE WHEN v.status = 'IN_USE' THEN 1 END)::int AS "inUseVehicles",
+      COUNT(CASE WHEN v.status = 'AVAILABLE' THEN 1 END)::int AS "availableVehicles",
+      COUNT(CASE WHEN v.status = 'MAINTENANCE' THEN 1 END)::int AS "maintenanceVehicles"
+    FROM vehicles v
+    JOIN cafes c ON c.id = v.cafe_id
+    WHERE c.provider_id = $1
+      AND ($2::uuid IS NULL OR v.cafe_id = $2)
+      AND v.deleted_at IS NULL`,
+    [providerId, cafeId || null],
+  );
+
+  // 4. Khách hàng mới (lần đầu đặt lịch trong khoảng thời gian này trên toàn bộ chi nhánh của provider)
+  const customersRes = await AppDataSource.query<[{ newCustomers: string }]>(
+    `SELECT COUNT(DISTINCT cb.customer_id)::int AS "newCustomers"
+     FROM (
+       SELECT b.customer_id, MIN(b.slot_start) as first_booking
+       FROM bookings b
+       JOIN cafes c ON c.id = b.cafe_id
+       WHERE c.provider_id = $1
+         AND ($2::uuid IS NULL OR b.cafe_id = $2)
+       GROUP BY b.customer_id
+     ) cb
+     WHERE cb.first_booking >= $3::timestamptz AND cb.first_booking <= $4::timestamptz`,
+    [providerId, cafeId || null, fromDate, toDate],
+  );
+
+  const totalRevenue = Number(revenueRes[0]?.totalRevenue ?? 0);
+  const completedBookings = Number(revenueRes[0]?.completedBookings ?? 0);
+  const totalBookings = Number(bookingsRes[0]?.totalBookings ?? 0);
+  const cancellationRate = Number(bookingsRes[0]?.cancellationRate ?? 0);
+
+  const totalVehicles = Number(fleetRes[0]?.totalVehicles ?? 0);
+  const inUseVehicles = Number(fleetRes[0]?.inUseVehicles ?? 0);
+  const availableVehicles = Number(fleetRes[0]?.availableVehicles ?? 0);
+  const maintenanceVehicles = Number(fleetRes[0]?.maintenanceVehicles ?? 0);
+
+  const vehicleUtilizationRate = totalVehicles > 0 ? inUseVehicles / totalVehicles : 0;
+  const newCustomers = Number(customersRes[0]?.newCustomers ?? 0);
+
+  return {
+    totalRevenue,
+    totalBookings,
+    completedBookings,
+    cancellationRate,
+    vehicleUtilizationRate,
+    totalVehicles,
+    inUseVehicles,
+    availableVehicles,
+    maintenanceVehicles,
+    newCustomers,
+  };
+}
+
 export async function getProviderRevenueTrend(
   providerId: string,
   period: 'daily' | 'weekly' | 'monthly',
@@ -215,15 +362,42 @@ export async function getProviderRevenueTrend(
     }[]
   >(query, [groupFormat, truncUnit, providerId, fromDate, toDate, cafeId || null]);
 
-  return rows.map((row) => ({
-    label: row.label,
-    slotFee: Number(row.slotFee),
-    rentalFee: Number(row.rentalFee),
-    fnbPreorder: Number(row.fnbPreorder),
-    extensionFee: Number(row.extensionFee),
-    damageCharge: Number(row.damageCharge),
-    total: Number(row.total),
-  }));
+  // Query package purchases trend
+  const pkgTrendRows = await AppDataSource.query<{ label: string; packageFee: number }[]>(
+    `SELECT
+       TO_CHAR(cp.created_at, $1) AS "label",
+       COALESCE(SUM(cp.purchased_price), 0)::float AS "packageFee"
+     FROM customer_packages cp
+     JOIN cafes c ON c.id = cp.cafe_id
+     WHERE c.provider_id = $2
+       AND cp.status IN ('ACTIVE', 'EXHAUSTED')
+       AND cp.created_at >= $3::timestamptz
+       AND cp.created_at <= $4::timestamptz
+       AND ($5::uuid IS NULL OR cp.cafe_id = $5)
+     GROUP BY TO_CHAR(cp.created_at, $1)`,
+    [groupFormat, providerId, fromDate, toDate, cafeId || null],
+  );
+  const pkgMap = new Map(pkgTrendRows.map((r) => [r.label, Number(r.packageFee)]));
+
+  return rows.map((row) => {
+    const packageFee = pkgMap.get(row.label) || 0;
+    const slotFee = Number(row.slotFee);
+    const rentalFee = Number(row.rentalFee);
+    const fnbPreorder = Number(row.fnbPreorder);
+    const extensionFee = Number(row.extensionFee);
+    const damageCharge = Number(row.damageCharge);
+
+    return {
+      label: row.label,
+      slotFee,
+      rentalFee,
+      fnbPreorder,
+      extensionFee,
+      damageCharge,
+      packageFee,
+      total: slotFee + rentalFee + fnbPreorder + extensionFee + damageCharge + packageFee,
+    };
+  });
 }
 
 export async function getProviderRevenueBreakdown(
@@ -267,11 +441,33 @@ export async function getProviderRevenueBreakdown(
     }[]
   >(query, [providerId, fromDate, toDate, cafeId || null]);
 
-  return rows.map((row) => ({
+  const items: RevenueBreakdownItem[] = rows.map((row) => ({
     type: row.type,
     label: row.label,
     amount: Number(row.amount),
   }));
+
+  // Fetch Package Purchases total revenue
+  const pkgRes = await AppDataSource.query<[{ amount: string }]>(
+    `SELECT COALESCE(SUM(cp.purchased_price), 0)::float AS "amount"
+     FROM customer_packages cp
+     JOIN cafes c ON c.id = cp.cafe_id
+     WHERE c.provider_id = $1
+       AND cp.status IN ('ACTIVE', 'EXHAUSTED')
+       AND cp.created_at >= $2::timestamptz
+       AND cp.created_at <= $3::timestamptz
+       AND ($4::uuid IS NULL OR cp.cafe_id = $4)`,
+    [providerId, fromDate, toDate, cafeId || null],
+  );
+  const pkgAmount = Number(pkgRes[0]?.amount || 0);
+
+  items.push({
+    type: 'PACKAGE_PURCHASE',
+    label: 'Phí gói',
+    amount: pkgAmount,
+  });
+
+  return items;
 }
 
 export async function getProviderBranchPerformance(
@@ -399,11 +595,20 @@ export interface TopVehicleItem {
   rentalRevenue: number;
 }
 
+export interface TopPackageItem {
+  packageId: string;
+  packageName: string;
+  cafeName: string;
+  purchaseCount: number;
+  totalRevenue: number;
+}
+
 export interface ProviderTopStats {
   topFnb: TopFnbItem[];
   topTracks: TopTrackItem[];
   topCustomers: TopCustomerItem[];
   topVehicles: TopVehicleItem[];
+  topPackages: TopPackageItem[];
 }
 
 export async function getProviderTopStats(
@@ -507,7 +712,28 @@ export async function getProviderTopStats(
     LIMIT 5
   `;
 
-  const [topFnb, topTracks, topCustomers, topVehicles] = await Promise.all([
+  // 5. Top 5 gói dịch vụ được mua nhiều nhất
+  const packagesQuery = `
+    SELECT 
+      cp.package_id AS "packageId",
+      COALESCE(cp.package_name_snapshot, p.name, 'Gói dịch vụ') AS "packageName",
+      c.name AS "cafeName",
+      COUNT(cp.id)::int AS "purchaseCount",
+      COALESCE(SUM(cp.purchased_price), 0)::float AS "totalRevenue"
+    FROM customer_packages cp
+    JOIN cafes c ON c.id = cp.cafe_id
+    LEFT JOIN packages p ON p.id = cp.package_id
+    WHERE c.provider_id = $1
+      AND cp.status IN ('ACTIVE', 'EXHAUSTED')
+      AND cp.created_at >= $2::timestamptz
+      AND cp.created_at <= $3::timestamptz
+      AND ($4::uuid IS NULL OR cp.cafe_id = $4)
+    GROUP BY cp.package_id, cp.package_name_snapshot, p.name, c.name
+    ORDER BY "purchaseCount" DESC
+    LIMIT 5
+  `;
+
+  const [topFnb, topTracks, topCustomers, topVehicles, topPackages] = await Promise.all([
     AppDataSource.query<TopFnbItem[]>(fnbQuery, [providerId, fromDate, toDate, cafeId || null]),
     AppDataSource.query<TopTrackItem[]>(tracksQuery, [
       providerId,
@@ -522,6 +748,12 @@ export async function getProviderTopStats(
       cafeId || null,
     ]),
     AppDataSource.query<TopVehicleItem[]>(vehiclesQuery, [
+      providerId,
+      fromDate,
+      toDate,
+      cafeId || null,
+    ]),
+    AppDataSource.query<TopPackageItem[]>(packagesQuery, [
       providerId,
       fromDate,
       toDate,
@@ -558,6 +790,13 @@ export async function getProviderTopStats(
       cafeName: item.cafeName,
       bookingCount: Number(item.bookingCount),
       rentalRevenue: Number(item.rentalRevenue),
+    })),
+    topPackages: topPackages.map((item) => ({
+      packageId: item.packageId,
+      packageName: item.packageName,
+      cafeName: item.cafeName,
+      purchaseCount: Number(item.purchaseCount),
+      totalRevenue: Number(item.totalRevenue),
     })),
   };
 }
