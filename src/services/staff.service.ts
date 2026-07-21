@@ -2964,6 +2964,70 @@ export async function staffConfirmCheckout(
     const newStatus = inspection.damageNoted ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
     if (sv.vehicleId) {
       await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, { status: newStatus });
+
+      if (inspection.damageNoted) {
+        await AppDataSource.query(
+          `INSERT INTO vehicle_maintenance_logs (vehicle_id, related_session_id, type, description, cost, status, performed_at)
+           VALUES ($1, $2, 'REPAIR', $3, 0, 'PENDING_REPAIR', NOW())`,
+          [
+            sv.vehicleId,
+            sessionId,
+            inspection.damageDescription || 'Xe ghi nhận hư hỏng sau Check-out.',
+          ],
+        );
+
+        try {
+          const [vehInfo] = await AppDataSource.query<
+            {
+              vehicleIdentifier: string;
+              categoryName: string | null;
+              cafeName: string;
+              providerId: string;
+            }[]
+          >(
+            `SELECT v.identifier AS "vehicleIdentifier", vc.name AS "categoryName", c.name AS "cafeName", c.provider_id AS "providerId"
+             FROM vehicles v
+             JOIN cafes c ON v.cafe_id = c.id
+             LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
+             WHERE v.id = $1`,
+            [sv.vehicleId],
+          );
+
+          if (vehInfo && vehInfo.providerId) {
+            const vehName = vehInfo.categoryName
+              ? `${vehInfo.categoryName} (${vehInfo.vehicleIdentifier})`
+              : vehInfo.vehicleIdentifier;
+
+            const notifTitle = 'Cảnh báo xe cần bảo trì';
+            const notifMessage = `Xe ${vehName} thuộc cơ sở ${vehInfo.cafeName} vừa ghi nhận hư hỏng cần bảo trì từ Check-out.`;
+
+            await createNotification(
+              vehInfo.providerId,
+              NotificationType.SYSTEM,
+              notifTitle,
+              notifMessage,
+              {
+                vehicleId: sv.vehicleId,
+                vehicleName: vehName,
+                cafeName: vehInfo.cafeName,
+                status: 'PENDING_REPAIR',
+                route: '/provider/cafe-vehicles',
+              },
+            );
+
+            wsService.pushToUser(vehInfo.providerId, 'VEHICLE_MAINTENANCE_CREATED', {
+              title: notifTitle,
+              message: notifMessage,
+              vehicleId: sv.vehicleId,
+              vehicleName: vehName,
+              cafeName: vehInfo.cafeName,
+              route: '/provider/cafe-vehicles',
+            });
+          }
+        } catch (err) {
+          logger.error('Staff', 'Failed to create provider maintenance alert notification', err);
+        }
+      }
     }
   }
 
@@ -3483,6 +3547,17 @@ export async function createWalkInBooking(
   return createWalkInBookingService(staffId, cafeId, body);
 }
 
+const PART_TYPE_VIETNAMESE: Record<string, string> = {
+  TIRE_WHEEL: 'Bánh xe / Lốp',
+  SPOILER: 'Cánh gió',
+  CHASSIS: 'Khung gầm',
+  MOTOR: 'Motor / Động cơ',
+  SHELL: 'Vỏ nhựa (Shell)',
+  SERVO: 'Servo / Tay lái',
+  REMOTE: 'Remote / Điều khiển',
+  OTHER: 'Khác',
+};
+
 export interface StaffMaintenanceLogItem {
   logId: string;
   logCode: string;
@@ -3499,7 +3574,7 @@ export interface StaffMaintenanceLogItem {
   staffNotes: string | null;
   cost: number;
   performedBy: string | null;
-  status: 'SENT_TO_PROVIDER' | 'RECEIVED' | 'IN_PROGRESS' | 'COMPLETED';
+  status: 'SENT_TO_PROVIDER' | 'PENDING_REPAIR' | 'RECEIVED' | 'COMPLETED';
   createdAt: string;
   completedAt: string | null;
   inspectionPhotos?: { angle: string; url: string }[];
@@ -3512,7 +3587,7 @@ export async function getMaintenanceLogs(
   search?: string,
 ): Promise<StaffMaintenanceLogItem[]> {
   await AppDataSource.query(
-    `ALTER TABLE vehicle_maintenance_logs ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'SENT_TO_PROVIDER'`,
+    `ALTER TABLE vehicle_maintenance_logs ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'PENDING_REPAIR'`,
   );
 
   const params: any[] = [cafeId];
@@ -3538,7 +3613,10 @@ export async function getMaintenanceLogs(
   const rows = await AppDataSource.query<any[]>(
     `SELECT 
        COALESCE(vml.id::text, v.id::text) AS "logId",
-       COALESCE(vml.status, CASE WHEN v.status = 'AVAILABLE' THEN 'COMPLETED' ELSE 'SENT_TO_PROVIDER' END) AS "status",
+       COALESCE(
+         CASE WHEN vml.status = 'SENT_TO_PROVIDER' THEN 'PENDING_REPAIR' ELSE vml.status END,
+         CASE WHEN v.status = 'AVAILABLE' THEN 'COMPLETED' ELSE 'PENDING_REPAIR' END
+       ) AS "status",
        COALESCE(vml.type, 'REPAIR') AS "type",
        COALESCE(vml.description, 'Xe ghi nhận hư hỏng cần bảo trì.') AS "issueDescription",
        COALESCE(vml.cost, 0) AS "cost",
@@ -3606,7 +3684,10 @@ export async function getMaintenanceLogs(
         `SELECT item_key AS "itemKey", item_label AS "itemLabel", status, note FROM inspection_checklists WHERE inspection_id = $1 AND status != 'OK'`,
         [row.inspectionId],
       );
-      damagedChecklist = checklistRows;
+      damagedChecklist = checklistRows.map((c) => ({
+        ...c,
+        itemLabel: PART_TYPE_VIETNAMESE[c.itemKey] || c.itemLabel || c.itemKey,
+      }));
 
       const lineItemsRows = await AppDataSource.query<any[]>(
         `SELECT part_type AS "partType", custom_part_name AS "customPartName", parts_price AS "partsPrice", labor_price AS "laborPrice" FROM damage_line_items WHERE inspection_id = $1 AND deleted_at IS NULL`,
@@ -3627,9 +3708,12 @@ export async function getMaintenanceLogs(
     if (damagedChecklist.length > 0 || damageLineItems.length > 0 || inspectionNote) {
       const partsSummary = [
         ...damagedChecklist.map(
-          (c) => `${c.itemLabel} (${c.status}${c.note ? `: ${c.note}` : ''})`,
+          (c) =>
+            `${PART_TYPE_VIETNAMESE[c.itemKey] || c.itemLabel || c.itemKey} (${c.status === 'BROKEN' ? 'Hỏng nặng' : c.status === 'SCRATCHED' ? 'Trầy xước' : c.status}${c.note ? `: ${c.note}` : ''})`,
         ),
-        ...damageLineItems.map((l) => `${l.customPartName || l.partType}`),
+        ...damageLineItems.map(
+          (l) => `${l.customPartName || PART_TYPE_VIETNAMESE[l.partType] || l.partType}`,
+        ),
       ].join(', ');
 
       issueDescription = `[Ghi nhận hư hỏng từ Check-out của Staff] Linh kiện hư hại: ${partsSummary || inspectionNote || 'Ghi nhận hư hỏng sau phiên Check-out.'}`;
@@ -3698,7 +3782,7 @@ export async function createMaintenanceLog(
 
     const [log] = await manager.query<{ id: string; created_at: Date }[]>(
       `INSERT INTO vehicle_maintenance_logs (vehicle_id, type, description, cost, performed_by, status, performed_at)
-       VALUES ($1, 'REPAIR', $2, $3, $4, 'SENT_TO_PROVIDER', NOW())
+       VALUES ($1, 'REPAIR', $2, $3, $4, 'PENDING_REPAIR', NOW())
        RETURNING id, created_at`,
       [vehicleId, issueDescription, cost, staffId],
     );
@@ -3709,7 +3793,7 @@ export async function createMaintenanceLog(
       issueDescription,
       cost,
       performedBy: performedBy || 'Staff',
-      status: 'SENT_TO_PROVIDER',
+      status: 'PENDING_REPAIR',
       createdAt: log.created_at.toISOString(),
     };
   });
@@ -3732,7 +3816,7 @@ export async function updateMaintenanceStatus(
   staffId: string,
   logId: string,
   body: {
-    status: 'SENT_TO_PROVIDER' | 'RECEIVED' | 'IN_PROGRESS' | 'COMPLETED';
+    status: 'SENT_TO_PROVIDER' | 'PENDING_REPAIR' | 'RECEIVED' | 'COMPLETED';
     cost?: number;
     staffNotes?: string;
   },
@@ -3762,6 +3846,16 @@ export async function updateMaintenanceStatus(
         `UPDATE vehicle_maintenance_logs SET status = $1 ${costUpdate} WHERE id = $2`,
         params,
       );
+      await manager.query(
+        `UPDATE vehicle_maintenance_logs SET status = $1 WHERE vehicle_id = $2 AND status != 'COMPLETED'`,
+        [status, targetVehicleId],
+      );
+    } else {
+      await manager.query(
+        `INSERT INTO vehicle_maintenance_logs (vehicle_id, type, description, cost, performed_by, status, performed_at)
+         VALUES ($1, 'REPAIR', 'Xe ghi nhận bảo trì từ hệ thống', $2, $3, $4, NOW())`,
+        [targetVehicleId, cost || 0, staffId, status],
+      );
     }
 
     if (status === 'COMPLETED') {
@@ -3769,11 +3863,125 @@ export async function updateMaintenanceStatus(
         `UPDATE vehicles SET status = 'AVAILABLE', last_maintenance_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [targetVehicleId],
       );
+
+      const [vehInfo] = await manager.query<
+        {
+          vehicleIdentifier: string;
+          categoryName: string | null;
+          cafeName: string;
+          providerId: string;
+        }[]
+      >(
+        `SELECT v.identifier AS "vehicleIdentifier", vc.name AS "categoryName", c.name AS "cafeName", c.provider_id AS "providerId"
+         FROM vehicles v
+         JOIN cafes c ON v.cafe_id = c.id
+         LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
+         WHERE v.id = $1`,
+        [targetVehicleId],
+      );
+
+      if (vehInfo && vehInfo.providerId) {
+        const vehicleName = vehInfo.categoryName
+          ? `${vehInfo.categoryName} (${vehInfo.vehicleIdentifier})`
+          : vehInfo.vehicleIdentifier;
+
+        const notifTitle = 'Bảo trì xe thành công';
+        const notifMessage = `Xe ${vehicleName} thuộc cơ sở ${vehInfo.cafeName} đã được bảo trì thành công.`;
+
+        try {
+          await createNotification(
+            vehInfo.providerId,
+            NotificationType.SYSTEM,
+            notifTitle,
+            notifMessage,
+            {
+              vehicleId: targetVehicleId,
+              vehicleName,
+              cafeName: vehInfo.cafeName,
+              status: 'COMPLETED',
+              route: '/provider/cafe-vehicles',
+            },
+          );
+
+          wsService.pushToUser(vehInfo.providerId, 'MAINTENANCE_COMPLETED_NOTIFICATION', {
+            title: notifTitle,
+            message: notifMessage,
+            vehicleName,
+            cafeName: vehInfo.cafeName,
+            vehicleId: targetVehicleId,
+            route: '/provider/cafe-vehicles',
+          });
+        } catch (err) {
+          logger.error(
+            'Staff',
+            'Failed to create provider maintenance completion notification',
+            err,
+          );
+        }
+      }
     } else {
       await manager.query(
         `UPDATE vehicles SET status = 'MAINTENANCE', updated_at = NOW() WHERE id = $1`,
         [targetVehicleId],
       );
+
+      if (status === 'RECEIVED') {
+        const [vehInfo] = await manager.query<
+          {
+            vehicleIdentifier: string;
+            categoryName: string | null;
+            cafeName: string;
+            providerId: string;
+          }[]
+        >(
+          `SELECT v.identifier AS "vehicleIdentifier", vc.name AS "categoryName", c.name AS "cafeName", c.provider_id AS "providerId"
+           FROM vehicles v
+           JOIN cafes c ON v.cafe_id = c.id
+           LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
+           WHERE v.id = $1`,
+          [targetVehicleId],
+        );
+
+        if (vehInfo && vehInfo.providerId) {
+          const vehicleName = vehInfo.categoryName
+            ? `${vehInfo.categoryName} (${vehInfo.vehicleIdentifier})`
+            : vehInfo.vehicleIdentifier;
+
+          const notifTitle = 'Đã nhận xe bảo trì';
+          const notifMessage = `Xe ${vehicleName} thuộc cơ sở ${vehInfo.cafeName} đã được nhận để tiến hành sửa chữa.`;
+
+          try {
+            await createNotification(
+              vehInfo.providerId,
+              NotificationType.SYSTEM,
+              notifTitle,
+              notifMessage,
+              {
+                vehicleId: targetVehicleId,
+                vehicleName,
+                cafeName: vehInfo.cafeName,
+                status: 'RECEIVED',
+                route: '/provider/cafe-vehicles',
+              },
+            );
+
+            wsService.pushToUser(vehInfo.providerId, 'MAINTENANCE_LOG_UPDATED', {
+              title: notifTitle,
+              message: notifMessage,
+              vehicleName,
+              cafeName: vehInfo.cafeName,
+              vehicleId: targetVehicleId,
+              route: '/provider/cafe-vehicles',
+            });
+          } catch (err) {
+            logger.error(
+              'Staff',
+              'Failed to create provider maintenance received notification',
+              err,
+            );
+          }
+        }
+      }
     }
   });
 
