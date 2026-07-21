@@ -222,13 +222,15 @@ export const bookingController = {
       );
       void vehicleIds; // suppress unused warning
 
-      // Enrich FnbOrder items with menu item names across all orders
+      // Enrich FnbOrder items with menu item names across all orders (exclude CANCELLED)
       let fnbItems: (FnbOrderItem & { itemName: string | null })[] = [];
       let mergedFnbOrder = null;
 
-      if (fnbOrders.length > 0) {
+      const activeFnbOrders = fnbOrders.filter((o) => o.status !== 'CANCELLED');
+
+      if (activeFnbOrders.length > 0) {
         const allRawItems: FnbOrderItem[] = [];
-        for (const order of fnbOrders) {
+        for (const order of activeFnbOrders) {
           const items = await AppDataSource.getRepository(FnbOrderItem).find({
             where: { fnbOrderId: order.id },
           });
@@ -251,10 +253,10 @@ export const bookingController = {
         }));
 
         mergedFnbOrder = {
-          id: fnbOrders[0].id,
+          id: activeFnbOrders[0].id,
           bookingId,
           orderType: 'MERGED',
-          totalAmount: fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
+          totalAmount: activeFnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
           status: 'CONFIRMED',
           items: fnbItems,
         };
