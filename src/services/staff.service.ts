@@ -1716,6 +1716,25 @@ export async function submitInspection(
         await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
           status: VehicleStatus.IN_USE,
         });
+        // Emit realtime cập nhật trạng thái xe cho provider
+        try {
+          const [vehMeta] = await AppDataSource.query<
+            { cafe_id: string; identifier: string; provider_id: string }[]
+          >(
+            `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
+            [sv.vehicleId],
+          );
+          if (vehMeta) {
+            wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
+              vehicleId: sv.vehicleId,
+              cafeId: vehMeta.cafe_id,
+              identifier: vehMeta.identifier,
+              status: 'IN_USE',
+            });
+          }
+        } catch {
+          /* non-critical */
+        }
       }
     }
 
@@ -1763,52 +1782,6 @@ export async function submitInspection(
           sv.returnedAt = new Date();
         }
         await svRepo.save(sv);
-
-        if (damageFlagged && sv.vehicleId) {
-          await AppDataSource.query(
-            `UPDATE vehicles SET status = 'MAINTENANCE', updated_at = NOW() WHERE id = $1`,
-            [sv.vehicleId],
-          );
-
-          const totalCost = Array.isArray(damageLineItems)
-            ? damageLineItems.reduce(
-                (sum, item) =>
-                  sum + (Number(item.partsPrice) || 0) + (Number(item.laborPrice) || 0),
-                0,
-              )
-            : 0;
-
-          const [mLog] = await AppDataSource.query<{ id: string }[]>(
-            `INSERT INTO vehicle_maintenance_logs (vehicle_id, type, description, cost, performed_by, related_session_id, performed_at)
-             VALUES ($1, 'REPAIR', $2, $3, $4, $5, NOW())
-             RETURNING id`,
-            [
-              sv.vehicleId,
-              staffNotes || 'Xe ghi nhận hư hỏng sau Check-out Inspection.',
-              totalCost,
-              staffUserId,
-              sessionId,
-            ],
-          );
-
-          try {
-            const [vehInfo] = await AppDataSource.query<{ cafe_id: string; identifier: string }[]>(
-              `SELECT cafe_id, identifier FROM vehicles WHERE id = $1`,
-              [sv.vehicleId],
-            );
-            if (vehInfo?.cafe_id) {
-              wsService.pushToCafe(vehInfo.cafe_id, 'VEHICLE_MAINTENANCE_CREATED', {
-                logId: mLog?.id,
-                vehicleId: sv.vehicleId,
-                vehicleName: vehInfo.identifier,
-                issueDescription: staffNotes || 'Ghi nhận hư hỏng sau Check-out.',
-                route: '/staff/maintenance',
-              });
-            }
-          } catch (wsErr) {
-            logger.error('Staff', 'Failed to broadcast maintenance event', wsErr);
-          }
-        }
       }
     }
 
@@ -2732,6 +2705,10 @@ export async function customerConfirmInspection(
       }
     }
 
+    if (inspection.damageNoted) {
+      await handleVehicleCheckoutMaintenance(sessionId, inspection, session.checkedOutBy);
+    }
+
     await settleSessionCheckoutBilling(sessionId, inspection);
 
     const allSessions = await AppDataSource.getRepository(Session).find({
@@ -2911,6 +2888,104 @@ export async function customerRespondExtension(
   };
 }
 
+async function handleVehicleCheckoutMaintenance(
+  sessionId: string,
+  inspection: Inspection,
+  staffUserId?: string | null,
+): Promise<void> {
+  if (!inspection.damageNoted) return;
+
+  const lineItems = await AppDataSource.getRepository(DamageLineItem).find({
+    where: { inspectionId: inspection.id },
+  });
+  const totalCost = lineItems.reduce(
+    (sum, item) => sum + (Number(item.partsPrice) || 0) + (Number(item.laborPrice) || 0),
+    0,
+  );
+
+  const svs = await AppDataSource.getRepository(SessionVehicle).find({ where: { sessionId } });
+  for (const sv of svs) {
+    if (sv.vehicleId) {
+      await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+        status: VehicleStatus.MAINTENANCE,
+      });
+
+      await AppDataSource.query<{ id: string }[]>(
+        `INSERT INTO vehicle_maintenance_logs (vehicle_id, related_session_id, type, description, cost, status, performed_by, performed_at)
+         VALUES ($1, $2, 'REPAIR', $3, $4, 'PENDING_REPAIR', $5, NOW())
+         RETURNING id`,
+        [
+          sv.vehicleId,
+          sessionId,
+          inspection.damageDescription || 'Xe ghi nhận hư hỏng sau Check-out.',
+          totalCost,
+          staffUserId || null,
+        ],
+      );
+
+      try {
+        const [vehInfo] = await AppDataSource.query<
+          {
+            vehicleIdentifier: string;
+            categoryName: string | null;
+            cafeName: string;
+            providerId: string;
+            cafeId: string;
+          }[]
+        >(
+          `SELECT v.identifier AS "vehicleIdentifier", vc.name AS "categoryName", c.name AS "cafeName", c.provider_id AS "providerId", c.id AS "cafeId"
+           FROM vehicles v
+           JOIN cafes c ON v.cafe_id = c.id
+           LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
+           WHERE v.id = $1`,
+          [sv.vehicleId],
+        );
+
+        if (vehInfo && vehInfo.providerId) {
+          const vehName = vehInfo.categoryName
+            ? `${vehInfo.categoryName} (${vehInfo.vehicleIdentifier})`
+            : vehInfo.vehicleIdentifier;
+
+          const notifTitle = 'Cảnh báo xe cần bảo trì';
+          const notifMessage = `Xe ${vehName} thuộc cơ sở ${vehInfo.cafeName} vừa ghi nhận hư hỏng cần bảo trì từ Check-out.`;
+
+          await createNotification(
+            vehInfo.providerId,
+            NotificationType.SYSTEM,
+            notifTitle,
+            notifMessage,
+            {
+              vehicleId: sv.vehicleId,
+              vehicleName: vehName,
+              cafeName: vehInfo.cafeName,
+              status: 'PENDING_REPAIR',
+              route: '/provider/cafe-vehicles',
+            },
+          );
+
+          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_MAINTENANCE_CREATED', {
+            title: notifTitle,
+            message: notifMessage,
+            vehicleId: sv.vehicleId,
+            vehicleName: vehName,
+            cafeName: vehInfo.cafeName,
+            route: '/provider/cafe-vehicles',
+          });
+
+          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_STATUS_CHANGED', {
+            vehicleId: sv.vehicleId,
+            cafeId: vehInfo.cafeId,
+            identifier: vehInfo.vehicleIdentifier,
+            status: 'MAINTENANCE',
+          });
+        }
+      } catch (err) {
+        logger.error('Staff', 'Failed to create provider maintenance alert notification', err);
+      }
+    }
+  }
+}
+
 // ── STAFF CONFIRM CHECKOUT ────────────────────────────────────────────────────
 
 export async function staffConfirmCheckout(
@@ -2964,71 +3039,12 @@ export async function staffConfirmCheckout(
     const newStatus = inspection.damageNoted ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
     if (sv.vehicleId) {
       await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, { status: newStatus });
-
-      if (inspection.damageNoted) {
-        await AppDataSource.query(
-          `INSERT INTO vehicle_maintenance_logs (vehicle_id, related_session_id, type, description, cost, status, performed_at)
-           VALUES ($1, $2, 'REPAIR', $3, 0, 'PENDING_REPAIR', NOW())`,
-          [
-            sv.vehicleId,
-            sessionId,
-            inspection.damageDescription || 'Xe ghi nhận hư hỏng sau Check-out.',
-          ],
-        );
-
-        try {
-          const [vehInfo] = await AppDataSource.query<
-            {
-              vehicleIdentifier: string;
-              categoryName: string | null;
-              cafeName: string;
-              providerId: string;
-            }[]
-          >(
-            `SELECT v.identifier AS "vehicleIdentifier", vc.name AS "categoryName", c.name AS "cafeName", c.provider_id AS "providerId"
-             FROM vehicles v
-             JOIN cafes c ON v.cafe_id = c.id
-             LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
-             WHERE v.id = $1`,
-            [sv.vehicleId],
-          );
-
-          if (vehInfo && vehInfo.providerId) {
-            const vehName = vehInfo.categoryName
-              ? `${vehInfo.categoryName} (${vehInfo.vehicleIdentifier})`
-              : vehInfo.vehicleIdentifier;
-
-            const notifTitle = 'Cảnh báo xe cần bảo trì';
-            const notifMessage = `Xe ${vehName} thuộc cơ sở ${vehInfo.cafeName} vừa ghi nhận hư hỏng cần bảo trì từ Check-out.`;
-
-            await createNotification(
-              vehInfo.providerId,
-              NotificationType.SYSTEM,
-              notifTitle,
-              notifMessage,
-              {
-                vehicleId: sv.vehicleId,
-                vehicleName: vehName,
-                cafeName: vehInfo.cafeName,
-                status: 'PENDING_REPAIR',
-                route: '/provider/cafe-vehicles',
-              },
-            );
-
-            wsService.pushToUser(vehInfo.providerId, 'VEHICLE_MAINTENANCE_CREATED', {
-              title: notifTitle,
-              message: notifMessage,
-              vehicleId: sv.vehicleId,
-              vehicleName: vehName,
-              cafeName: vehInfo.cafeName,
-              route: '/provider/cafe-vehicles',
-            });
-          }
-        } catch (err) {
-          logger.error('Staff', 'Failed to create provider maintenance alert notification', err);
-        }
-      }
     }
+  }
+
+  // Xử lý bảo trì, tạo log và phát WS chỉ khi đã bấm XÁC NHẬN checkout
+  if (inspection.damageNoted) {
+    await handleVehicleCheckoutMaintenance(sessionId, inspection, staffUserId);
   }
 
   await settleSessionCheckoutBilling(sessionId, inspection);
@@ -3614,7 +3630,7 @@ export async function getMaintenanceLogs(
     `SELECT 
        COALESCE(vml.id::text, v.id::text) AS "logId",
        COALESCE(
-         CASE WHEN vml.status = 'SENT_TO_PROVIDER' THEN 'PENDING_REPAIR' ELSE vml.status END,
+         vml.status,
          CASE WHEN v.status = 'AVAILABLE' THEN 'COMPLETED' ELSE 'PENDING_REPAIR' END
        ) AS "status",
        COALESCE(vml.type, 'REPAIR') AS "type",
@@ -3719,6 +3735,26 @@ export async function getMaintenanceLogs(
       issueDescription = `[Ghi nhận hư hỏng từ Check-out của Staff] Linh kiện hư hại: ${partsSummary || inspectionNote || 'Ghi nhận hư hỏng sau phiên Check-out.'}`;
     }
 
+    const mergedChecklist = [
+      ...damagedChecklist,
+      ...damageLineItems.map((l) => {
+        const partsText =
+          l.partsPrice > 0
+            ? `Phạt đền bù linh kiện: ${Number(l.partsPrice).toLocaleString('vi-VN')} đ`
+            : '';
+        const laborText =
+          l.laborPrice > 0 ? `Phí công sửa: ${Number(l.laborPrice).toLocaleString('vi-VN')} đ` : '';
+        const noteText = [partsText, laborText].filter(Boolean).join(' | ');
+
+        return {
+          itemKey: l.partType,
+          itemLabel: l.customPartName || PART_TYPE_VIETNAMESE[l.partType] || l.partType,
+          status: 'BROKEN',
+          note: noteText,
+        };
+      }),
+    ];
+
     result.push({
       logId: row.logId,
       logCode: `MNT-${row.logId.substring(0, 4).toUpperCase()}`,
@@ -3734,14 +3770,14 @@ export async function getMaintenanceLogs(
       categoryName: row.categoryName,
       categoryTier: row.categoryTier,
       issueDescription,
-      staffNotes: null,
+      staffNotes: inspectionNote || null,
       cost: Number(row.cost || 0),
       performedBy: row.performedBy,
       status: row.status as any,
       createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString(),
       completedAt: row.status === 'COMPLETED' ? new Date().toISOString() : null,
       inspectionPhotos: photos,
-      damagedChecklist,
+      damagedChecklist: mergedChecklist,
     });
   }
 
@@ -3837,18 +3873,18 @@ export async function updateMaintenanceStatus(
   await AppDataSource.transaction(async (manager) => {
     if (log) {
       let costUpdate = '';
-      const params: any[] = [status, log.id];
+      const params: any[] = [status, staffId, log.id];
       if (cost !== undefined) {
         params.push(cost);
         costUpdate = `, cost = $${params.length}`;
       }
       await manager.query(
-        `UPDATE vehicle_maintenance_logs SET status = $1 ${costUpdate} WHERE id = $2`,
+        `UPDATE vehicle_maintenance_logs SET status = $1, performed_by = $2 ${costUpdate} WHERE id = $3`,
         params,
       );
       await manager.query(
-        `UPDATE vehicle_maintenance_logs SET status = $1 WHERE vehicle_id = $2 AND status != 'COMPLETED'`,
-        [status, targetVehicleId],
+        `UPDATE vehicle_maintenance_logs SET status = $1, performed_by = $2 WHERE vehicle_id = $3 AND status != 'COMPLETED'`,
+        [status, staffId, targetVehicleId],
       );
     } else {
       await manager.query(
@@ -3910,6 +3946,12 @@ export async function updateMaintenanceStatus(
             cafeName: vehInfo.cafeName,
             vehicleId: targetVehicleId,
             route: '/provider/cafe-vehicles',
+          });
+          // Realtime cập nhật trạng thái xe về AVAILABLE cho provider
+          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_STATUS_CHANGED', {
+            vehicleId: targetVehicleId,
+            identifier: vehInfo.vehicleIdentifier,
+            status: 'AVAILABLE',
           });
         } catch (err) {
           logger.error(
