@@ -15,6 +15,13 @@ bookingRouter.post(
   bookingController.createBooking,
 );
 
+bookingRouter.post(
+  '/contest-rental',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  bookingController.createContestRental,
+);
+
 bookingRouter.get(
   '/',
   authenticate,

@@ -15,6 +15,7 @@ import {
   BookingSource,
   BookingStatus,
   ContestRegistrationStatus,
+  ContestStatus,
   VehicleStatus,
 } from '../types';
 import { createBooking, CreateBookingBody } from './booking.service';
@@ -120,6 +121,8 @@ export type ContestRentalSlotInput = {
 export type CreateContestRentalBookingResult = {
   booking_id: string;
   vehicle_id: string;
+  status: BookingStatus;
+  payment_expires_at: Date;
   total_amount: number;
   breakdown: {
     slot_fee: number;
@@ -152,6 +155,31 @@ export type ContestRentalOptions = {
     compatible_track_types: string[];
   }>;
 };
+
+/**
+ * WF-A entry point for POST /bookings/contest-rental: validates that the contest
+ * exists and is open for registration (same rule as createContestRegistration),
+ * then delegates to createContestRentalBooking. Does NOT create a registration —
+ * signing up for the contest is a separate step that links booking_id afterwards.
+ */
+export async function bookContestRental(
+  contestId: string,
+  customerId: string,
+  slot: ContestRentalSlotInput,
+): Promise<CreateContestRentalBookingResult & { contest_id: string }> {
+  const contest = await AppDataSource.getRepository(Contest).findOne({
+    where: { id: contestId },
+  });
+  if (!contest) {
+    throw new AppError('Contest không tồn tại', 404, 'CONTEST_NOT_FOUND');
+  }
+  if (contest.status !== ContestStatus.OPEN) {
+    throw new AppError('Contest chưa mở đăng ký', 400, 'CONTEST_NOT_OPEN');
+  }
+
+  const result = await createContestRentalBooking(contest, customerId, slot);
+  return { ...result, contest_id: contest.id };
+}
 
 export async function createContestRentalBooking(
   contest: Contest,
@@ -234,6 +262,8 @@ export async function createContestRentalBooking(
   return {
     booking_id: bookingResult.booking_id,
     vehicle_id: vehicle.id,
+    status: bookingResult.status,
+    payment_expires_at: bookingResult.payment_expires_at,
     total_amount: bookingResult.total_amount,
     breakdown: {
       slot_fee: bookingResult.breakdown.slot_fee,

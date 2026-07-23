@@ -4,11 +4,13 @@ import { AppDataSource } from '../config/database';
 import { AppError, AuthRequest, UserRole, SessionStatus, InspectionType } from '../types';
 import {
   CreateBookingSchema,
+  CreateContestRentalBookingSchema,
   CancelBookingSchema,
   ListMyBookingsSchema,
   ListCafeBookingsSchema,
 } from '../validate';
 import * as bookingService from '../services/booking.service';
+import { bookContestRental } from '../services/contest-rental.service';
 import {
   createCheckoutUrl,
   mockConfirmPayment,
@@ -40,6 +42,23 @@ export const bookingController = {
     try {
       const body = CreateBookingSchema.parse(req.body);
       const result = await bookingService.createBooking(req.user!.userId, body);
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/contest-rental  [auth CUSTOMER]  (WF-A)
+  async createContestRental(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = CreateContestRentalBookingSchema.parse(req.body);
+      const result = await bookContestRental(body.contest_id, req.user!.userId, {
+        cafe_id: body.cafe_id,
+        slot_start: body.slot_start,
+        slot_end: body.slot_end,
+        track_config_id: body.track_config_id ?? null,
+        vehicle_catalog_id: body.vehicle_catalog_id ?? null,
+      });
       res.status(201).json({ success: true, data: result });
     } catch (err) {
       next(err);
