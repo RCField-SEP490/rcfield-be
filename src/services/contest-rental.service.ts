@@ -4,7 +4,7 @@ import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { Contest } from '../models/contest.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { Vehicle } from '../models/vehicle.entity';
-import { AppError, BookingMode, BookingStatus, VehicleStatus } from '../types';
+import { AppError, BookingMode, BookingSource, BookingStatus, VehicleStatus } from '../types';
 import { createBooking, CreateBookingBody } from './booking.service';
 import { ContestCafe } from '../models/contest-cafe.entity';
 
@@ -111,6 +111,7 @@ export async function createContestRentalBooking(
     track_config_id: trackConfigId,
     track_type_id: trackTypeId ?? contest.trackTypeId ?? undefined,
     contest_id: contest.id,
+    source: BookingSource.CONTEST,
   };
 
   const bookingResult = await createBooking(customerId, bookingBody);

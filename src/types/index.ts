@@ -70,6 +70,7 @@ export enum BookingMode {
 export enum BookingSource {
   APP = 'APP',
   STAFF_MANUAL = 'STAFF_MANUAL',
+  CONTEST = 'CONTEST',
 }
 
 export enum BookingStatus {

@@ -61,6 +61,9 @@ export class Booking {
   @Column({ name: 'promotion_id', type: 'uuid', nullable: true })
   promotionId: string | null;
 
+  @Column({ name: 'contest_id', type: 'uuid', nullable: true })
+  contestId: string | null;
+
   @Column({ name: 'discount_amount', type: 'numeric', precision: 15, scale: 2, default: 0 })
   discountAmount: number;
 
