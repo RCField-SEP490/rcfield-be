@@ -110,6 +110,7 @@ export interface TodayBookingItem {
   bookingMode: 'SINGLE' | 'PACKAGE' | 'SUBSCRIPTION';
   playMode: BookingMode;
   source: BookingSource;
+  contestId: string | null;
   status: BookingStatus;
   slotStart: string;
   slotEnd: string;
@@ -521,6 +522,7 @@ export async function getBookingsByDate(
        b.status,
        b.play_mode,
        b.source,
+       b.contest_id,
        b.slot_start,
        b.slot_end,
        b.slot_count,
@@ -631,6 +633,7 @@ export async function getBookingsByDate(
       bookingMode: 'SINGLE',
       playMode: row.play_mode,
       source: row.source,
+      contestId: row.contest_id ?? null,
       status: row.status,
       slotStart: row.slot_start.toISOString(),
       slotEnd: row.slot_end.toISOString(),
@@ -1555,6 +1558,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     cafeName: cafe.name,
     cafeAddress: cafe.address,
     bookingSource: booking.source,
+    contestId: booking.contestId ?? null,
     playMode: booking.playMode,
     status: session.status,
     staffName: staffUser?.full_name || 'Nhân viên trực ca',
