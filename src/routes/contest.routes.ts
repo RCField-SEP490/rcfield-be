@@ -70,6 +70,13 @@ contestRouter.post(
   contestController.generateMatches,
 );
 contestRouter.post(
+  '/contests/:contestId/matches/generate-final-bracket',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.generateFinalBracket,
+);
+contestRouter.post(
   '/contests/:contestId/leaderboard/publish',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),

@@ -25,7 +25,12 @@ import {
   isStaffAssignedToContest,
   writeContestAudit,
 } from './contest.helpers';
-import { ContestFormatEngine, getContestFormatEngine } from './contest-format.engine';
+import {
+  ContestFormatEngine,
+  GeneratedMatch,
+  QualifyingFinalEngine,
+  getContestFormatEngine,
+} from './contest-format.engine';
 
 type GenerateMatchesBody = {
   cafe_id: string;
@@ -485,64 +490,13 @@ export async function listContestMatches(
   });
 }
 
-export async function generateContestMatches(
+async function persistGeneratedMatches(
   contestId: string,
-  viewer: Viewer,
-  body: GenerateMatchesBody,
-) {
-  const contest = await assertContestOperator(contestId, viewer);
-  await ensureContestRuntimeEditable(contest);
-  await validateContestCafe(contestId, body.cafe_id);
-
-  if (viewer.role === UserRole.STAFF) {
-    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, body.cafe_id);
-    if (!assignedToCafe) {
-      throw new AppError('Staff không được tạo runtime ở chi nhánh này', 403, 'FORBIDDEN');
-    }
-  }
-
-  const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
+  generatedMatches: GeneratedMatch[],
+  options: { cafeId: string; trackConfigId?: string | null; createdBy: string },
+): Promise<ContestMatch[]> {
   const matchRepo = AppDataSource.getRepository(ContestMatch);
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
-
-  const existingMatches = await matchRepo.find({ where: { contestId } });
-  if (
-    existingMatches.some((match) =>
-      [ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status),
-    )
-  ) {
-    throw new AppError(
-      'Không thể tạo lại bracket khi đã có match đang diễn ra hoặc đã hoàn tất',
-      409,
-      'CONTEST_RUNTIME_LOCKED',
-    );
-  }
-
-  const orderedRegistrations =
-    getSeedingMode(contest, body.seeding_mode) === 'CHECK_IN_ORDER'
-      ? [...registrations].sort((a, b) => {
-          const aTime = a.checkedInAt?.getTime() ?? a.createdAt.getTime();
-          const bTime = b.checkedInAt?.getTime() ?? b.createdAt.getTime();
-          return aTime - bTime;
-        })
-      : body.registration_ids
-          .map((registrationId) => registrations.find((item) => item.id === registrationId)!)
-          .filter(Boolean);
-
-  await clearExistingRuntime(contestId);
-
-  const engine = getEngine(contest);
-  const driversPerMatch = Math.max(1, getDriversPerMatch(contest, body.drivers_per_match));
-  const generatedMatches = engine.generateMatches({
-    contest,
-    cafeId: body.cafe_id,
-    trackConfigId: body.track_config_id,
-    registrations,
-    registrationOrder: orderedRegistrations.map((item) => item.id),
-    driversPerMatch,
-    seedingMode: getSeedingMode(contest, body.seeding_mode),
-    createdBy: viewer.userId,
-  });
 
   const roundMap = new Map<number, ContestMatch[]>();
   const createdMatches: ContestMatch[] = [];
@@ -551,8 +505,8 @@ export async function generateContestMatches(
     const match = await matchRepo.save(
       matchRepo.create({
         contestId,
-        cafeId: body.cafe_id,
-        trackConfigId: body.track_config_id ?? null,
+        cafeId: options.cafeId,
+        trackConfigId: options.trackConfigId ?? null,
         roundNo: generated.roundNo,
         matchNo: generated.matchNo,
         name: generated.name,
@@ -561,7 +515,7 @@ export async function generateContestMatches(
         scheduledAt: generated.scheduledAt,
         advancementRule: generated.advancementRule,
         metadata: generated.metadata,
-        createdBy: viewer.userId,
+        createdBy: options.createdBy,
       }),
     );
     createdMatches.push(match);
@@ -602,6 +556,73 @@ export async function generateContestMatches(
     }
   }
 
+  return createdMatches;
+}
+
+export async function generateContestMatches(
+  contestId: string,
+  viewer: Viewer,
+  body: GenerateMatchesBody,
+) {
+  const contest = await assertContestOperator(contestId, viewer);
+  await ensureContestRuntimeEditable(contest);
+  await validateContestCafe(contestId, body.cafe_id);
+
+  if (viewer.role === UserRole.STAFF) {
+    const assignedToCafe = await isStaffAssignedToCafe(viewer.userId, body.cafe_id);
+    if (!assignedToCafe) {
+      throw new AppError('Staff không được tạo runtime ở chi nhánh này', 403, 'FORBIDDEN');
+    }
+  }
+
+  const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+
+  const existingMatches = await matchRepo.find({ where: { contestId } });
+  if (
+    existingMatches.some((match) =>
+      [ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status),
+    )
+  ) {
+    throw new AppError(
+      'Không thể tạo lại bracket khi đã có match đang diễn ra hoặc đã hoàn tất',
+      409,
+      'CONTEST_RUNTIME_LOCKED',
+    );
+  }
+
+  const orderedRegistrations =
+    getSeedingMode(contest, body.seeding_mode) === 'CHECK_IN_ORDER'
+      ? [...registrations].sort((a, b) => {
+          const aTime = a.checkedInAt?.getTime() ?? a.createdAt.getTime();
+          const bTime = b.checkedInAt?.getTime() ?? b.createdAt.getTime();
+          return aTime - bTime;
+        })
+      : body.registration_ids
+          .map((registrationId) => registrations.find((item) => item.id === registrationId)!)
+          .filter(Boolean);
+
+  await clearExistingRuntime(contestId);
+
+  const engine = getEngine(contest);
+  const driversPerMatch = Math.max(1, getDriversPerMatch(contest, body.drivers_per_match));
+  const generatedMatches = engine.generateMatches({
+    contest,
+    cafeId: body.cafe_id,
+    trackConfigId: body.track_config_id,
+    registrations,
+    registrationOrder: orderedRegistrations.map((item) => item.id),
+    driversPerMatch,
+    seedingMode: getSeedingMode(contest, body.seeding_mode),
+    createdBy: viewer.userId,
+  });
+
+  const createdMatches = await persistGeneratedMatches(contestId, generatedMatches, {
+    cafeId: body.cafe_id,
+    trackConfigId: body.track_config_id,
+    createdBy: viewer.userId,
+  });
+
   // Auto-advance bye winners so staff does not need to create fake results.
   for (const [index, generated] of generatedMatches.entries()) {
     if (generated.isBye && generated.byeWinnerRegistrationId) {
@@ -629,6 +650,109 @@ export async function generateContestMatches(
       track_config_id: body.track_config_id ?? null,
       seeding_mode: getSeedingMode(contest, body.seeding_mode),
       drivers_per_match: driversPerMatch,
+      format: engine.code,
+    },
+  });
+
+  return mapMatchesPayload(contestId, viewer);
+}
+
+export async function generateContestFinalBracket(contestId: string, viewer: Viewer) {
+  const contest = await assertContestOperator(contestId, viewer);
+  await ensureContestRuntimeEditable(contest);
+
+  const engine = getEngine(contest);
+  if (!(engine instanceof QualifyingFinalEngine)) {
+    throw new AppError(
+      'Chỉ contest format QUALIFYING_FINAL mới có vòng chung kết từ vòng loại',
+      400,
+      'CONTEST_FORMAT_NOT_QUALIFYING_FINAL',
+    );
+  }
+
+  const matches = await loadContestMatches(contestId);
+
+  const qualifyingMatches = matches.filter(
+    (match) => match.metadata?.phase === 'QUALIFYING' || match.roundNo === 1,
+  );
+  if (qualifyingMatches.length === 0) {
+    throw new AppError(
+      'Contest chưa có vòng loại; hãy generate matches trước',
+      400,
+      'QUALIFYING_NOT_GENERATED',
+    );
+  }
+  if (matches.some((match) => !qualifyingMatches.includes(match))) {
+    throw new AppError('Vòng chung kết đã được tạo trước đó', 409, 'FINAL_BRACKET_ALREADY_EXISTS');
+  }
+  if (qualifyingMatches.some((match) => match.status !== ContestMatchStatus.COMPLETED)) {
+    throw new AppError(
+      'Tất cả match vòng loại phải hoàn tất trước khi tạo vòng chung kết',
+      409,
+      'QUALIFYING_NOT_COMPLETED',
+    );
+  }
+
+  const participantsByMatch = await loadContestMatchParticipantsByMatch(
+    qualifyingMatches.map((match) => match.id),
+  );
+  const qualifyingResults = [...participantsByMatch.values()].flat();
+  if (qualifyingResults.length < 2) {
+    throw new AppError(
+      'Cần ít nhất 2 kết quả vòng loại để tạo vòng chung kết',
+      400,
+      'QUALIFYING_RESULTS_INSUFFICIENT',
+    );
+  }
+
+  const ranked = engine.rankQualifyingResults(
+    qualifyingResults.map((participant) => ({
+      registrationId: participant.registrationId,
+      bestLapSeconds: normalizeContestTimeSeconds(participant.bestLapSeconds),
+      totalTimeSeconds: normalizeContestTimeSeconds(participant.totalTimeSeconds),
+      seedNo: participant.seedNo,
+    })),
+  );
+  const finalistsCount = Math.min(engine.resolveFinalistsCount(contest), ranked.length);
+  const finalistIds = ranked.slice(0, finalistsCount).map((item) => item.registrationId);
+
+  const registrations = await AppDataSource.getRepository(ContestRegistration).findBy({
+    id: In(finalistIds),
+  });
+
+  const generatedMatches = engine.generateFinalBracket({
+    contest,
+    cafeId: qualifyingMatches[0].cafeId,
+    trackConfigId: qualifyingMatches[0].trackConfigId,
+    registrations,
+    registrationOrder: finalistIds,
+    driversPerMatch: 2,
+    createdBy: viewer.userId,
+    startRoundNo: 2,
+  });
+
+  const createdMatches = await persistGeneratedMatches(contestId, generatedMatches, {
+    cafeId: qualifyingMatches[0].cafeId,
+    trackConfigId: qualifyingMatches[0].trackConfigId,
+    createdBy: viewer.userId,
+  });
+
+  // Auto-advance bye winners so staff does not need to create fake results.
+  for (const [index, generated] of generatedMatches.entries()) {
+    if (generated.isBye && generated.byeWinnerRegistrationId) {
+      await advanceByeWinner(createdMatches[index], generated.byeWinnerRegistrationId, viewer);
+    }
+  }
+
+  await writeContestAudit({
+    contestId,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.final_bracket_generated',
+    afterJson: {
+      generated_match_count: createdMatches.length,
+      finalists: finalistIds,
+      finalists_count: finalistsCount,
       format: engine.code,
     },
   });

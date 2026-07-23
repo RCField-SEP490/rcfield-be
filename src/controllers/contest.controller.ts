@@ -400,6 +400,19 @@ export const contestController = {
     }
   },
 
+  async generateFinalBracket(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.generateContestFinalBracket(
+        req.params.contestId,
+        viewer,
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async publishLeaderboard(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);

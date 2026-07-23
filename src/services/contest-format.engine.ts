@@ -290,16 +290,171 @@ export class KnockoutEngine implements ContestFormatEngine {
   }
 }
 
+export type QualifyingFinalRankInput = {
+  registrationId: string;
+  bestLapSeconds: number | null;
+  totalTimeSeconds?: number | null;
+  seedNo?: number | null;
+};
+
+export class QualifyingFinalEngine implements ContestFormatEngine {
+  readonly code = 'QUALIFYING_FINAL';
+
+  /**
+   * Phase 1 (QUALIFYING): one TIME_ATTACK match per checked-in registration,
+   * identical shape to TIME_TRIAL but tagged with phase metadata.
+   */
+  generateMatches(input: GenerateMatchesInput): GeneratedMatch[] {
+    const { contest, registrations, registrationOrder } = input;
+    const orderedRegistrations = registrationOrder
+      .map((id) => registrations.find((r) => r.id === id))
+      .filter((r): r is ContestRegistration => Boolean(r));
+
+    const matches: GeneratedMatch[] = [];
+    for (const [index, registration] of orderedRegistrations.entries()) {
+      matches.push({
+        roundNo: 1,
+        matchNo: index + 1,
+        name: `Vòng loại ${index + 1}`,
+        matchType: ContestMatchType.TIME_ATTACK,
+        status: ContestMatchStatus.READY,
+        scheduledAt: new Date(contest.startsAt.getTime() + index * 5 * 60 * 1000),
+        advancementRule: { winners_to_advance: 0, format: this.code },
+        metadata: {
+          generated_from: 'contest-runtime.generate',
+          format: this.code,
+          phase: 'QUALIFYING',
+        },
+        participants: [
+          {
+            registrationId: registration.id,
+            slotNo: 1,
+            seedNo: index + 1,
+            status: ContestParticipantStatus.READY,
+            metadata: { generated_seed_order: index + 1, phase: 'QUALIFYING' },
+          },
+        ],
+      });
+    }
+    return matches;
+  }
+
+  resolveFinalistsCount(contest: Contest): number {
+    const configValue = contest.config?.finalists;
+    return typeof configValue === 'number' && Number.isFinite(configValue) && configValue >= 2
+      ? Math.floor(configValue)
+      : 4;
+  }
+
+  /**
+   * Rank qualifying participants by best lap (fallback total time, then seed).
+   */
+  rankQualifyingResults(results: QualifyingFinalRankInput[]): QualifyingFinalRankInput[] {
+    return [...results].sort((a, b) => {
+      const aBest = a.bestLapSeconds ?? Number.MAX_SAFE_INTEGER;
+      const bBest = b.bestLapSeconds ?? Number.MAX_SAFE_INTEGER;
+      if (aBest !== bBest) return aBest - bBest;
+      const aTotal = a.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER;
+      const bTotal = b.totalTimeSeconds ?? Number.MAX_SAFE_INTEGER;
+      if (aTotal !== bTotal) return aTotal - bTotal;
+      return (a.seedNo ?? Number.MAX_SAFE_INTEGER) - (b.seedNo ?? Number.MAX_SAFE_INTEGER);
+    });
+  }
+
+  /**
+   * Seed order for the final bracket: rank 1 vs rank N, rank 2 vs rank N-1...
+   * The returned list is fed to the knockout generator in pair order, which
+   * matches the existing KNOCKOUT convention (sequential chunking, auto-bye
+   * for non power-of-2 sizes).
+   */
+  buildSeededFinalOrder(rankedRegistrationIds: string[]): string[] {
+    const order: string[] = [];
+    let low = 0;
+    let high = rankedRegistrationIds.length - 1;
+    while (low <= high) {
+      order.push(rankedRegistrationIds[low]);
+      if (high !== low) order.push(rankedRegistrationIds[high]);
+      low += 1;
+      high -= 1;
+    }
+    return order;
+  }
+
+  /**
+   * Phase 2 (FINAL): knockout bracket over the ranked finalists, rounds
+   * starting at startRoundNo (qualifying occupies round 1).
+   */
+  generateFinalBracket(input: GenerateMatchesInput & { startRoundNo?: number }): GeneratedMatch[] {
+    const startRoundNo = Math.max(2, input.startRoundNo ?? 2);
+    const qualifyingRankByRegistrationId = new Map(
+      input.registrationOrder.map((id, index) => [id, index + 1]),
+    );
+    const seededOrder = this.buildSeededFinalOrder(input.registrationOrder);
+
+    const knockout = new KnockoutEngine();
+    const matches = knockout.generateMatches({
+      ...input,
+      registrationOrder: seededOrder,
+      driversPerMatch: 2,
+    });
+
+    const roundOffset = startRoundNo - 1;
+    for (const match of matches) {
+      match.roundNo += roundOffset;
+      match.advancementRule = { ...match.advancementRule, format: this.code };
+      match.metadata = { ...match.metadata, format: this.code, phase: 'FINAL' };
+      for (const participant of match.participants) {
+        const qualifyingRank = qualifyingRankByRegistrationId.get(participant.registrationId);
+        participant.seedNo = qualifyingRank ?? participant.seedNo;
+        participant.metadata = {
+          ...participant.metadata,
+          phase: 'FINAL',
+          qualifying_rank: qualifyingRank ?? null,
+        };
+      }
+      if (match.byeWinnerRegistrationId) {
+        match.metadata = {
+          ...match.metadata,
+          bye_winner_qualifying_rank:
+            qualifyingRankByRegistrationId.get(match.byeWinnerRegistrationId) ?? null,
+        };
+      }
+    }
+    return matches;
+  }
+
+  buildResultSummary(
+    contest: Contest,
+    match: ContestMatch,
+    participants: ContestMatchParticipant[],
+  ): Record<string, unknown> {
+    if (match.matchType === ContestMatchType.TIME_ATTACK) {
+      return new TimeTrialEngine().buildResultSummary(contest, match, participants);
+    }
+    return new KnockoutEngine().buildResultSummary(contest, match, participants);
+  }
+
+  inferWinners(
+    participants: ContestMatchParticipant[],
+    winnersToAdvance: number,
+  ): ContestMatchParticipant[] {
+    return inferMatchWinners(participants, winnersToAdvance);
+  }
+
+  canPublishLeaderboard(matches: ContestMatch[]): boolean {
+    return matches.every((match) => match.status === ContestMatchStatus.COMPLETED);
+  }
+}
+
 const engines = new Map<string, ContestFormatEngine>([
   [new TimeTrialEngine().code, new TimeTrialEngine()],
   [new KnockoutEngine().code, new KnockoutEngine()],
+  [new QualifyingFinalEngine().code, new QualifyingFinalEngine()],
 ]);
 
 export function getContestFormatEngine(contest: Contest): ContestFormatEngine {
-  const code =
-    contest.config?.runtime_format === 'TIME_TRIAL' || contest.config?.format === 'TIME_TRIAL'
-      ? 'TIME_TRIAL'
-      : 'KNOCKOUT';
+  const rawCode = contest.config?.runtime_format ?? contest.config?.format;
+  const code = rawCode === 'TIME_TRIAL' || rawCode === 'QUALIFYING_FINAL' ? rawCode : 'KNOCKOUT';
   return engines.get(code) ?? new KnockoutEngine();
 }
 
