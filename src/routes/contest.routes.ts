@@ -172,6 +172,13 @@ contestRouter.get(
   requireActiveProvider,
   contestController.listContestRegistrations,
 );
+contestRouter.get(
+  '/contests/:contestId/bookings',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.listContestBookings,
+);
 contestRouter.post(
   '/contest-registrations/:registrationId/create-entry-fee-payment',
   authenticate,

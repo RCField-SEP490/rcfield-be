@@ -61,6 +61,10 @@ import { env } from '../config/env';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { createWalkInBooking as createWalkInBookingService } from './booking.service';
+import {
+  logContestVehicleCheckedOut,
+  syncContestRegistrationOnVehicleCheckIn,
+} from './contest-rental.service';
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -1240,6 +1244,22 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
       sv.status = SessionVehicleStatus.ASSIGNED;
       if (sp) sv.assignedToParticipantId = sp.id;
       await AppDataSource.getRepository(SessionVehicle).save(sv);
+    }
+  }
+
+  // Mirror contest registration check-in for contest rental bookings. The sync
+  // never blocks the vehicle check-in — failures are logged only.
+  if (booking.contestId) {
+    try {
+      const contestCheckin = await syncContestRegistrationOnVehicleCheckIn(booking, {
+        staffUserId,
+      });
+      (session as any).contest_checkin = contestCheckin;
+    } catch (error) {
+      logger.warn('Staff', 'startCheckIn: contest registration sync failed', {
+        bookingId,
+        error: error instanceof Error ? error.message : error,
+      });
     }
   }
 
@@ -2894,6 +2914,18 @@ export async function staffConfirmCheckout(
   const booking = await AppDataSource.getRepository(Booking).findOne({
     where: { id: session.bookingId },
   });
+  // Audit trail for contest rental bookings; never blocks checkout completion.
+  if (booking?.contestId) {
+    try {
+      await logContestVehicleCheckedOut(booking, session);
+    } catch (error) {
+      logger.warn('Staff', 'staffConfirmCheckout: contest checkout audit failed', {
+        sessionId,
+        bookingId: booking.id,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+  }
   const allSessions = await sessionRepo.find({ where: { bookingId: session.bookingId } });
   const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
   if (allDone && booking) {

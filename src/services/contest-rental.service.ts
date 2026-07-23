@@ -1,10 +1,22 @@
+import { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database';
+import { logger } from '../config/logger';
+import { Booking } from '../models/booking.entity';
 import { Cafe } from '../models/cafe.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { Contest } from '../models/contest.entity';
+import { ContestAuditLog } from '../models/contest-audit-log.entity';
+import { ContestRegistration } from '../models/contest-registration.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { Vehicle } from '../models/vehicle.entity';
-import { AppError, BookingMode, BookingSource, BookingStatus, VehicleStatus } from '../types';
+import {
+  AppError,
+  BookingMode,
+  BookingSource,
+  BookingStatus,
+  ContestRegistrationStatus,
+  VehicleStatus,
+} from '../types';
 import { createBooking, CreateBookingBody } from './booking.service';
 import { ContestCafe } from '../models/contest-cafe.entity';
 
@@ -280,6 +292,112 @@ async function resolveContestRentalVehicle(
     throw new AppError('Không có xe thuê khả dụng tại chi nhánh này', 400, 'VEHICLE_UNAVAILABLE');
   }
   return vehicle;
+}
+
+// ── Contest ↔ Session lifecycle sync (vehicle check-in / checkout bridge) ───
+
+export interface ContestCheckinSyncResult {
+  registrationId: string | null;
+  synced: boolean;
+  previousStatus: ContestRegistrationStatus | null;
+}
+
+function contestRegistrationRepo(em?: EntityManager) {
+  return em
+    ? em.getRepository(ContestRegistration)
+    : AppDataSource.getRepository(ContestRegistration);
+}
+
+function contestAuditLogRepo(em?: EntityManager) {
+  return em ? em.getRepository(ContestAuditLog) : AppDataSource.getRepository(ContestAuditLog);
+}
+
+/**
+ * When a contest rental booking is checked in at the cafe, mirror the linked
+ * contest registration to CHECKED_IN (same semantics as checkInRegistration in
+ * contest.service). Never blocks the vehicle check-in: missing registrations or
+ * unexpected statuses are skipped with a log entry only.
+ */
+export async function syncContestRegistrationOnVehicleCheckIn(
+  booking: Pick<Booking, 'id' | 'contestId' | 'cafeId'>,
+  staffContext: { staffUserId: string },
+  em?: EntityManager,
+): Promise<ContestCheckinSyncResult | null> {
+  if (!booking.contestId) return null;
+
+  const registration = await contestRegistrationRepo(em).findOne({
+    where: { bookingId: booking.id },
+  });
+  if (!registration) {
+    logger.warn('ContestRental', 'syncContestRegistrationOnVehicleCheckIn: no registration', {
+      bookingId: booking.id,
+      contestId: booking.contestId,
+    });
+    return { registrationId: null, synced: false, previousStatus: null };
+  }
+
+  const previousStatus = registration.status;
+  if (previousStatus === ContestRegistrationStatus.CHECKED_IN) {
+    return { registrationId: registration.id, synced: false, previousStatus };
+  }
+  if (previousStatus !== ContestRegistrationStatus.CONFIRMED) {
+    logger.warn('ContestRental', 'syncContestRegistrationOnVehicleCheckIn: status not CONFIRMED', {
+      bookingId: booking.id,
+      registrationId: registration.id,
+      status: previousStatus,
+    });
+    return { registrationId: registration.id, synced: false, previousStatus };
+  }
+
+  registration.status = ContestRegistrationStatus.CHECKED_IN;
+  registration.checkedInCafeId = booking.cafeId;
+  registration.checkedInBy = staffContext.staffUserId;
+  registration.checkedInAt = new Date();
+  await contestRegistrationRepo(em).save(registration);
+
+  const auditRepo = contestAuditLogRepo(em);
+  await auditRepo.save(
+    auditRepo.create({
+      contestId: booking.contestId,
+      registrationId: registration.id,
+      actorId: staffContext.staffUserId,
+      actorRole: 'STAFF',
+      eventType: 'registration.checked_in',
+      beforeJson: { status: previousStatus },
+      afterJson: { status: registration.status, checkedInCafeId: booking.cafeId },
+      metadata: { booking_id: booking.id, trigger: 'vehicle_check_in' },
+    }),
+  );
+
+  return { registrationId: registration.id, synced: true, previousStatus };
+}
+
+/** Writes a contest audit log entry when a contest rental vehicle is checked out. */
+export async function logContestVehicleCheckedOut(
+  booking: Pick<Booking, 'id' | 'contestId'>,
+  session: { id: string },
+  em?: EntityManager,
+): Promise<void> {
+  if (!booking.contestId) return;
+
+  const registration = await contestRegistrationRepo(em).findOne({
+    where: { bookingId: booking.id },
+  });
+
+  const auditRepo = contestAuditLogRepo(em);
+  await auditRepo.save(
+    auditRepo.create({
+      contestId: booking.contestId,
+      registrationId: registration?.id ?? null,
+      actorRole: 'STAFF',
+      eventType: 'booking.vehicle_checked_out',
+      metadata: {
+        booking_id: booking.id,
+        session_id: session.id,
+        registration_id: registration?.id ?? null,
+      },
+    }),
+  );
 }
 
 export async function getContestRentalOptions(contestId: string): Promise<ContestRentalOptions> {

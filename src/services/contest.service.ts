@@ -1449,6 +1449,54 @@ export async function listContestRegistrations(
   });
 }
 
+export async function listContestBookings(contestId: string, viewer: Viewer) {
+  await assertContestProviderOrAssignedStaff(contestId, viewer);
+  const rows = await AppDataSource.query<
+    {
+      id: string;
+      status: string;
+      slot_start: Date;
+      slot_end: Date;
+      source: string;
+      customer_id: string;
+      customer_name: string | null;
+      customer_email: string | null;
+      registration_id: string | null;
+      registration_status: string | null;
+      check_in_code: string | null;
+    }[]
+  >(
+    `SELECT b.id, b.status, b.slot_start, b.slot_end, b.source, b.customer_id,
+            u.full_name AS customer_name, u.email AS customer_email,
+            r.id AS registration_id, r.status AS registration_status, r.check_in_code
+     FROM bookings b
+     LEFT JOIN users u ON u.id = b.customer_id
+     LEFT JOIN contest_registrations r ON r.booking_id = b.id
+     WHERE b.contest_id = $1
+     ORDER BY b.slot_start ASC`,
+    [contestId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    source: row.source,
+    slot_start: row.slot_start,
+    slot_end: row.slot_end,
+    customer: {
+      id: row.customer_id,
+      full_name: row.customer_name,
+      email: row.customer_email,
+    },
+    registration: row.registration_id
+      ? {
+          id: row.registration_id,
+          status: row.registration_status,
+          check_in_code: row.check_in_code,
+        }
+      : null,
+  }));
+}
+
 async function getContestRegistrationForOwner(registrationId: string, viewer: Viewer) {
   const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
     where: { id: registrationId },
