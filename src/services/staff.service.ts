@@ -3379,6 +3379,50 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     order: { createdAt: 'DESC' },
   });
 
+  if (sessionForNotification && sessionForNotification.status === SessionStatus.CHECKING_OUT) {
+    const session = sessionForNotification;
+    const inspection = await AppDataSource.getRepository(Inspection).findOne({
+      where: { sessionId: session.id, type: InspectionType.CHECK_OUT },
+    });
+
+    if (inspection) {
+      inspection.customerConfirmed = true;
+      if (!inspection.customerConfirmedAt) {
+        inspection.customerConfirmedAt = new Date();
+      }
+      await AppDataSource.getRepository(Inspection).save(inspection);
+
+      session.status = SessionStatus.COMPLETED;
+      session.actualEndAt = new Date();
+      session.checkedOutBy = staffUserId;
+      await AppDataSource.getRepository(Session).save(session);
+
+      const svs = await AppDataSource.getRepository(SessionVehicle).find({
+        where: { sessionId: session.id },
+      });
+      for (const sv of svs) {
+        const newStatus = inspection.damageNoted
+          ? VehicleStatus.MAINTENANCE
+          : VehicleStatus.AVAILABLE;
+        if (sv.vehicleId) {
+          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, { status: newStatus });
+        }
+      }
+
+      if (inspection.damageNoted) {
+        const [existingLog] = await AppDataSource.query<{ id: string }[]>(
+          `SELECT id FROM vehicle_maintenance_logs WHERE related_session_id = $1 LIMIT 1`,
+          [session.id],
+        );
+        if (!existingLog) {
+          await handleVehicleCheckoutMaintenance(session.id, inspection, staffUserId);
+        }
+      }
+
+      await settleSessionCheckoutBilling(session.id, inspection);
+    }
+  }
+
   // ── FLOW 1: DEPOSIT REFUND ────────────────────────────────────────────────
   // Finalize the deposit component: Staff confirms they physically returned the
   // refund amount to the customer. Move from PENDING_REFUND → REFUNDED / PARTIALLY_REFUNDED.
@@ -3529,20 +3573,40 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     logger.error('SettlePendingNotification', 'Failed to notify', err);
   }
 
-  if (booking.status === BookingStatus.AWAITING_PAYMENT) {
-    await transition(bookingId, 'PAYMENT_SETTLED');
-    if (booking.source !== BookingSource.STAFF_MANUAL && booking.customerId) {
-      await createNotification(
-        booking.customerId,
-        NotificationType.BOOKING_REVIEW_REQUEST,
-        'Đánh giá trải nghiệm của bạn',
-        'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-        {
-          bookingId,
-          route: `/customer/review/${bookingId}`,
-        },
-      ).catch(() => {});
-      wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
+  const allSessions = await AppDataSource.getRepository(Session).find({
+    where: { bookingId },
+  });
+  const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
+
+  if (allDone) {
+    const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
+      where: { bookingId, status: PaymentComponentStatus.PENDING },
+    });
+
+    if (pendingCount === 0) {
+      if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+        await transition(bookingId, 'PAYMENT_SETTLED');
+      } else if (booking.status === BookingStatus.CONFIRMED) {
+        await transition(bookingId, 'COMPLETE');
+      }
+
+      await AppDataSource.getRepository(Booking).update(bookingId, {
+        completedAt: new Date(),
+      });
+
+      if (booking.source !== BookingSource.STAFF_MANUAL && booking.customerId) {
+        await createNotification(
+          booking.customerId,
+          NotificationType.BOOKING_REVIEW_REQUEST,
+          'Đánh giá trải nghiệm của bạn',
+          'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+          {
+            bookingId,
+            route: `/customer/review/${bookingId}`,
+          },
+        ).catch(() => {});
+        wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
+      }
     }
   }
 
