@@ -64,6 +64,23 @@ function cafeBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function nextVietnamSundayAt(hour: number): Date {
+  const vietnamOffsetMs = 7 * 60 * 60 * 1000;
+  const vietnamNow = new Date(Date.now() + vietnamOffsetMs);
+  const daysUntilSunday = (7 - vietnamNow.getUTCDay()) % 7;
+  const sunday = new Date(
+    Date.UTC(
+      vietnamNow.getUTCFullYear(),
+      vietnamNow.getUTCMonth(),
+      vietnamNow.getUTCDate() + daysUntilSunday,
+      hour - 7,
+    ),
+  );
+
+  if (sunday.getTime() <= Date.now()) sunday.setUTCDate(sunday.getUTCDate() + 7);
+  return sunday;
+}
+
 async function addReview(cafeId: string, rating: number) {
   const [customer] = await AppDataSource.query(
     `INSERT INTO users (email, full_name, password_hash, role, is_active, auth_provider)
@@ -134,6 +151,47 @@ async function addPromotion(cafeId: string) {
 }
 
 describe('Cafe routes', () => {
+  it('không trả chỗ trống cho ngày cơ sở nghỉ', async () => {
+    const cafe = await createTestCafe({ status: CafeStatus.ACTIVE });
+    const sundayStart = nextVietnamSundayAt(10);
+    const sundayEnd = new Date(sundayStart.getTime() + 60 * 60 * 1000);
+
+    await AppDataSource.query(`UPDATE cafes SET operating_hours = $1::jsonb WHERE id = $2`, [
+      JSON.stringify({ sun: { is_closed: true } }),
+      cafe.id,
+    ]);
+
+    const response = await request(app).get(`/api/v1/cafes/${cafe.id}/availability`).query({
+      slot_start: sundayStart.toISOString(),
+      slot_end: sundayEnd.toISOString(),
+      play_mode: 'RENTAL',
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('OUTSIDE_OPERATING_HOURS');
+  });
+
+  it('chấp nhận 24:00 là giờ đóng cửa, nhưng từ chối giờ vận hành không hợp lệ', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const token = generateToken(provider);
+
+    const closesAtMidnight = await request(app)
+      .post('/api/v1/cafes')
+      .set('Authorization', `Bearer ${token}`)
+      .send(cafeBody({ operating_hours: { mon: { open: '14:00', close: '24:00' } } }));
+
+    expect(closesAtMidnight.status).toBe(201);
+    expect(closesAtMidnight.body.data.operatingHours.mon.close).toBe('24:00');
+
+    const invalidHours = await request(app)
+      .post('/api/v1/cafes')
+      .set('Authorization', `Bearer ${token}`)
+      .send(cafeBody({ operating_hours: { mon: { open: '14:00', close: '24:30' } } }));
+
+    expect(invalidHours.status).toBe(400);
+  });
+
   it('provider đã đăng ký ACTIVE tạo cafe được, status mặc định PENDING', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);

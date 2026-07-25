@@ -81,6 +81,59 @@ export interface RefundBreakdown {
   totalRefund: number;
 }
 
+/**
+ * Immutable receipt lines stored with the initial payment transaction.
+ *
+ * Payment components are created only after a gateway confirms the payment and
+ * can subsequently change status throughout the booking lifecycle. A payment
+ * result must instead describe exactly what was charged at that moment.
+ */
+function buildInitialPaymentReceiptComponents(
+  snapshot: BookingSnapshot,
+): Array<{ type: string; amount: number }> {
+  const rentalFee = snapshot.vehicles.reduce(
+    (sum, vehicle) => sum + Number(vehicle.rental_fee ?? 0),
+    0,
+  );
+  const securityDeposit = snapshot.vehicles.reduce(
+    (sum, vehicle) => sum + Number(vehicle.security_deposit ?? 0),
+    0,
+  );
+
+  return [
+    { type: PaymentComponentType.SLOT_FEE, amount: Number(snapshot.slot_fee_total ?? 0) },
+    { type: PaymentComponentType.RENTAL_FEE, amount: rentalFee },
+    { type: PaymentComponentType.SECURITY_DEPOSIT, amount: securityDeposit },
+    { type: PaymentComponentType.FB_PREORDER, amount: Number(snapshot.fnb_total ?? 0) },
+    { type: 'PROMOTION_DISCOUNT', amount: -Number(snapshot.discount_amount ?? 0) },
+  ].filter((component) => component.amount !== 0);
+}
+
+/**
+ * An additional-payment transaction pays the exact component ids captured when
+ * its checkout URL was generated. Older transactions did not capture ids, so
+ * they intentionally retain the former "all pending components" fallback.
+ */
+async function getPendingComponentsForAdditionalTransaction(
+  transaction: PaymentTransaction,
+): Promise<PaymentComponent[]> {
+  if (!transaction.bookingId) return [];
+
+  const rawRequest = (transaction.rawRequest ?? {}) as {
+    components?: Array<{ id?: string }>;
+  };
+  const componentIds = (rawRequest.components ?? [])
+    .map((component) => component.id)
+    .filter((id): id is string => Boolean(id));
+  const pendingComponents = await AppDataSource.getRepository(PaymentComponent).find({
+    where: { bookingId: transaction.bookingId, status: PaymentComponentStatus.PENDING },
+  });
+
+  return componentIds.length > 0
+    ? pendingComponents.filter((component) => componentIds.includes(component.id))
+    : pendingComponents;
+}
+
 // ── calculateRefundAmounts ────────────────────────────────────────────────────
 
 /** Pure function — Constitution Principle V: exported for unit tests */
@@ -278,7 +331,11 @@ export async function createCheckoutUrl(
           txnRef,
           amount: 0,
           status: PaymentTransactionStatus.SUCCESS,
-          rawRequest: { zeroTotal: true, packageApplied: booking.customerPackageId },
+          rawRequest: {
+            zeroTotal: true,
+            packageApplied: booking.customerPackageId,
+            components: buildInitialPaymentReceiptComponents(snapshot),
+          },
         }),
       );
     }
@@ -366,7 +423,12 @@ export async function createCheckoutUrl(
       txnRef,
       amount: totalCharged,
       status: PaymentTransactionStatus.PENDING,
-      rawRequest: { bookingId, totalCharged, ipAddr },
+      rawRequest: {
+        bookingId,
+        totalCharged,
+        ipAddr,
+        components: buildInitialPaymentReceiptComponents(snapshot),
+      },
     });
     await txRepo.save(tx);
   }
@@ -376,6 +438,7 @@ export async function createCheckoutUrl(
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
     target.searchParams.set('txn_ref', txnRef);
+    target.searchParams.set('booking_id', bookingId);
     target.searchParams.set('mock', '1');
     logger.info(
       'PaymentService',
@@ -538,10 +601,7 @@ export async function processConfirmation(
       );
       return { rspCode: '01', message: 'Booking ID missing' };
     }
-    const compRepo = AppDataSource.getRepository(PaymentComponent);
-    const pendingComponents = await compRepo.find({
-      where: { bookingId: tx.bookingId, status: PaymentComponentStatus.PENDING },
-    });
+    const pendingComponents = await getPendingComponentsForAdditionalTransaction(tx);
 
     await AppDataSource.transaction(async (em) => {
       // Mark all service components as DISBURSED (paid via VNPAY)
@@ -739,10 +799,7 @@ export async function processMockConfirmation(
       );
       return { rspCode: '01', message: 'Booking ID missing' };
     }
-    const compRepo = AppDataSource.getRepository(PaymentComponent);
-    const pendingComponents = await compRepo.find({
-      where: { bookingId: tx.bookingId, status: PaymentComponentStatus.PENDING },
-    });
+    const pendingComponents = await getPendingComponentsForAdditionalTransaction(tx);
 
     await AppDataSource.transaction(async (em) => {
       // Mark all service components as DISBURSED (paid via VNPAY)
@@ -1198,6 +1255,11 @@ export async function createCheckoutAdditionalPaymentUrl(
       totalCharged,
       ipAddr,
       additionalPayment: true,
+      components: pendingComponents.map((component) => ({
+        id: component.id,
+        type: component.type,
+        amount: Number(component.amount),
+      })),
       returnUrl: customReturnUrl,
     },
   });
@@ -1208,6 +1270,7 @@ export async function createCheckoutAdditionalPaymentUrl(
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
     target.searchParams.set('txn_ref', txnRef);
+    target.searchParams.set('booking_id', bookingId);
     target.searchParams.set('mock', '1');
     return { payment_url: target.toString(), txn_ref: txnRef, total_amount: totalCharged };
   }

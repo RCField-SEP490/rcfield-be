@@ -61,6 +61,13 @@ import { env } from '../config/env';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { createWalkInBooking as createWalkInBookingService } from './booking.service';
+import { getSessionOperationalTiming } from '../lib/session-operational-timing';
+import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
+import {
+  RENTAL_INSPECTION_MAX_PHOTOS,
+  RENTAL_INSPECTION_MIN_PHOTOS,
+  hasValidRentalInspectionPhotoCount,
+} from '../lib/inspection-photo-policy';
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -738,8 +745,17 @@ export async function updateFnbOrderStatus(
   cafeId: string,
   newStatus: string,
 ): Promise<void> {
-  const [order] = await AppDataSource.query<{ id: string; status: string }[]>(
-    `SELECT fo.id, fo.status
+  const [order] = await AppDataSource.query<
+    {
+      id: string;
+      status: string;
+      booking_id: string;
+      session_id: string | null;
+      order_type: FnbOrderType;
+      total_amount: string;
+    }[]
+  >(
+    `SELECT fo.id, fo.status, fo.booking_id, fo.session_id, fo.order_type, fo.total_amount
      FROM fnb_orders fo
      JOIN bookings b ON b.id = fo.booking_id
      WHERE fo.id = $1 AND b.cafe_id = $2`,
@@ -767,6 +783,35 @@ export async function updateFnbOrderStatus(
     newStatus,
     orderId,
   ]);
+
+  if (newStatus === FnbOrderStatus.CANCELLED && order.session_id) {
+    const session = await AppDataSource.getRepository(Session).findOne({
+      where: { id: order.session_id },
+    });
+    if (session) {
+      session.actualTotalAmount = Math.max(
+        0,
+        Number(session.actualTotalAmount) - Number(order.total_amount),
+      );
+      await AppDataSource.getRepository(Session).save(session);
+    }
+  }
+
+  if (order.order_type === FnbOrderType.ON_SITE) {
+    await syncOnsiteFnbFeeComponent(order.booking_id);
+
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: order.booking_id },
+    });
+    if (booking?.customerId) {
+      wsService.pushToUser(booking.customerId, 'SESSION_FNB_ORDER_UPDATED', {
+        bookingId: booking.id,
+        sessionId: order.session_id ?? undefined,
+        orderId,
+        status: newStatus,
+      });
+    }
+  }
 
   logger.info('Staff', 'fnb order status updated', { orderId, cafeId, newStatus });
 }
@@ -1499,6 +1544,15 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   const paymentComponents = await AppDataSource.getRepository(PaymentComponent).find({
     where: { bookingId: booking.id },
   });
+  const paymentTransactions = await AppDataSource.getRepository(PaymentTransaction).find({
+    where: { bookingId: booking.id },
+    order: { createdAt: 'ASC' },
+  });
+  const financialSummary = buildBookingFinancialSummary(
+    paymentComponents,
+    paymentTransactions,
+    Number(booking.discountAmount) || 0,
+  );
   const slotFee = paymentComponents
     .filter((component) => component.type === PaymentComponentType.SLOT_FEE)
     .reduce((sum, component) => sum + Number(component.amount), 0);
@@ -1516,10 +1570,6 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   );
   const pendingRefundComponents = paymentComponents.filter(
     (component) => component.status === PaymentComponentStatus.PENDING_REFUND,
-  );
-  const outstandingAmount = pendingPaymentComponents.reduce(
-    (sum, component) => sum + Number(component.amount),
-    0,
   );
   const pendingRefundAmount = pendingRefundComponents.reduce(
     (sum, component) => sum + Number(component.refundedAmount || 0),
@@ -1541,6 +1591,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     actualStart: session.actualStartAt ? session.actualStartAt.toISOString() : undefined,
     actualEnd: session.actualEndAt ? session.actualEndAt.toISOString() : undefined,
     plannedEnd: session.plannedEndAt.toISOString(),
+    operationalTiming: getSessionOperationalTiming(session.plannedEndAt, session.status),
     participants: participants.map((p) => ({
       name: getParticipantName(p),
       type: 'PLAYER',
@@ -1556,8 +1607,9 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     approvedExtensions: mappedApprovedExtensions,
     extensionPricingOptions,
     fnbOrders: mappedFnbOrders,
+    financialSummary,
     paymentSummary: {
-      outstandingAmount,
+      outstandingAmount: financialSummary.outstandingAmount,
       pendingRefundAmount,
       pendingPaymentCount: pendingPaymentComponents.length,
       pendingRefundCount: pendingRefundComponents.length,
@@ -1592,6 +1644,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       totalAmount: slotFee + rentalFee + fnbPreorderFee,
       paymentStatus: requiresSettlement ? 'UNPAID' : 'PAID',
       payment_components: paymentComponents,
+      financial_summary: financialSummary,
       plannedParticipants: participants.map((participant) => getParticipantName(participant)),
       participantDetails: participants.map((participant) => ({
         name: getParticipantName(participant),
@@ -1664,6 +1717,15 @@ export async function submitInspection(
   const isByoc =
     booking?.playMode === 'BYOC' ||
     (activeSVs.length > 0 && activeSVs[0].vehicleSource === VehicleSource.BYOC);
+
+  if (!isByoc && !hasValidRentalInspectionPhotoCount(photos)) {
+    throw new AppError(
+      `Biên bản xe thuê cần từ ${RENTAL_INSPECTION_MIN_PHOTOS} đến ${RENTAL_INSPECTION_MAX_PHOTOS} ảnh bàn giao`,
+      400,
+      'INVALID_INSPECTION_PHOTO_COUNT',
+    );
+  }
+
   inspection.subjectType = isByoc
     ? InspectionSubjectType.BYOC_VEHICLE
     : InspectionSubjectType.RENTAL_VEHICLE;
@@ -2048,6 +2110,110 @@ async function calculateExtensionFee(
   return roundExtensionFee(ratePerMinute, extraMinutes);
 }
 
+/**
+ * An approved extension is a committed service charge, not merely an
+ * operational update on the session. Keep one pending component with the
+ * aggregate approved amount so customer and staff financial summaries become
+ * correct immediately, before checkout starts.
+ */
+async function syncApprovedExtensionFeeComponent(
+  sessionId: string,
+  bookingId: string,
+): Promise<void> {
+  const proposalRepo = AppDataSource.getRepository(ExtensionProposal);
+  const approvedExtensions = await proposalRepo.find({
+    where: { sessionId, status: ExtensionProposalStatus.APPROVED },
+  });
+  const totalApprovedFee = approvedExtensions.reduce(
+    (sum, proposal) => sum + Number(proposal.feeAmount),
+    0,
+  );
+  if (totalApprovedFee <= 0) return;
+
+  const componentRepo = AppDataSource.getRepository(PaymentComponent);
+  const extensionComponents = await componentRepo.find({
+    where: { bookingId, type: PaymentComponentType.EXTENSION_FEE },
+    order: { createdAt: 'ASC' },
+  });
+  const pendingComponent = extensionComponents.find(
+    (component) => component.status === PaymentComponentStatus.PENDING,
+  );
+
+  if (pendingComponent) {
+    pendingComponent.amount = totalApprovedFee;
+    await componentRepo.save(pendingComponent);
+    return;
+  }
+
+  await componentRepo.save(
+    componentRepo.create({
+      bookingId,
+      type: PaymentComponentType.EXTENSION_FEE,
+      amount: totalApprovedFee,
+      status: PaymentComponentStatus.PENDING,
+    }),
+  );
+}
+
+/**
+ * Keep the counter-food component in sync with operational orders as they are
+ * added or cancelled. This makes the outstanding amount visible to both sides
+ * during the session while keeping cancelled orders out of the bill.
+ */
+async function syncOnsiteFnbFeeComponent(bookingId: string): Promise<void> {
+  const orders = await AppDataSource.getRepository(FnbOrder).find({
+    where: { bookingId, orderType: FnbOrderType.ON_SITE },
+  });
+  const totalAmount = orders
+    .filter((order) => order.status !== FnbOrderStatus.CANCELLED)
+    .reduce((sum, order) => sum + Number(order.totalAmount), 0);
+
+  const componentRepo = AppDataSource.getRepository(PaymentComponent);
+  const existingComponents = await componentRepo.find({
+    where: { bookingId },
+    order: { createdAt: 'ASC' },
+  });
+  // FB_PREORDER was historically also used for counter orders. Consolidating
+  // pending legacy rows here prevents a duplicated amount at checkout.
+  const pendingComponents = existingComponents.filter(
+    (component) =>
+      component.status === PaymentComponentStatus.PENDING &&
+      [PaymentComponentType.FNB_ON_SITE, PaymentComponentType.FB_PREORDER].includes(component.type),
+  );
+
+  if (totalAmount <= 0) {
+    if (pendingComponents.length > 0) {
+      await componentRepo.remove(pendingComponents);
+    }
+    return;
+  }
+
+  const primaryComponent =
+    pendingComponents.find((component) => component.type === PaymentComponentType.FNB_ON_SITE) ??
+    pendingComponents[0];
+  if (primaryComponent) {
+    primaryComponent.type = PaymentComponentType.FNB_ON_SITE;
+    primaryComponent.amount = totalAmount;
+    await componentRepo.save(primaryComponent);
+    const duplicateComponents = pendingComponents.filter(
+      (component) => component.id !== primaryComponent.id,
+    );
+    if (duplicateComponents.length > 0) {
+      await componentRepo.remove(duplicateComponents);
+    }
+    return;
+  }
+
+  await componentRepo.save(
+    componentRepo.create({
+      bookingId,
+      type: PaymentComponentType.FNB_ON_SITE,
+      amount: totalAmount,
+      status: PaymentComponentStatus.PENDING,
+    }),
+  );
+}
+
 async function buildExtensionPricingOptions(
   booking: Booking,
   session: Session,
@@ -2063,6 +2229,18 @@ async function buildExtensionPricingOptions(
 > {
   const options = [15, 30, 60] as const;
   const ratePerMinute = await getExtensionSlotRatePerMinute(booking, session);
+  const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
+
+  if (!timing.canExtend) {
+    return options.map((extraMinutes) => ({
+      extraMinutes,
+      additionalFee: roundExtensionFee(ratePerMinute, extraMinutes),
+      newPlannedEnd: new Date(session.plannedEndAt.getTime() + extraMinutes * 60000).toISOString(),
+      available: false,
+      blockedReason: 'Phiên đã quá giờ; cần xử lý trả xe trước',
+    }));
+  }
+
   return options.map((extraMinutes) => {
     const proposedEnd = new Date(session.plannedEndAt.getTime() + extraMinutes * 60000);
     const blockedReason = getExtensionBlockedReason(cafe, booking, proposedEnd);
@@ -2094,6 +2272,14 @@ export async function proposeExtension(
   }
   if (session.status !== SessionStatus.ACTIVE) {
     throw new AppError('Chỉ có thể gia hạn phiên đang ACTIVE', 400, 'EXTENSION_NOT_ALLOWED');
+  }
+  const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
+  if (!timing.canExtend) {
+    throw new AppError(
+      'Phiên đã quá giờ. Hãy xử lý trả xe; hệ thống không tự tính phí quá giờ theo thời điểm nhân viên checkout.',
+      409,
+      'LATE_EXTENSION_REQUIRES_CHECKOUT',
+    );
   }
 
   const booking = await AppDataSource.getRepository(Booking)
@@ -2267,6 +2453,8 @@ export async function proposeExtension(
       booking.slotEnd = session.plannedEndAt;
       await AppDataSource.getRepository(Booking).save(booking);
 
+      await syncApprovedExtensionFeeComponent(sessionId, booking.id);
+
       if (booking.customerId) {
         await createNotification(
           booking.customerId,
@@ -2281,6 +2469,16 @@ export async function proposeExtension(
             route: `/customer/extension/${sessionId}`,
           },
         );
+
+        wsService.pushToUser(booking.customerId, 'SESSION_EXTENSION_UPDATED', {
+          sessionId,
+          bookingId: booking.id,
+          proposalId: proposal.id,
+          extraMinutes,
+          additionalFee: Number(additionalFee),
+          status: ExtensionProposalStatus.APPROVED,
+          newPlannedEnd: session.plannedEndAt.toISOString(),
+        });
       }
     }
 
@@ -2333,6 +2531,14 @@ export async function addSessionFnbOrder(
   if (!session) {
     throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
   }
+  const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
+  if (!timing.canExtend) {
+    throw new AppError(
+      'Phiên đã quá giờ; cần xử lý trả xe trước khi thêm dịch vụ mới.',
+      409,
+      'ON_SITE_ORDER_NOT_ALLOWED_AFTER_OVERDUE',
+    );
+  }
 
   const { items } = data;
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -2372,6 +2578,7 @@ export async function addSessionFnbOrder(
 
   session.actualTotalAmount = Number(session.actualTotalAmount) + total;
   await AppDataSource.getRepository(Session).save(session);
+  await syncOnsiteFnbFeeComponent(session.bookingId);
 
   // Notify customer of new Fnb order added
   try {
@@ -2817,7 +3024,8 @@ export async function customerRespondExtension(
     throw new AppError('Không có đề xuất gia hạn đang chờ', 404, 'NO_PENDING_EXTENSION');
 
   const expiresAt = new Date(latestProposal.createdAt.getTime() + 10 * 60000);
-  if (expiresAt.getTime() <= Date.now()) {
+  const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
+  if (expiresAt.getTime() <= Date.now() || !timing.canExtend) {
     latestProposal.status = ExtensionProposalStatus.EXPIRED;
     latestProposal.respondedBy = customerId;
     latestProposal.respondedAt = new Date();
@@ -2826,7 +3034,13 @@ export async function customerRespondExtension(
     session.status = SessionStatus.ACTIVE;
     await AppDataSource.getRepository(Session).save(session);
 
-    throw new AppError('Đề xuất gia hạn đã hết hạn', 400, 'EXTENSION_EXPIRED');
+    throw new AppError(
+      timing.canExtend
+        ? 'Đề xuất gia hạn đã hết hạn'
+        : 'Phiên đã quá giờ; cần xử lý trả xe trước khi xem xét phụ phí.',
+      400,
+      timing.canExtend ? 'EXTENSION_EXPIRED' : 'LATE_EXTENSION_REQUIRES_CHECKOUT',
+    );
   }
 
   latestProposal.status = approved
@@ -2846,6 +3060,7 @@ export async function customerRespondExtension(
     booking.slotCount = Number(booking.slotCount) + Math.ceil(latestProposal.durationMinutes / 30);
     booking.slotEnd = session.plannedEndAt;
     await AppDataSource.getRepository(Booking).save(booking);
+    await syncApprovedExtensionFeeComponent(sessionId, booking.id);
   }
   await AppDataSource.getRepository(Session).save(session);
 
@@ -2878,6 +3093,18 @@ export async function customerRespondExtension(
         sessionStatus: session.status,
       },
     );
+  }
+
+  if (booking.customerId) {
+    wsService.pushToUser(booking.customerId, 'SESSION_EXTENSION_UPDATED', {
+      sessionId,
+      bookingId: booking.id,
+      proposalId: latestProposal.id,
+      extraMinutes: latestProposal.durationMinutes,
+      additionalFee: Number(latestProposal.feeAmount),
+      status: latestProposal.status,
+      newPlannedEnd: session.plannedEndAt.toISOString(),
+    });
   }
 
   return {
@@ -2986,35 +3213,23 @@ async function handleVehicleCheckoutMaintenance(
   }
 }
 
-// ── STAFF CONFIRM CHECKOUT ────────────────────────────────────────────────────
+type CheckoutCompletionResult = {
+  alreadyCompleted: boolean;
+  session: Session;
+};
 
-export async function staffConfirmCheckout(
-  sessionId: string,
-  inspectionId: string,
+/**
+ * Finalize the operational part of a checkout exactly once. Both staff's
+ * explicit confirmation and counter settlement can reach this point, so they
+ * must not maintain separate copies of the session, vehicle and billing flow.
+ */
+async function completeCheckingOutSession(
+  session: Session,
+  inspection: Inspection,
   staffUserId: string,
-): Promise<any> {
-  const sessionRepo = AppDataSource.getRepository(Session);
-  const session = await sessionRepo.findOne({ where: { id: sessionId } });
-  if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
-
-  const inspRepo = AppDataSource.getRepository(Inspection);
-  const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
-  if (!inspection)
-    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
-  if (inspection.type !== InspectionType.CHECK_OUT) {
-    throw new AppError('Biên bản không phải loại CHECK_OUT', 400, 'INVALID_INSPECTION_TYPE');
-  }
-
-  // Customer confirmation can complete the checkout while this staff page is
-  // still open. Treat a second confirmation as a successful no-op instead of
-  // leaving the staff UI stuck on stale CHECKING_OUT data.
+): Promise<CheckoutCompletionResult> {
   if (session.status === SessionStatus.COMPLETED && inspection.customerConfirmed) {
-    return {
-      success: true,
-      sessionId,
-      sessionStatus: SessionStatus.COMPLETED,
-      alreadyCompleted: true,
-    };
+    return { alreadyCompleted: true, session };
   }
 
   if (session.status !== SessionStatus.CHECKING_OUT) {
@@ -3025,49 +3240,136 @@ export async function staffConfirmCheckout(
     );
   }
 
-  // Staff confirms at counter after customer reviews breakdown
   inspection.customerConfirmed = true;
-  inspection.customerConfirmedAt = new Date();
-  await inspRepo.save(inspection);
+  inspection.customerConfirmedAt ??= new Date();
+  await AppDataSource.getRepository(Inspection).save(inspection);
 
   session.status = SessionStatus.COMPLETED;
   session.actualEndAt = new Date();
-  await sessionRepo.save(session);
+  session.checkedOutBy = staffUserId;
+  await AppDataSource.getRepository(Session).save(session);
 
-  const svs = await AppDataSource.getRepository(SessionVehicle).find({ where: { sessionId } });
-  for (const sv of svs) {
-    const newStatus = inspection.damageNoted ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
-    if (sv.vehicleId) {
-      await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, { status: newStatus });
+  const sessionVehicles = await AppDataSource.getRepository(SessionVehicle).find({
+    where: { sessionId: session.id },
+  });
+  for (const sessionVehicle of sessionVehicles) {
+    if (sessionVehicle.vehicleId) {
+      await AppDataSource.getRepository(Vehicle).update(sessionVehicle.vehicleId, {
+        status: inspection.damageNoted ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE,
+      });
     }
   }
 
-  // Xử lý bảo trì, tạo log và phát WS chỉ khi đã bấm XÁC NHẬN checkout
   if (inspection.damageNoted) {
-    await handleVehicleCheckoutMaintenance(sessionId, inspection, staffUserId);
+    const [existingMaintenanceLog] = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM vehicle_maintenance_logs WHERE related_session_id = $1 LIMIT 1`,
+      [session.id],
+    );
+    if (!existingMaintenanceLog) {
+      await handleVehicleCheckoutMaintenance(session.id, inspection, staffUserId);
+    }
   }
 
-  await settleSessionCheckoutBilling(sessionId, inspection);
+  await settleSessionCheckoutBilling(session.id, inspection);
+  return { alreadyCompleted: false, session };
+}
 
+async function reconcileBookingAfterCheckout(booking: Booking): Promise<{
+  allSessionsCompleted: boolean;
+  pendingCount: number;
+  newlyCompleted: boolean;
+}> {
+  const sessions = await AppDataSource.getRepository(Session).find({
+    where: { bookingId: booking.id },
+  });
+  const allSessionsCompleted = sessions.every(
+    (session) => session.status === SessionStatus.COMPLETED,
+  );
+  if (!allSessionsCompleted) {
+    return { allSessionsCompleted: false, pendingCount: 0, newlyCompleted: false };
+  }
+
+  const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
+    where: { bookingId: booking.id, status: PaymentComponentStatus.PENDING },
+  });
+  if (pendingCount > 0) {
+    if (booking.status !== BookingStatus.AWAITING_PAYMENT) {
+      await AppDataSource.getRepository(Booking).update(booking.id, {
+        status: BookingStatus.AWAITING_PAYMENT,
+      });
+    }
+    return { allSessionsCompleted: true, pendingCount, newlyCompleted: false };
+  }
+
+  const newlyCompleted = booking.status !== BookingStatus.COMPLETED;
+  if (booking.status === BookingStatus.AWAITING_PAYMENT) {
+    await transition(booking.id, 'PAYMENT_SETTLED');
+  } else if (booking.status === BookingStatus.CONFIRMED) {
+    await transition(booking.id, 'COMPLETE');
+  } else if (newlyCompleted) {
+    await AppDataSource.getRepository(Booking).update(booking.id, {
+      status: BookingStatus.COMPLETED,
+    });
+  }
+
+  await AppDataSource.getRepository(Booking).update(booking.id, { completedAt: new Date() });
+  return { allSessionsCompleted: true, pendingCount: 0, newlyCompleted };
+}
+
+function pushCheckoutCompletedEvents(
+  booking: Booking,
+  sessionId: string,
+  staffUserId: string,
+): void {
+  const payload = {
+    sessionId,
+    bookingId: booking.id,
+    sessionStatus: SessionStatus.COMPLETED,
+  };
+  wsService.pushToUser(staffUserId, 'SESSION_CHECKOUT_COMPLETED', payload);
+  if (booking.customerId) {
+    wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', payload);
+  }
+}
+
+// ── STAFF CONFIRM CHECKOUT ────────────────────────────────────────────────────
+
+export async function staffConfirmCheckout(
+  sessionId: string,
+  inspectionId: string,
+  staffUserId: string,
+): Promise<any> {
+  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
+  if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
+
+  const inspection = await AppDataSource.getRepository(Inspection).findOne({
+    where: { id: inspectionId, sessionId },
+  });
+  if (!inspection) {
+    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
+  }
+  if (inspection.type !== InspectionType.CHECK_OUT) {
+    throw new AppError('Biên bản không phải loại CHECK_OUT', 400, 'INVALID_INSPECTION_TYPE');
+  }
+
+  const completion = await completeCheckingOutSession(session, inspection, staffUserId);
   const booking = await AppDataSource.getRepository(Booking).findOne({
     where: { id: session.bookingId },
   });
-  const allSessions = await sessionRepo.find({ where: { bookingId: session.bookingId } });
-  const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
-  if (allDone && booking) {
-    const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
-      where: { bookingId: session.bookingId, status: PaymentComponentStatus.PENDING },
-    });
-    await AppDataSource.getRepository(Booking).update(
-      session.bookingId,
-      pendingCount > 0
-        ? { status: BookingStatus.AWAITING_PAYMENT }
-        : { status: BookingStatus.COMPLETED, completedAt: new Date() },
-    );
+  if (booking) {
+    await reconcileBookingAfterCheckout(booking);
   }
 
   logger.info('Staff', 'staffConfirmCheckout', { sessionId, inspectionId, staffUserId });
-  return { success: true, sessionId, sessionStatus: SessionStatus.COMPLETED };
+  if (booking) {
+    pushCheckoutCompletedEvents(booking, sessionId, staffUserId);
+  }
+  return {
+    success: true,
+    sessionId,
+    sessionStatus: SessionStatus.COMPLETED,
+    alreadyCompleted: completion.alreadyCompleted,
+  };
 }
 
 // ── UPDATE DAMAGE LINE ITEMS (staff edits before confirming) ─────────────────
@@ -3219,9 +3521,11 @@ export async function settleSessionCheckoutBilling(
   const totalExtensionFee = extensions.reduce((sum, ext) => sum + Number(ext.feeAmount), 0);
 
   // 3. Fetch on-site F&B orders → Service consumption fee
-  const onsiteFnbs = await AppDataSource.getRepository(FnbOrder).find({
-    where: { sessionId: session.id, orderType: FnbOrderType.ON_SITE },
-  });
+  const onsiteFnbs = (
+    await AppDataSource.getRepository(FnbOrder).find({
+      where: { sessionId: session.id, orderType: FnbOrderType.ON_SITE },
+    })
+  ).filter((order) => order.status !== FnbOrderStatus.CANCELLED);
   const totalOnsiteFnb = onsiteFnbs.reduce((sum, fnb) => sum + Number(fnb.totalAmount), 0);
 
   // 4. Calculate damage charge from checkout inspection → Asset protection fee
@@ -3302,7 +3606,8 @@ export async function settleSessionCheckoutBilling(
   if (totalOnsiteFnb > 0) {
     const existingOnsiteFnbComp = existingComponents.find(
       (c) =>
-        c.type === PaymentComponentType.FB_PREORDER && c.status === PaymentComponentStatus.PENDING,
+        [PaymentComponentType.FNB_ON_SITE, PaymentComponentType.FB_PREORDER].includes(c.type) &&
+        c.status === PaymentComponentStatus.PENDING,
     );
     if (existingOnsiteFnbComp) {
       existingOnsiteFnbComp.amount = totalOnsiteFnb;
@@ -3310,7 +3615,7 @@ export async function settleSessionCheckoutBilling(
     } else {
       newComponents.push({
         bookingId: booking.id,
-        type: PaymentComponentType.FB_PREORDER,
+        type: PaymentComponentType.FNB_ON_SITE,
         amount: totalOnsiteFnb,
         status: PaymentComponentStatus.PENDING,
       });
@@ -3379,47 +3684,23 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     order: { createdAt: 'DESC' },
   });
 
+  let checkoutWasCompletedDuringSettlement = false;
+  let completedSessionIdDuringSettlement: string | undefined;
   if (sessionForNotification && sessionForNotification.status === SessionStatus.CHECKING_OUT) {
-    const session = sessionForNotification;
     const inspection = await AppDataSource.getRepository(Inspection).findOne({
-      where: { sessionId: session.id, type: InspectionType.CHECK_OUT },
+      where: { sessionId: sessionForNotification.id, type: InspectionType.CHECK_OUT },
     });
 
     if (inspection) {
-      inspection.customerConfirmed = true;
-      if (!inspection.customerConfirmedAt) {
-        inspection.customerConfirmedAt = new Date();
+      const completion = await completeCheckingOutSession(
+        sessionForNotification,
+        inspection,
+        staffUserId,
+      );
+      checkoutWasCompletedDuringSettlement = !completion.alreadyCompleted;
+      if (!completion.alreadyCompleted) {
+        completedSessionIdDuringSettlement = sessionForNotification.id;
       }
-      await AppDataSource.getRepository(Inspection).save(inspection);
-
-      session.status = SessionStatus.COMPLETED;
-      session.actualEndAt = new Date();
-      session.checkedOutBy = staffUserId;
-      await AppDataSource.getRepository(Session).save(session);
-
-      const svs = await AppDataSource.getRepository(SessionVehicle).find({
-        where: { sessionId: session.id },
-      });
-      for (const sv of svs) {
-        const newStatus = inspection.damageNoted
-          ? VehicleStatus.MAINTENANCE
-          : VehicleStatus.AVAILABLE;
-        if (sv.vehicleId) {
-          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, { status: newStatus });
-        }
-      }
-
-      if (inspection.damageNoted) {
-        const [existingLog] = await AppDataSource.query<{ id: string }[]>(
-          `SELECT id FROM vehicle_maintenance_logs WHERE related_session_id = $1 LIMIT 1`,
-          [session.id],
-        );
-        if (!existingLog) {
-          await handleVehicleCheckoutMaintenance(session.id, inspection, staffUserId);
-        }
-      }
-
-      await settleSessionCheckoutBilling(session.id, inspection);
     }
   }
 
@@ -3435,6 +3716,20 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
   const hasPendingRefund = depositComp?.status === PaymentComponentStatus.PENDING_REFUND;
 
   if (!hasPendingRefund && pendingComponents.length === 0) {
+    if (checkoutWasCompletedDuringSettlement) {
+      await reconcileBookingAfterCheckout(booking);
+      if (completedSessionIdDuringSettlement) {
+        pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
+      }
+      return {
+        success: true,
+        bookingId,
+        noAdditionalSettlement: true,
+        totalCounterBill: 0,
+        depositRefundAmount: 0,
+        netCounterAmount: 0,
+      };
+    }
     throw new AppError(
       'Đơn này không còn khoản thanh toán hoặc hoàn tiền cần xử lý',
       409,
@@ -3508,7 +3803,15 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
           txnRef: ctrRef,
           amount: totalCounterBill,
           status: PaymentTransactionStatus.SUCCESS,
-          rawRequest: { counterSettlement: true },
+          rawRequest: {
+            counterSettlement: true,
+            additionalPayment: true,
+            components: pendingComponents.map((component) => ({
+              id: component.id,
+              type: component.type,
+              amount: Number(component.amount),
+            })),
+          },
           rawResponse: {
             settledAt: new Date().toISOString(),
             totalCounterBill,
@@ -3573,41 +3876,26 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     logger.error('SettlePendingNotification', 'Failed to notify', err);
   }
 
-  const allSessions = await AppDataSource.getRepository(Session).find({
-    where: { bookingId },
-  });
-  const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
-
-  if (allDone) {
-    const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
-      where: { bookingId, status: PaymentComponentStatus.PENDING },
-    });
-
-    if (pendingCount === 0) {
-      if (booking.status === BookingStatus.AWAITING_PAYMENT) {
-        await transition(bookingId, 'PAYMENT_SETTLED');
-      } else if (booking.status === BookingStatus.CONFIRMED) {
-        await transition(bookingId, 'COMPLETE');
-      }
-
-      await AppDataSource.getRepository(Booking).update(bookingId, {
-        completedAt: new Date(),
-      });
-
-      if (booking.source !== BookingSource.STAFF_MANUAL && booking.customerId) {
-        await createNotification(
-          booking.customerId,
-          NotificationType.BOOKING_REVIEW_REQUEST,
-          'Đánh giá trải nghiệm của bạn',
-          'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-          {
-            bookingId,
-            route: `/customer/review/${bookingId}`,
-          },
-        ).catch(() => {});
-        wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
-      }
-    }
+  const bookingReconciliation = await reconcileBookingAfterCheckout(booking);
+  if (completedSessionIdDuringSettlement) {
+    pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
+  }
+  if (
+    bookingReconciliation.newlyCompleted &&
+    booking.source !== BookingSource.STAFF_MANUAL &&
+    booking.customerId
+  ) {
+    await createNotification(
+      booking.customerId,
+      NotificationType.BOOKING_REVIEW_REQUEST,
+      'Đánh giá trải nghiệm của bạn',
+      'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
+      {
+        bookingId,
+        route: `/customer/review/${bookingId}`,
+      },
+    ).catch(() => {});
+    wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
   }
 
   return {

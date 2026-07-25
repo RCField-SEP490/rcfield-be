@@ -912,6 +912,7 @@ describe('Contest runtime routes', () => {
   it('admin co the tao featured popup va public lay popup active uu tien cao nhat', async () => {
     const admin = await createTestUser({ role: UserRole.ADMIN });
     const adminToken = generateToken(admin);
+    const now = Date.now();
 
     const inactive = await request(app)
       .post('/api/v1/admin/featured-popups')
@@ -922,8 +923,8 @@ describe('Contest runtime routes', () => {
         image_url: 'https://example.com/popup-old.jpg',
         cta_label: 'Xem ngay',
         cta_url: 'https://example.com/old',
-        starts_at: '2026-07-10T00:00:00.000Z',
-        ends_at: '2026-07-12T00:00:00.000Z',
+        starts_at: new Date(now - 4 * 24 * 60 * 60 * 1000).toISOString(),
+        ends_at: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
         is_active: true,
         priority: 10,
       })
@@ -940,8 +941,8 @@ describe('Contest runtime routes', () => {
         image_url: 'https://example.com/popup-hot.jpg',
         cta_label: 'Dang ky ngay',
         cta_url: 'https://example.com/hot',
-        starts_at: '2026-07-16T00:00:00.000Z',
-        ends_at: '2026-07-20T00:00:00.000Z',
+        starts_at: new Date(now - 60 * 60 * 1000).toISOString(),
+        ends_at: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
         is_active: true,
         priority: 200,
       })

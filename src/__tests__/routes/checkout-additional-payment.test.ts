@@ -58,11 +58,11 @@ describe('POST /api/v1/bookings/:id/checkout-additional-payment', () => {
     );
     booking = insertedBooking;
 
-    // 4. Create a pending payment component representing extra charges (e.g. F&B onsite)
+    // 4. Create a pending payment component representing F&B ordered at the counter.
     await AppDataSource.query(
       `INSERT INTO payment_components (booking_id, type, amount, status)
        VALUES ($1, $2, $3, $4)`,
-      [booking.id, PaymentComponentType.FB_PREORDER, 150000, PaymentComponentStatus.PENDING],
+      [booking.id, PaymentComponentType.FNB_ON_SITE, 150000, PaymentComponentStatus.PENDING],
     );
   });
 
@@ -83,12 +83,40 @@ describe('POST /api/v1/bookings/:id/checkout-additional-payment', () => {
     expect(tx).toBeTruthy();
     expect(tx!.status).toBe(PaymentTransactionStatus.SUCCESS);
     expect(Number(tx!.amount)).toBe(150000);
+    expect(tx!.rawRequest).toMatchObject({
+      additionalPayment: true,
+      components: [
+        expect.objectContaining({ type: PaymentComponentType.FNB_ON_SITE, amount: 150000 }),
+      ],
+    });
 
     // 2. Check the payment component status has transitioned to DISBURSED
     const compRepo = AppDataSource.getRepository(PaymentComponent);
     const comps = await compRepo.find({ where: { bookingId: booking.id } });
     expect(comps.length).toBe(1);
     expect(comps[0].status).toBe(PaymentComponentStatus.DISBURSED);
+
+    // The payment-result page receives the same immutable fee detail that was
+    // charged, rather than reconstructing it from the current F&B order list.
+    const receipt = await request(app)
+      .get(`/api/v1/bookings/payment-transactions/${res.body.data.txn_ref}`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .expect(200);
+    expect(receipt.body.data.additionalPayment).toBe(true);
+    expect(receipt.body.data.components).toEqual([
+      expect.objectContaining({ type: PaymentComponentType.FNB_ON_SITE, amount: 150000 }),
+    ]);
+
+    const bookingDetail = await request(app)
+      .get(`/api/v1/bookings/${booking.id}`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .expect(200);
+    expect(bookingDetail.body.data.financial_summary).toMatchObject({
+      additionalTotal: 150000,
+      additionalPaidAmount: 150000,
+      additionalOutstandingAmount: 0,
+      isSettled: true,
+    });
   });
 
   it('trả về 400 nếu không có khoản phí phát sinh nào cần thanh toán', async () => {

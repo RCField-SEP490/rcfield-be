@@ -22,6 +22,12 @@ bookingRouter.get(
   bookingController.listMyBookings,
 );
 
+bookingRouter.get(
+  '/payment-transactions/:txnRef',
+  authenticate,
+  bookingController.getPaymentTransaction,
+);
+
 bookingRouter.get('/:id', authenticate, bookingController.getBooking);
 
 bookingRouter.post(

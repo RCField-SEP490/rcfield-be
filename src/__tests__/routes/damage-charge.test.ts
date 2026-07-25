@@ -19,6 +19,13 @@ interface LineItemSeed {
   laborPrice: number;
 }
 
+const rentalInspectionPhotos = [
+  { angle: 'FRONT', url: 'https://example.com/inspection-front.jpg' },
+  { angle: 'BACK', url: 'https://example.com/inspection-back.jpg' },
+  { angle: 'LEFT', url: 'https://example.com/inspection-left.jpg' },
+  { angle: 'RIGHT', url: 'https://example.com/inspection-right.jpg' },
+];
+
 async function seedCheckoutScenario(opts: {
   depositAmount: number;
   lineItems?: LineItemSeed[];
@@ -118,6 +125,7 @@ describe('POST /api/v1/staff/sessions/:id/inspections — submitInspection', () 
       .set('Authorization', `Bearer ${generateToken(staff)}`)
       .send({
         type: 'CHECK_OUT',
+        photos: rentalInspectionPhotos,
         damageFlagged: true,
         damageLineItems: [
           { partType: 'TIRE_WHEEL', partsPrice: 150000, laborPrice: 50000 },
@@ -164,7 +172,12 @@ describe('POST /api/v1/staff/sessions/:id/inspections — submitInspection', () 
     await request(app)
       .post(`/api/v1/staff/sessions/${session.id}/inspections`)
       .set('Authorization', `Bearer ${generateToken(staff)}`)
-      .send({ type: 'CHECK_OUT', damageFlagged: false, damageLineItems: [] })
+      .send({
+        type: 'CHECK_OUT',
+        photos: rentalInspectionPhotos,
+        damageFlagged: false,
+        damageLineItems: [],
+      })
       .expect(201);
 
     const [updated] = await AppDataSource.query(`SELECT status FROM sessions WHERE id = $1`, [

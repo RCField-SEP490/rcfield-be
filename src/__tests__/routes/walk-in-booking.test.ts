@@ -339,6 +339,51 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     expect(booking!.totalAmount).toBe(booking!.slotFee + booking!.rentalFee + 10000);
   });
 
+  it('ghi nhận đồ ăn, thức uống gọi trong phiên vào phí phát sinh và bỏ ra khi huỷ', async () => {
+    const slotStart = nextLocalDateAt(10);
+    const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
+    const [bookingRow] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings (
+         customer_id, cafe_id, track_type_id, play_mode, source, status,
+         slot_start, slot_end, slot_count, payment_expires_at, snapshot, discount_amount
+       )
+       VALUES ($1, $2, $3, 'BYOC', 'STAFF_MANUAL', 'CONFIRMED', $4, $5, 1, NOW(), '{}'::jsonb, 0)
+       RETURNING id`,
+      [staffUser.id, cafe.id, trackTypeId, slotStart, slotEnd],
+    );
+    await AppDataSource.query(
+      `INSERT INTO menu_items (cafe_id, name, price, is_available)
+       VALUES ($1, 'Nước kiểm thử', 30000, true)`,
+      [cafe.id],
+    );
+    const session = await AppDataSource.getRepository(Session).save({
+      bookingId: bookingRow.id,
+      cafeId: cafe.id,
+      checkedInBy: staffUser.id,
+      status: SessionStatus.ACTIVE,
+      actualStartAt: new Date(),
+      plannedEndAt: slotEnd,
+      actualTotalAmount: 0,
+    });
+
+    const order = await staffService.addSessionFnbOrder(session.id, staffUser.id, {
+      items: [{ name: 'Nước kiểm thử', qty: 2, price: 30000 }],
+    });
+    const componentRepo = AppDataSource.getRepository(PaymentComponent);
+    const component = await componentRepo.findOne({
+      where: { bookingId: bookingRow.id, type: PaymentComponentType.FNB_ON_SITE },
+    });
+    expect(component).toMatchObject({ status: PaymentComponentStatus.PENDING });
+    expect(Number(component!.amount)).toBe(60000);
+
+    await staffService.updateFnbOrderStatus(order.id, cafe.id, FnbOrderStatus.CANCELLED);
+    expect(
+      await componentRepo.findOne({
+        where: { bookingId: bookingRow.id, type: PaymentComponentType.FNB_ON_SITE },
+      }),
+    ).toBeNull();
+  });
+
   it('từ chối gia hạn trực tiếp cho đơn đặt trước APP', async () => {
     const slotStart = new Date(Date.now() + 6 * 60 * 60 * 1000);
     slotStart.setMinutes(0, 0, 0);
@@ -373,6 +418,54 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
         direct: true,
       }),
     ).rejects.toMatchObject({ code: 'DIRECT_EXTENSION_NOT_ALLOWED', statusCode: 400 });
+  });
+
+  it('ghi nhận phí gia hạn ngay khi khách duyệt đề xuất trên ứng dụng', async () => {
+    const slotStart = nextLocalDateAt(10);
+    const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
+    const customer = await createTestUser({
+      role: UserRole.CUSTOMER,
+      full_name: 'Khách Duyệt Gia Hạn',
+    });
+    const [bookingRow] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings (
+         customer_id, cafe_id, track_type_id, play_mode, source, status,
+         slot_start, slot_end, slot_count, payment_expires_at, snapshot, discount_amount
+       )
+       VALUES ($1, $2, $3, 'BYOC', $4, 'CONFIRMED', $5, $6, 1, NOW(), '{}'::jsonb, 0)
+       RETURNING id`,
+      [customer.id, cafe.id, trackTypeId, BookingSource.APP, slotStart, slotEnd],
+    );
+    await AppDataSource.getRepository(PaymentComponent).save({
+      bookingId: bookingRow.id,
+      type: PaymentComponentType.SLOT_FEE,
+      amount: 60000,
+      status: PaymentComponentStatus.HELD,
+    });
+
+    const session = await AppDataSource.getRepository(Session).save({
+      bookingId: bookingRow.id,
+      cafeId: cafe.id,
+      checkedInBy: staffUser.id,
+      status: SessionStatus.ACTIVE,
+      actualStartAt: new Date(),
+      plannedEndAt: slotEnd,
+      actualTotalAmount: 0,
+    });
+
+    const proposal = await staffService.proposeExtension(session.id, staffUser.id, {
+      extraMinutes: 15,
+      direct: false,
+    });
+    expect(proposal.status).toBe('PENDING');
+
+    await staffService.customerRespondExtension(session.id, customer.id, true);
+
+    const extensionComponent = await AppDataSource.getRepository(PaymentComponent).findOne({
+      where: { bookingId: bookingRow.id, type: PaymentComponentType.EXTENSION_FEE },
+    });
+    expect(extensionComponent).toMatchObject({ status: PaymentComponentStatus.PENDING });
+    expect(Number(extensionComponent!.amount)).toBe(Number(proposal.feeAmount));
   });
 
   it('cho phép gia hạn nếu booking overlap khác track và không còn giữ slot', async () => {
@@ -451,8 +544,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   });
 
   it('cho phép gia hạn nếu booking CONFIRMED cùng track nhưng vẫn còn capacity', async () => {
-    const slotStart = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    slotStart.setMinutes(0, 0, 0);
+    const slotStart = nextLocalDateAt(10);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
     const res = await request(app)
@@ -517,8 +609,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   });
 
   it('backend tự tính phí gia hạn theo duration gốc và bỏ qua additionalFee từ client', async () => {
-    const slotStart = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    slotStart.setMinutes(0, 0, 0);
+    const slotStart = nextLocalDateAt(10);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
     const res = await request(app)
@@ -588,6 +679,19 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
       expect.objectContaining({ extraMinutes: 15, additionalFee: expectedFee }),
     ]);
     expect(afterSecondExtension.extensionProposal.additionalFee).toBe(expectedFee);
+
+    // Approved extensions must become a pending payment component immediately,
+    // rather than waiting for checkout to reconstruct the fee.
+    const extensionComponent = await AppDataSource.getRepository(PaymentComponent).findOne({
+      where: {
+        bookingId: res.body.data.bookingId,
+        type: PaymentComponentType.EXTENSION_FEE,
+      },
+    });
+    expect(extensionComponent).toMatchObject({
+      status: PaymentComponentStatus.PENDING,
+    });
+    expect(Number(extensionComponent!.amount)).toBe(expectedFee * 2);
   });
 
   it('từ chối gia hạn vượt quá giờ đóng cửa của cafe', async () => {
@@ -650,8 +754,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
       [cafe.id, trackTypeId],
     );
 
-    const slotStart = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    slotStart.setMinutes(0, 0, 0);
+    const slotStart = nextLocalDateAt(10);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
     const res = await request(app)

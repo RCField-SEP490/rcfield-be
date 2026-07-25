@@ -28,6 +28,7 @@ import { findContestLockConflictForBooking } from '../services/contest-lock.serv
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
+import { assertSlotWithinOperatingHours } from '../services/booking.service';
 
 function viewerFromRequest(req: AuthRequest) {
   return req.user ? { userId: req.user.userId, role: req.user.role } : undefined;
@@ -219,6 +220,7 @@ export const cafeController = {
 
       const activeStatuses = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
       const slotEnd = new Date(query.slot_end);
+      assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
 
       // Resolve per-track capacity when track_config_id is provided
       let trackConfig: CafeTrackConfig | null = null;
