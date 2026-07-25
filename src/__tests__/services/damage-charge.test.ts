@@ -4,6 +4,32 @@ import {
   UpdateDamageItemsSchema,
 } from '../../validate';
 import { DamagePartType } from '../../types';
+import {
+  RENTAL_INSPECTION_MAX_PHOTOS,
+  RENTAL_INSPECTION_MIN_PHOTOS,
+  hasValidRentalInspectionPhotoCount,
+} from '../../lib/inspection-photo-policy';
+
+describe('inspection photo policy', () => {
+  it('chấp nhận từ 4 đến 6 ảnh cho biên bản xe thuê', () => {
+    expect(hasValidRentalInspectionPhotoCount(Array(RENTAL_INSPECTION_MIN_PHOTOS).fill({}))).toBe(
+      true,
+    );
+    expect(hasValidRentalInspectionPhotoCount(Array(RENTAL_INSPECTION_MAX_PHOTOS).fill({}))).toBe(
+      true,
+    );
+  });
+
+  it('từ chối biên bản xe thuê thiếu ảnh hoặc vượt quá số ảnh tối đa', () => {
+    expect(
+      hasValidRentalInspectionPhotoCount(Array(RENTAL_INSPECTION_MIN_PHOTOS - 1).fill({})),
+    ).toBe(false);
+    expect(
+      hasValidRentalInspectionPhotoCount(Array(RENTAL_INSPECTION_MAX_PHOTOS + 1).fill({})),
+    ).toBe(false);
+    expect(hasValidRentalInspectionPhotoCount(undefined)).toBe(false);
+  });
+});
 
 // ── SubmitInspectionV2Schema — damageLineItems validation ──────────────────────
 

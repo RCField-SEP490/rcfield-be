@@ -99,7 +99,7 @@ function buildOperatingWindow(
   };
 }
 
-function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slotEnd: Date): void {
+export function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slotEnd: Date): void {
   if (!Number.isInteger(cafe.slotDurationMinutes) || cafe.slotDurationMinutes <= 0) {
     throw new AppError(
       'Cafe slot duration is not configured correctly',

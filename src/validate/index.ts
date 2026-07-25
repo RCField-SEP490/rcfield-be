@@ -190,17 +190,33 @@ export const UpdateTrackTypeSchema = z.object({
   sort_order: z.number().int().optional(),
 });
 
-const OperatingHourSchema = z.object({
-  open: z
-    .string()
-    .regex(/^\d{2}:\d{2}$/)
-    .optional(),
-  close: z
-    .string()
-    .regex(/^\d{2}:\d{2}$/)
-    .optional(),
-  is_closed: z.boolean().optional(),
-});
+const OpeningTimeSchema = z
+  .string()
+  .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, 'Giờ mở cửa phải nằm trong khoảng 00:00–23:59');
+
+const ClosingTimeSchema = z
+  .string()
+  .regex(/^(?:(?:[01]\d|2[0-3]):[0-5]\d|24:00)$/, 'Giờ đóng cửa phải nằm trong khoảng 00:00–24:00');
+
+const OperatingHourSchema = z
+  .object({
+    open: OpeningTimeSchema.optional(),
+    close: ClosingTimeSchema.optional(),
+    is_closed: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.is_closed) return;
+    if (!value.open) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['open'], message: 'Cần nhập giờ mở cửa' });
+    }
+    if (!value.close) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['close'],
+        message: 'Cần nhập giờ đóng cửa',
+      });
+    }
+  });
 
 export const CafeListQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1).openapi({ example: 1 }),
