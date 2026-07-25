@@ -6,6 +6,7 @@ const config: Config = {
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   testTimeout: 30000,
+  maxWorkers: 1,
 
   // Load .env.test trước khi bất kỳ test file nào được import
   setupFiles: ['<rootDir>/src/__tests__/load-env.ts'],
