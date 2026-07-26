@@ -123,7 +123,7 @@ describe('GET /api-docs.json', () => {
         expect.objectContaining({ name: 'cafeId', in: 'path' }),
         expect.objectContaining({ name: 'page', in: 'query' }),
         expect.objectContaining({ name: 'limit', in: 'query' }),
-        expect.objectContaining({ name: 'category', in: 'query' }),
+        expect.objectContaining({ name: 'category_id', in: 'query' }),
         expect.objectContaining({ name: 'available', in: 'query' }),
       ]),
     );

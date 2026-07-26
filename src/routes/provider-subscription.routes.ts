@@ -115,6 +115,11 @@ providerSubscriptionRouter.get(
   providerDashboardController.getBranchPerformance,
 );
 providerSubscriptionRouter.get(
+  '/dashboard/branch-operations',
+  requireActiveProvider,
+  providerDashboardController.getBranchOperations,
+);
+providerSubscriptionRouter.get(
   '/dashboard/recent-bookings',
   requireActiveProvider,
   providerDashboardController.getRecentBookings,

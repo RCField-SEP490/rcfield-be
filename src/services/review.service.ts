@@ -1,7 +1,7 @@
 import { AppDataSource } from '../config/database';
 import { Review } from '../models/review.entity';
 import { Booking } from '../models/booking.entity';
-import { AppError, BookingMode, BookingStatus, ReviewStatus } from '../types';
+import { AppError, BookingMode, BookingStatus, ReviewStatus, UserRole } from '../types';
 
 const REVIEW_WINDOW_DAYS = 5;
 
@@ -253,55 +253,112 @@ export async function getCafeReviews(
 
 // ── US4: Provider review list ─────────────────────────────────────────────────
 
-export interface ProviderReviewItem extends Review {
+export interface ProviderReviewItem {
+  id: string;
+  bookingId: string;
+  cafeId: string;
+  customerId: string;
+  overallScore: number;
+  vehicleScore: number | null;
+  staffScore: number | null;
+  facilityScore: number | null;
+  note: string | null;
+  status: ReviewStatus;
+  createdAt: Date;
   customerName: string;
-  newSince24h?: boolean;
+}
+
+interface ProviderReviewViewer {
+  userId: string;
+  role: UserRole.PROVIDER | UserRole.ADMIN;
+}
+
+interface ProviderReviewQuery {
+  cafeId?: string;
+  status?: ReviewStatus;
+  page: number;
+  limit: number;
+}
+
+function buildProviderReviewFilters(
+  viewer: ProviderReviewViewer,
+  { cafeId, status }: Pick<ProviderReviewQuery, 'cafeId' | 'status'>,
+): { where: string; params: unknown[] } {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (viewer.role === UserRole.PROVIDER) {
+    params.push(viewer.userId);
+    conditions.push(`c.provider_id = $${params.length}`);
+  }
+
+  if (cafeId) {
+    params.push(cafeId);
+    conditions.push(`r.cafe_id = $${params.length}`);
+  }
+
+  if (status) {
+    params.push(status);
+    conditions.push(`r.status = $${params.length}`);
+  }
+
+  return {
+    where: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
+    params,
+  };
 }
 
 export async function getProviderReviews(
-  providerId: string,
-  options: {
-    cafeId?: string;
-    status?: ReviewStatus;
-    page: number;
-    limit: number;
-  },
+  viewer: ProviderReviewViewer,
+  options: ProviderReviewQuery,
 ): Promise<{ data: ProviderReviewItem[]; total: number; newSince24h: number }> {
-  const { cafeId, status, page, limit } = options;
+  const { page, limit } = options;
   const offset = (page - 1) * limit;
-
-  const cafeFilter = cafeId
-    ? `AND r.cafe_id = '${cafeId}'::uuid`
-    : `AND r.cafe_id IN (SELECT id FROM cafes WHERE provider_id = '${providerId}'::uuid)`;
-
-  const statusFilter = status ? `AND r.status = '${status}'` : '';
-
   const threshold = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { where, params } = buildProviderReviewFilters(viewer, options);
+  const fromClause = 'FROM reviews r JOIN cafes c ON c.id = r.cafe_id';
+  const pageLimitPlaceholder = `$${params.length + 1}`;
+  const pageOffsetPlaceholder = `$${params.length + 2}`;
+  const thresholdPlaceholder = `$${params.length + 1}`;
 
   const [rows, [{ count }], [{ newCount }]] = await Promise.all([
-    AppDataSource.query<(Review & { full_name: string })[]>(
-      `SELECT r.*, u.full_name
+    AppDataSource.query<(ProviderReviewItem & { fullName: string })[]>(
+      `SELECT
+         r.id,
+         r.booking_id AS "bookingId",
+         r.cafe_id AS "cafeId",
+         r.customer_id AS "customerId",
+         r.rating AS "overallScore",
+         r.vehicle_score AS "vehicleScore",
+         r.staff_score AS "staffScore",
+         r.facility_score AS "facilityScore",
+         r.note,
+         r.status,
+         r.created_at AS "createdAt",
+         u.full_name AS "fullName"
        FROM reviews r
        JOIN users u ON u.id = r.customer_id
-       WHERE 1=1 ${cafeFilter} ${statusFilter}
+       JOIN cafes c ON c.id = r.cafe_id
+       ${where}
        ORDER BY r.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset],
+       LIMIT ${pageLimitPlaceholder} OFFSET ${pageOffsetPlaceholder}`,
+      [...params, limit, offset],
     ),
     AppDataSource.query<{ count: string }[]>(
-      `SELECT COUNT(*)::text AS count FROM reviews r WHERE 1=1 ${cafeFilter} ${statusFilter}`,
-      [],
+      `SELECT COUNT(*)::text AS count ${fromClause} ${where}`,
+      params,
     ),
     AppDataSource.query<{ newCount: string }[]>(
       `SELECT COUNT(*)::text AS "newCount" FROM reviews r
-       WHERE 1=1 ${cafeFilter} AND r.created_at > $1`,
-      [threshold],
+       JOIN cafes c ON c.id = r.cafe_id
+       ${where}${where ? ' AND' : ' WHERE'} r.created_at > ${thresholdPlaceholder}`,
+      [...params, threshold],
     ),
   ]);
 
   const data: ProviderReviewItem[] = rows.map((r) => ({
     ...r,
-    customerName: maskName(r.full_name),
+    customerName: maskName(r.fullName),
   }));
 
   return { data, total: parseInt(count, 10), newSince24h: parseInt(newCount, 10) };
@@ -311,17 +368,21 @@ export async function getProviderReviews(
 
 export async function setVisibility(
   reviewId: string,
-  providerId: string,
+  viewer: ProviderReviewViewer,
   status: ReviewStatus,
 ): Promise<Review> {
   const reviewRepo = AppDataSource.getRepository(Review);
 
-  const review = await reviewRepo
+  const query = reviewRepo
     .createQueryBuilder('r')
     .innerJoin('cafes', 'c', 'c.id = r.cafe_id')
-    .where('r.id = :reviewId', { reviewId })
-    .andWhere('c.provider_id = :providerId', { providerId })
-    .getOne();
+    .where('r.id = :reviewId', { reviewId });
+
+  if (viewer.role === UserRole.PROVIDER) {
+    query.andWhere('c.provider_id = :providerId', { providerId: viewer.userId });
+  }
+
+  const review = await query.getOne();
 
   if (!review) {
     throw new AppError(
