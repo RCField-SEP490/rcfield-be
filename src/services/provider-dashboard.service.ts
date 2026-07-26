@@ -1,4 +1,11 @@
 import { AppDataSource } from '../config/database';
+import { CafeOperatingHours } from '../types';
+import {
+  getBookableSlotMinutes,
+  getOccupancyRate,
+  getVietnamCurrentMonthRange,
+} from '../lib/provider-occupancy';
+import { SESSION_OVERDUE_ALERT_MINUTES } from '../lib/session-operational-timing';
 
 export interface ProviderKpi {
   totalRevenue: number;
@@ -35,6 +42,23 @@ export interface BranchPerformanceItem {
   cafeName: string;
   totalRevenue: number;
   bookingCount: number;
+}
+
+export interface BranchOperationsItem {
+  cafeId: string;
+  cafeName: string;
+  cafeStatus: string;
+  totalRevenue: number;
+  bookingCount: number;
+  occupiedSlotMinutes: number;
+  bookableSlotMinutes: number;
+  occupancyRate: number | null;
+  totalVehicles: number;
+  inUseVehicles: number;
+  availableVehicles: number;
+  maintenanceVehicles: number;
+  overdueSessionCount: number;
+  operationalAlertCount: number;
 }
 
 export interface RecentBookingItem {
@@ -106,7 +130,7 @@ export async function getProviderKpi(
     ]
   >(
     `SELECT
-      COUNT(v.id)::int AS "totalVehicles",
+      COUNT(CASE WHEN v.status != 'RETIRED' THEN 1 END)::int AS "totalVehicles",
       COUNT(CASE WHEN v.status = 'IN_USE' THEN 1 END)::int AS "inUseVehicles",
       COUNT(CASE WHEN v.status = 'AVAILABLE' THEN 1 END)::int AS "availableVehicles",
       COUNT(CASE WHEN v.status = 'MAINTENANCE' THEN 1 END)::int AS "maintenanceVehicles"
@@ -438,6 +462,225 @@ export async function getProviderBranchPerformance(
     totalRevenue: Number(row.totalRevenue),
     bookingCount: Number(row.bookingCount),
   }));
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  const result = Number(value ?? 0);
+  return Number.isFinite(result) ? result : 0;
+}
+
+function normalizeOperatingHours(value: unknown): CafeOperatingHours {
+  if (value && typeof value === 'object') return value as CafeOperatingHours;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object') return parsed as CafeOperatingHours;
+    } catch {
+      // An invalid legacy payload has no reliable capacity, so it should render as no data.
+    }
+  }
+  return {};
+}
+
+/**
+ * Operational summary for the provider's branch-list screen. Occupancy is
+ * booked slot-minutes divided by configured, open slot-minutes in the selected
+ * period; it is intentionally not a completed-booking rate.
+ */
+export async function getProviderBranchOperations(
+  providerId: string,
+  from?: string,
+  to?: string,
+): Promise<BranchOperationsItem[]> {
+  const currentMonth = getVietnamCurrentMonthRange();
+  const fromDate = from || currentMonth.from;
+  const toDate = to || currentMonth.to;
+
+  const [cafes, revenueRows, occupiedRows, fleetRows, overdueRows, capacityRows] =
+    await Promise.all([
+      AppDataSource.query<
+        Array<{
+          cafeId: string;
+          cafeName: string;
+          cafeStatus: string;
+          operatingHours: unknown;
+          maxConcurrentBookings: number | string;
+        }>
+      >(
+        `SELECT
+         c.id AS "cafeId",
+         c.name AS "cafeName",
+         c.status AS "cafeStatus",
+         c.operating_hours AS "operatingHours",
+         c.max_concurrent_bookings AS "maxConcurrentBookings"
+       FROM cafes c
+       WHERE c.provider_id = $1
+         AND c.deleted_at IS NULL`,
+        [providerId],
+      ),
+      AppDataSource.query<
+        Array<{ cafeId: string; totalRevenue: number | string; bookingCount: number | string }>
+      >(
+        `WITH booking_revenue AS (
+           SELECT
+             b.cafe_id AS cafe_id,
+             COALESCE(SUM(pc.amount), 0)::float AS total_revenue,
+             COUNT(DISTINCT b.id)::int AS booking_count
+           FROM bookings b
+           JOIN cafes c ON c.id = b.cafe_id
+           LEFT JOIN payment_components pc ON pc.booking_id = b.id
+             AND pc.status IN ('HELD', 'DISBURSED')
+             AND pc.type != 'SECURITY_DEPOSIT'
+           WHERE c.provider_id = $1
+             AND c.deleted_at IS NULL
+             AND b.deleted_at IS NULL
+             AND b.slot_start >= $2::timestamptz
+             AND b.slot_start < $3::timestamptz
+           GROUP BY b.cafe_id
+         ), package_revenue AS (
+           SELECT
+             cp.cafe_id AS cafe_id,
+             COALESCE(SUM(cp.purchased_price), 0)::float AS total_revenue
+           FROM customer_packages cp
+           JOIN cafes c ON c.id = cp.cafe_id
+           WHERE c.provider_id = $1
+             AND c.deleted_at IS NULL
+             AND cp.status IN ('ACTIVE', 'EXHAUSTED')
+             AND cp.created_at >= $2::timestamptz
+             AND cp.created_at < $3::timestamptz
+           GROUP BY cp.cafe_id
+         )
+         SELECT
+           c.id AS "cafeId",
+           (COALESCE(br.total_revenue, 0) + COALESCE(pr.total_revenue, 0))::float AS "totalRevenue",
+           COALESCE(br.booking_count, 0)::int AS "bookingCount"
+         FROM cafes c
+         LEFT JOIN booking_revenue br ON br.cafe_id = c.id
+         LEFT JOIN package_revenue pr ON pr.cafe_id = c.id
+         WHERE c.provider_id = $1
+           AND c.deleted_at IS NULL`,
+        [providerId, fromDate, toDate],
+      ),
+      AppDataSource.query<Array<{ cafeId: string; occupiedSlotMinutes: number | string }>>(
+        `SELECT
+         b.cafe_id AS "cafeId",
+         COALESCE(
+           SUM(
+             EXTRACT(EPOCH FROM (
+               LEAST(b.slot_end, $3::timestamptz) - GREATEST(b.slot_start, $2::timestamptz)
+             )) / 60
+           ),
+           0
+         )::float AS "occupiedSlotMinutes"
+       FROM bookings b
+       JOIN cafes c ON c.id = b.cafe_id
+       WHERE c.provider_id = $1
+         AND c.deleted_at IS NULL
+         AND b.deleted_at IS NULL
+         AND b.status IN ('PENDING', 'CONFIRMED', 'COMPLETED')
+         AND b.slot_start < $3::timestamptz
+         AND b.slot_end > $2::timestamptz
+       GROUP BY b.cafe_id`,
+        [providerId, fromDate, toDate],
+      ),
+      AppDataSource.query<
+        Array<{
+          cafeId: string;
+          totalVehicles: number | string;
+          inUseVehicles: number | string;
+          availableVehicles: number | string;
+          maintenanceVehicles: number | string;
+        }>
+      >(
+        `SELECT
+         v.cafe_id AS "cafeId",
+         COUNT(CASE WHEN v.status != 'RETIRED' THEN 1 END)::int AS "totalVehicles",
+         COUNT(CASE WHEN v.status = 'IN_USE' THEN 1 END)::int AS "inUseVehicles",
+         COUNT(CASE WHEN v.status = 'AVAILABLE' THEN 1 END)::int AS "availableVehicles",
+         COUNT(CASE WHEN v.status = 'MAINTENANCE' THEN 1 END)::int AS "maintenanceVehicles"
+       FROM vehicles v
+       JOIN cafes c ON c.id = v.cafe_id
+       WHERE c.provider_id = $1
+         AND c.deleted_at IS NULL
+         AND v.deleted_at IS NULL
+       GROUP BY v.cafe_id`,
+        [providerId],
+      ),
+      AppDataSource.query<Array<{ cafeId: string; overdueSessionCount: number | string }>>(
+        `SELECT
+         s.cafe_id AS "cafeId",
+         COUNT(s.id)::int AS "overdueSessionCount"
+       FROM sessions s
+       JOIN cafes c ON c.id = s.cafe_id
+       WHERE c.provider_id = $1
+         AND c.deleted_at IS NULL
+         AND s.status = 'ACTIVE'
+         AND s.actual_end_at IS NULL
+         AND s.planned_end_at <= NOW() - ($2 * INTERVAL '1 minute')
+       GROUP BY s.cafe_id`,
+        [providerId, SESSION_OVERDUE_ALERT_MINUTES],
+      ),
+      AppDataSource.query<Array<{ cafeId: string; concurrentCapacity: number | string }>>(
+        `SELECT
+         tc.cafe_id AS "cafeId",
+         COALESCE(SUM(tc.max_concurrent), 0)::int AS "concurrentCapacity"
+       FROM cafe_track_configs tc
+       JOIN cafes c ON c.id = tc.cafe_id
+       WHERE c.provider_id = $1
+         AND c.deleted_at IS NULL
+         AND tc.deleted_at IS NULL
+         AND tc.is_active = TRUE
+       GROUP BY tc.cafe_id`,
+        [providerId],
+      ),
+    ]);
+
+  const revenueByCafe = new Map(revenueRows.map((row) => [row.cafeId, row]));
+  const occupiedByCafe = new Map(occupiedRows.map((row) => [row.cafeId, row]));
+  const fleetByCafe = new Map(fleetRows.map((row) => [row.cafeId, row]));
+  const overdueByCafe = new Map(overdueRows.map((row) => [row.cafeId, row]));
+  const capacityByCafe = new Map(capacityRows.map((row) => [row.cafeId, row]));
+  const fromValue = new Date(fromDate);
+  const toValue = new Date(toDate);
+
+  return cafes
+    .map((cafe) => {
+      const revenue = revenueByCafe.get(cafe.cafeId);
+      const occupied = toNumber(occupiedByCafe.get(cafe.cafeId)?.occupiedSlotMinutes);
+      // Track configs supersede the legacy cafe-wide capacity. Older cafes
+      // without a config retain their original max_concurrent_bookings setting.
+      const configuredCapacity = capacityByCafe.has(cafe.cafeId)
+        ? toNumber(capacityByCafe.get(cafe.cafeId)?.concurrentCapacity)
+        : toNumber(cafe.maxConcurrentBookings);
+      const bookable = getBookableSlotMinutes(
+        normalizeOperatingHours(cafe.operatingHours),
+        configuredCapacity,
+        fromValue,
+        toValue,
+      );
+      const fleet = fleetByCafe.get(cafe.cafeId);
+      const maintenanceVehicles = toNumber(fleet?.maintenanceVehicles);
+      const overdueSessionCount = toNumber(overdueByCafe.get(cafe.cafeId)?.overdueSessionCount);
+      const suspendedAlert = cafe.cafeStatus === 'SUSPENDED' ? 1 : 0;
+
+      return {
+        cafeId: cafe.cafeId,
+        cafeName: cafe.cafeName,
+        cafeStatus: cafe.cafeStatus,
+        totalRevenue: toNumber(revenue?.totalRevenue),
+        bookingCount: toNumber(revenue?.bookingCount),
+        occupiedSlotMinutes: occupied,
+        bookableSlotMinutes: bookable,
+        occupancyRate: getOccupancyRate(occupied, bookable),
+        totalVehicles: toNumber(fleet?.totalVehicles),
+        inUseVehicles: toNumber(fleet?.inUseVehicles),
+        availableVehicles: toNumber(fleet?.availableVehicles),
+        maintenanceVehicles,
+        overdueSessionCount,
+        operationalAlertCount: suspendedAlert + maintenanceVehicles + overdueSessionCount,
+      };
+    })
+    .sort((a, b) => b.totalRevenue - a.totalRevenue || a.cafeName.localeCompare(b.cafeName, 'vi'));
 }
 
 export async function getProviderRecentBookings(

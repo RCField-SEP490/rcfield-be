@@ -98,6 +98,24 @@ export const providerDashboardController = {
     }
   },
 
+  // GET /api/v1/provider/dashboard/branch-operations
+  async getBranchOperations(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const providerId = req.user!.userId;
+      const { from, to } = req.query;
+
+      const operations = await providerDashboardService.getProviderBranchOperations(
+        providerId,
+        from ? String(from) : undefined,
+        to ? String(to) : undefined,
+      );
+
+      res.json({ success: true, data: operations });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /api/v1/provider/dashboard/recent-bookings
   async getRecentBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
