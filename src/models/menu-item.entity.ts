@@ -4,14 +4,17 @@ import {
   DeleteDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { FnbCategory } from '../types';
+import { MenuCategory } from './menu-category.entity';
 
 @Entity('menu_items')
 @Index(['cafeId'])
 @Index(['cafeId', 'isAvailable'])
+@Index(['categoryId'])
 export class MenuItem {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -28,8 +31,19 @@ export class MenuItem {
   @Column({ type: 'numeric', precision: 15, scale: 2 })
   price: string;
 
-  @Column({ type: 'enum', enum: FnbCategory, nullable: true })
-  category: FnbCategory | null;
+  /** FK tới menu_categories. NULL = "Chưa phân loại". */
+  @Column({ name: 'category_id', type: 'uuid', nullable: true })
+  categoryId: string | null;
+
+  /**
+   * Quan hệ tới danh mục. Khai báo tường minh để TypeORM sắp xếp được theo
+   * `category.displayOrder` khi có phân trang — order-by trên alias join thô
+   * sẽ vỡ ở bước dựng subquery distinct của skip/take.
+   * Trường này bị loại bỏ khi serialize, thay bằng `categoryName` phẳng.
+   */
+  @ManyToOne(() => MenuCategory, { nullable: true })
+  @JoinColumn({ name: 'category_id' })
+  category: MenuCategory | null;
 
   @Column({ name: 'is_combo', type: 'boolean', default: false })
   isCombo: boolean;

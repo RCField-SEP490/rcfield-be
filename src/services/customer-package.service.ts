@@ -263,6 +263,23 @@ export interface MyPackageResponse {
   created_at: string;
 }
 
+/**
+ * Trạng thái hiệu lực tại thời điểm đọc.
+ *
+ * Cột `cp.status` chỉ được cron `package-expiry.job.ts` cập nhật lúc 00:05 mỗi
+ * ngày, nên gói đã quá hạn vẫn nằm ở ACTIVE cho tới lần chạy kế tiếp — và nếu
+ * server không chạy vào thời điểm đó thì kẹt vô thời hạn. Suy ra trạng thái
+ * ngay khi đọc để giao diện luôn đúng, không phụ thuộc cron.
+ *
+ * Chỉ chuyển ACTIVE → EXPIRED. EXHAUSTED (đã dùng hết lượt) giữ nguyên vì đó
+ * mới là thông tin hữu ích với khách.
+ */
+const EFFECTIVE_STATUS_SQL = `CASE
+  WHEN cp.status = '${CustomerPackageStatus.ACTIVE}' AND cp.expires_at < NOW()
+  THEN '${CustomerPackageStatus.EXPIRED}'
+  ELSE cp.status
+END`;
+
 export async function listMyPackages(
   customerId: string,
   query: { status?: CustomerPackageStatus; cafe_id?: string },
@@ -280,7 +297,7 @@ export async function listMyPackages(
       'cp.slots_total AS slots_total',
       'cp.slots_remaining AS slots_remaining',
       'cp.expires_at AS expires_at',
-      'cp.status AS status',
+      `${EFFECTIVE_STATUS_SQL} AS status`,
       'cp.purchased_price AS purchased_price',
       'cp.created_at AS created_at',
     ])
@@ -288,7 +305,9 @@ export async function listMyPackages(
     .orderBy('cp.created_at', 'DESC');
 
   if (query.status) {
-    qb = qb.andWhere('cp.status = :status', { status: query.status });
+    // Lọc theo trạng thái hiệu lực, không theo cột thô — nếu không, ?status=ACTIVE
+    // sẽ trả về cả gói đã quá hạn mà cron chưa kịp cập nhật.
+    qb = qb.andWhere(`${EFFECTIVE_STATUS_SQL} = :status`, { status: query.status });
   }
   if (query.cafe_id) {
     qb = qb.andWhere('cp.cafe_id = :cafeId', { cafeId: query.cafe_id });

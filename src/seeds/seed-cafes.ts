@@ -857,10 +857,45 @@ async function seedVehicles(
   }
 }
 
+/**
+ * Nhãn tiếng Việt cho các mã phân loại dùng trong dữ liệu seed.
+ * Danh mục nay do Provider tự tạo — seed dựng sẵn vài danh mục demo cho mỗi cafe
+ * rồi gán món vào, không còn enum cố định ở tầng DB.
+ */
+const SEED_CATEGORY_LABELS: Record<string, string> = {
+  FOOD: 'Đồ ăn',
+  DRINK: 'Đồ uống',
+  SNACK: 'Ăn vặt',
+  DESSERT: 'Tráng miệng',
+  COMBO: 'Combo',
+  OTHER: 'Khác',
+};
+
+/** Tạo (hoặc lấy lại) danh mục theo tên cho một chi nhánh. */
+async function ensureMenuCategory(cafeId: string, name: string): Promise<string> {
+  const [existing] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM menu_categories
+      WHERE cafe_id = $1 AND lower(btrim(name)) = lower(btrim($2)) AND deleted_at IS NULL`,
+    [cafeId, name],
+  );
+  if (existing) return existing.id;
+
+  const [created] = await AppDataSource.query<{ id: string }[]>(
+    `INSERT INTO menu_categories (cafe_id, name, display_order)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(display_order), -1) + 1
+                        FROM menu_categories WHERE cafe_id = $1 AND deleted_at IS NULL))
+     RETURNING id`,
+    [cafeId, name],
+  );
+  return created.id;
+}
+
 async function seedMenuItems(
   cafeId: string,
   items: { name: string; description: string | null; price: number; category: string }[],
 ) {
+  const categoryIdByCode = new Map<string, string>();
+
   for (const item of items) {
     const [existing] = await AppDataSource.query<{ id: string }[]>(
       `SELECT id FROM menu_items WHERE cafe_id = $1 AND name = $2 AND deleted_at IS NULL`,
@@ -868,13 +903,23 @@ async function seedMenuItems(
     );
     if (existing) continue;
 
+    let categoryId = categoryIdByCode.get(item.category);
+    if (!categoryId) {
+      const label = SEED_CATEGORY_LABELS[item.category] ?? item.category;
+      categoryId = await ensureMenuCategory(cafeId, label);
+      categoryIdByCode.set(item.category, categoryId);
+    }
+
     await AppDataSource.query(
-      `INSERT INTO menu_items (cafe_id, name, description, price, category, is_available)
+      `INSERT INTO menu_items (cafe_id, name, description, price, category_id, is_available)
        VALUES ($1,$2,$3,$4,$5,true)`,
-      [cafeId, item.name, item.description, item.price, item.category],
+      [cafeId, item.name, item.description, item.price, categoryId],
     );
   }
-  logger.info('Seed', `  Menu: ${items.length} items inserted for cafe ${cafeId.slice(0, 8)}...`);
+  logger.info(
+    'Seed',
+    `  Menu: ${items.length} items, ${categoryIdByCode.size} categories for cafe ${cafeId.slice(0, 8)}...`,
+  );
 }
 
 async function seedWidgetConfig(

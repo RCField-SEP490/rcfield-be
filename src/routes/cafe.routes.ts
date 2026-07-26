@@ -11,6 +11,7 @@ import { cafeImageController } from '../controllers/cafe-image.controller';
 import { cafeTrackConfigController } from '../controllers/cafe-track-config.controller';
 import { vehicleController } from '../controllers/vehicle.controller';
 import { menuController } from '../controllers/menu.controller';
+import { menuCategoryController } from '../controllers/menu-category.controller';
 import { menuRouter } from './menu.routes';
 import { promotionController } from '../controllers/promotion.controller';
 import { packageController } from '../controllers/package.controller';
@@ -26,6 +27,9 @@ const upload = multer({
 });
 
 cafeRouter.get('/', optionalAuthenticate, cafeController.listCafes);
+// Danh mục phải đăng ký TRƯỚC '/:cafeId/menu' và trước menuRouter
+cafeRouter.get('/:cafeId/menu/categories', optionalAuthenticate, menuCategoryController.list);
+cafeRouter.get('/:cafeId/menu/popular', optionalAuthenticate, menuController.listPopularMenuItems);
 cafeRouter.get('/:cafeId/menu', optionalAuthenticate, menuController.listMenuItems);
 cafeRouter.use('/:cafeId/menu', menuRouter);
 cafeRouter.get('/:cafeId', optionalAuthenticate, cafeController.getCafeById);

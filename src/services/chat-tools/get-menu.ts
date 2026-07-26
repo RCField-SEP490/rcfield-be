@@ -21,11 +21,15 @@ interface MenuRow {
 }
 
 export async function handler(cafeId: string): Promise<string> {
+  // Danh mục do Provider tự đặt tên — lấy tên thật thay vì mã enum cũ.
+  // Món chưa gán danh mục xếp cuối (NULLS LAST) và gom vào nhóm "Chưa phân loại".
   const rows = await AppDataSource.query<MenuRow[]>(
-    `SELECT name, description, price, category, is_available
-     FROM menu_items
-     WHERE cafe_id = $1 AND deleted_at IS NULL
-     ORDER BY category ASC, price ASC`,
+    `SELECT mi.name, mi.description, mi.price, mc.name AS category, mi.is_available
+     FROM menu_items mi
+     LEFT JOIN menu_categories mc
+       ON mc.id = mi.category_id AND mc.deleted_at IS NULL
+     WHERE mi.cafe_id = $1 AND mi.deleted_at IS NULL
+     ORDER BY mc.display_order ASC NULLS LAST, mc.created_at ASC NULLS LAST, mi.price ASC`,
     [cafeId],
   );
 
@@ -36,7 +40,7 @@ export async function handler(cafeId: string): Promise<string> {
   // Group by category
   const grouped: Record<string, unknown[]> = {};
   for (const r of rows) {
-    const cat = r.category ?? 'Khác';
+    const cat = r.category ?? 'Chưa phân loại';
     if (!grouped[cat]) grouped[cat] = [];
     const item: Record<string, unknown> = {
       name: r.name,

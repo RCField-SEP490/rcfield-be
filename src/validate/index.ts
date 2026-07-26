@@ -13,7 +13,6 @@ import {
   ContestStatus,
   CustomerPackageStatus,
   DiscountType,
-  FnbCategory,
   FnbOrderStatus,
   PackageBillingPeriod,
   PromotionScheduleMode,
@@ -890,7 +889,11 @@ export const MenuListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
-  category: z.nativeEnum(FnbCategory).optional().openapi({ example: FnbCategory.DRINK }),
+  // uuid của danh mục, hoặc literal 'none' để lọc riêng nhóm "Chưa phân loại"
+  category_id: z
+    .union([z.string().uuid(), z.literal('none')])
+    .optional()
+    .openapi({ example: '9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002' }),
   available: z
     .enum(['true', 'false'])
     .optional()
@@ -908,7 +911,13 @@ export const CreateMenuItemSchema = z.object({
     .optional()
     .openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
   price: z.coerce.number().nonnegative().openapi({ example: 55000 }),
-  category: z.nativeEnum(FnbCategory).nullable().optional().openapi({ example: FnbCategory.DRINK }),
+  // null / bỏ trống = "Chưa phân loại"
+  category_id: z
+    .string()
+    .uuid()
+    .nullable()
+    .optional()
+    .openapi({ example: '9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002' }),
   image_url: z
     .string()
     .trim()
@@ -928,6 +937,8 @@ export const CreateComboSchema = z.object({
   name: z.string().trim().min(2).max(255),
   description: z.string().trim().max(2000).nullable().optional(),
   price: z.coerce.number().nonnegative(),
+  // Provider tự gán danh mục cho combo giống món lẻ — hệ thống KHÔNG tự gán (FR-013)
+  category_id: z.string().uuid().nullable().optional(),
   image_url: z.string().trim().url().nullable().optional(),
   is_available: z.boolean().optional().default(true),
   components: z
@@ -950,13 +961,58 @@ export const MenuItemParamsSchema = z.object({
   itemId: z.string().uuid().openapi({ example: '56d971ce-83ef-4456-b391-7f5673f88001' }),
 });
 
+// ── menu categories ───────────────────────────────────────────────────────────
+
+/** Tên danh mục: bắt buộc, trim, 1–50 ký tự (FR-007, FR-008). */
+const MenuCategoryNameSchema = z
+  .string()
+  .trim()
+  .min(1, 'Tên danh mục không được để trống')
+  .max(50, 'Tên danh mục tối đa 50 ký tự')
+  .openapi({ example: 'Cà phê' });
+
+export const CreateMenuCategorySchema = z.object({
+  name: MenuCategoryNameSchema,
+});
+
+export const UpdateMenuCategorySchema = z.object({
+  name: MenuCategoryNameSchema,
+});
+
+export const ReorderMenuCategoriesSchema = z.object({
+  category_ids: z
+    .array(z.string().uuid())
+    .min(1, 'Cần ít nhất một danh mục')
+    .openapi({ example: ['9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002'] }),
+});
+
+export const MenuCategoryParamsSchema = z.object({
+  cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+  categoryId: z.string().uuid().openapi({ example: '9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002' }),
+});
+
+export const MenuCategoryResponseSchema = z.object({
+  id: z.string().uuid().openapi({ example: '9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002' }),
+  cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
+  name: z.string().openapi({ example: 'Cà phê' }),
+  displayOrder: z.number().int().openapi({ example: 0 }),
+  itemCount: z.number().int().openapi({ example: 6 }),
+  createdAt: z.string().datetime().openapi({ example: '2026-07-25T09:00:00.000Z' }),
+  updatedAt: z.string().datetime().openapi({ example: '2026-07-25T09:00:00.000Z' }),
+});
+
 export const MenuItemResponseSchema = z.object({
   id: z.string().uuid().openapi({ example: '56d971ce-83ef-4456-b391-7f5673f88001' }),
   cafeId: z.string().uuid().openapi({ example: '8e7f7c2a-6a5b-4a4c-9b9e-63b3e8c1f001' }),
   name: z.string().openapi({ example: 'Cold Brew Nitro' }),
   description: z.string().nullable().openapi({ example: 'Ca phe lanh nitro dung kem muoi.' }),
   price: z.string().openapi({ example: '55000.00' }),
-  category: z.string().nullable().openapi({ example: 'Do uong' }),
+  categoryId: z
+    .string()
+    .uuid()
+    .nullable()
+    .openapi({ example: '9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002' }),
+  categoryName: z.string().nullable().openapi({ example: 'Do uong' }),
   imageUrl: z.string().nullable().openapi({ example: 'https://cdn.rcfield.vn/menu/cold-brew.jpg' }),
   isAvailable: z.boolean().openapi({ example: true }),
   createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),

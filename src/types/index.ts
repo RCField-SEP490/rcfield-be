@@ -333,14 +333,9 @@ export enum DisputeStatus {
 
 // ── F&B ───────────────────────────────────────────────────────────────────────
 
-export enum FnbCategory {
-  FOOD = 'FOOD',
-  DRINK = 'DRINK',
-  SNACK = 'SNACK',
-  DESSERT = 'DESSERT',
-  COMBO = 'COMBO',
-  OTHER = 'OTHER',
-}
+// FnbCategory (enum cố định FOOD/DRINK/SNACK/DESSERT/COMBO/OTHER) đã bị gỡ bỏ.
+// Danh mục F&B nay do Provider tự tạo cho từng chi nhánh — xem bảng `menu_categories`
+// và entity `MenuCategory`. Món không gắn danh mục nào = "Chưa phân loại".
 
 export enum FnbOrderType {
   PRE_ORDER = 'PRE_ORDER',
@@ -598,6 +593,8 @@ export class AppError extends Error {
     public message: string,
     public statusCode: number = 500,
     public code?: string,
+    /** Dữ liệu phụ trợ cho client dựng UI (vd: số món chặn xóa danh mục). */
+    public details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'AppError';

@@ -25,5 +25,12 @@ export function startPackageExpiryJob(): void {
     }
   });
 
-  logger.info('PackageExpiry', 'Cron scheduled — Runs daily at 00:05');
+  // Chạy ngay một lần khi khởi động: nếu server không hoạt động vào 00:05
+  // (rất thường gặp ở môi trường dev) thì các gói quá hạn sẽ kẹt ở ACTIVE
+  // cho tới lần chạy kế tiếp. Lần chạy này dọn ngay khi server lên.
+  void expireActivePackages().catch((err) => {
+    logger.error('PackageExpiry', 'startup expiry sweep failed', err);
+  });
+
+  logger.info('PackageExpiry', 'Cron scheduled — Runs daily at 00:05 + once on startup');
 }

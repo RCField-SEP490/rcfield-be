@@ -27,13 +27,13 @@ export const menuController = {
   async listMenuItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { cafeId } = CafeIdParamsSchema.parse(req.params);
-      const { page, limit, category, available } = MenuListQuerySchema.parse(req.query);
+      const { page, limit, category_id, available } = MenuListQuerySchema.parse(req.query);
       const result = await menuService.listMenuItems({
         cafeId,
         viewer: optionalViewerFromRequest(req),
         page,
         limit,
-        category,
+        categoryId: category_id,
         available,
       });
 
@@ -42,6 +42,17 @@ export const menuController = {
         data: result.data,
         meta: { total: result.total, page, limit },
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/cafes/:cafeId/menu/popular
+  async listPopularMenuItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cafeId } = CafeIdParamsSchema.parse(req.params);
+      const data = await menuService.getPopularMenuItems(cafeId);
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }

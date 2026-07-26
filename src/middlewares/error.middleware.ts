@@ -36,6 +36,7 @@ export function errorMiddleware(
       success: false,
       code: err.code ?? 'APP_ERROR',
       message: err.message,
+      ...(err.details ? { details: err.details } : {}),
     });
     return;
   }
