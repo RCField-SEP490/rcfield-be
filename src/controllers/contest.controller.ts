@@ -207,6 +207,16 @@ export const contestController = {
     }
   },
 
+  async listContestBookings(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.listContestBookings(req.params.contestId, viewer);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async markEntryFeePaid(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);
@@ -385,6 +395,19 @@ export const contestController = {
       const viewer = requireViewer(req);
       const data = await contestRuntimeService.advanceMatch(req.params.matchId, viewer);
       res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async generateFinalBracket(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestRuntimeService.generateContestFinalBracket(
+        req.params.contestId,
+        viewer,
+      );
+      res.status(201).json({ success: true, data });
     } catch (error) {
       next(error);
     }

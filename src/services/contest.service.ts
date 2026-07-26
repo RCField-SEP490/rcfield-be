@@ -54,6 +54,7 @@ import { env } from '../config/env';
 import { processMockConfirmation } from './payment.service';
 import { createNotification } from './notification.service';
 import { createContestRentalBooking, ContestRentalSlotInput } from './contest-rental.service';
+import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { getContestPublicRuntimeSummary } from './contest-runtime.service';
 
@@ -1266,6 +1267,10 @@ export async function createContestRegistration(
 
   let resolvedBookingId: string | undefined = body.booking_id;
   let resolvedVehicleId: string | undefined = body.vehicle_id;
+  // Booking created inline from rental_slot (WF-B). If the registration transaction
+  // below fails, this booking is cancelled as a compensating action so a failed
+  // registration never leaves an orphaned PENDING booking behind.
+  let inlineRentalBookingId: string | null = null;
 
   if (body.vehicle_source === VehicleSource.RENTAL) {
     if (body.rental_slot && !body.booking_id) {
@@ -1276,6 +1281,7 @@ export async function createContestRegistration(
       );
       resolvedBookingId = rentalResult.booking_id;
       resolvedVehicleId = rentalResult.vehicle_id;
+      inlineRentalBookingId = rentalResult.booking_id;
     }
 
     if (!resolvedBookingId || !resolvedVehicleId) {
@@ -1328,62 +1334,82 @@ export async function createContestRegistration(
     }
   }
 
-  const saved = await AppDataSource.transaction(async (manager) => {
-    const transactionalRepo = manager.getRepository(ContestRegistration);
+  let saved: ContestRegistration;
+  try {
+    saved = await AppDataSource.transaction(async (manager) => {
+      const transactionalRepo = manager.getRepository(ContestRegistration);
 
-    // Lock existing registrations for this contest to serialize concurrent registrations.
-    const existing = await transactionalRepo
-      .createQueryBuilder('registration')
-      .setLock('pessimistic_write')
-      .where('registration.contest_id = :contestId', { contestId })
-      .andWhere('registration.user_id = :userId', { userId: viewer.userId })
-      .getOne();
+      // Lock existing registrations for this contest to serialize concurrent registrations.
+      const existing = await transactionalRepo
+        .createQueryBuilder('registration')
+        .setLock('pessimistic_write')
+        .where('registration.contest_id = :contestId', { contestId })
+        .andWhere('registration.user_id = :userId', { userId: viewer.userId })
+        .getOne();
 
-    if (existing && existing.status !== ContestRegistrationStatus.CANCELLED) {
-      throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
-    }
+      if (existing && existing.status !== ContestRegistrationStatus.CANCELLED) {
+        throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
+      }
 
-    if (contest.capacity && contest.capacity > 0) {
-      const lockedRegistrations = await manager.query(
-        `SELECT id
+      if (contest.capacity && contest.capacity > 0) {
+        const lockedRegistrations = await manager.query(
+          `SELECT id
          FROM contest_registrations
          WHERE contest_id = $1 AND status != $2
          FOR UPDATE`,
-        [contestId, ContestRegistrationStatus.CANCELLED],
-      );
-      const activeCount = lockedRegistrations.length;
-      if (activeCount >= contest.capacity) {
-        throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
+          [contestId, ContestRegistrationStatus.CANCELLED],
+        );
+        const activeCount = lockedRegistrations.length;
+        if (activeCount >= contest.capacity) {
+          throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
+        }
+      }
+
+      const registration = existing ?? transactionalRepo.create();
+      registration.contestId = contestId;
+      registration.userId = viewer.userId;
+      registration.participantRoleSnapshot = UserRole.CUSTOMER;
+      registration.vehicleSource = body.vehicle_source;
+      registration.vehicleId =
+        body.vehicle_source === VehicleSource.RENTAL ? (resolvedVehicleId ?? null) : null;
+      registration.bookingId =
+        body.vehicle_source === VehicleSource.RENTAL ? (resolvedBookingId ?? null) : null;
+      registration.customerVehicleId = null;
+      registration.status = ContestRegistrationStatus.PENDING;
+      registration.checkInCode =
+        existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
+      registration.entryFeeAmount = Number(contest.entryFee ?? 0);
+      registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
+      registration.paymentStatus =
+        Number(contest.entryFee ?? 0) > 0
+          ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
+          : ContestEntryFeePaymentStatus.PENDING_REVIEW;
+      registration.metadata = {
+        ...(registration.metadata ?? {}),
+        booking_id: resolvedBookingId ?? null,
+        byoc_declaration:
+          body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
+      };
+
+      return transactionalRepo.save(registration);
+    });
+  } catch (err) {
+    // Compensating action: the inline rental booking was created outside the
+    // registration transaction (createBooking manages its own repositories), so
+    // cancel it here to keep register-with-rental atomic from the user's view.
+    if (inlineRentalBookingId) {
+      try {
+        await transition(inlineRentalBookingId, 'PAYMENT_TIMEOUT');
+      } catch (cancelErr) {
+        logger.error(
+          'ContestService',
+          `failed to cancel inline rental booking ${inlineRentalBookingId} after registration failure`,
+          cancelErr,
+        );
       }
     }
-
-    const registration = existing ?? transactionalRepo.create();
-    registration.contestId = contestId;
-    registration.userId = viewer.userId;
-    registration.participantRoleSnapshot = UserRole.CUSTOMER;
-    registration.vehicleSource = body.vehicle_source;
-    registration.vehicleId =
-      body.vehicle_source === VehicleSource.RENTAL ? (resolvedVehicleId ?? null) : null;
-    registration.bookingId =
-      body.vehicle_source === VehicleSource.RENTAL ? (resolvedBookingId ?? null) : null;
-    registration.customerVehicleId = null;
-    registration.status = ContestRegistrationStatus.PENDING;
-    registration.checkInCode = existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
-    registration.entryFeeAmount = Number(contest.entryFee ?? 0);
-    registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
-    registration.paymentStatus =
-      Number(contest.entryFee ?? 0) > 0
-        ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
-        : ContestEntryFeePaymentStatus.PENDING_REVIEW;
-    registration.metadata = {
-      ...(registration.metadata ?? {}),
-      booking_id: resolvedBookingId ?? null,
-      byoc_declaration:
-        body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
-    };
-
-    return transactionalRepo.save(registration);
-  });
+    throw err;
+  }
 
   await writeContestAudit({
     contestId,
@@ -1396,6 +1422,26 @@ export async function createContestRegistration(
   await sendContestRegistrationCreatedSideEffects(saved);
 
   const [mapped] = await mapContestRegistrationsPayload([saved], { includeContest: true });
+
+  // WF-B: include the linked booking so FE can proceed to payment in one step.
+  if (resolvedBookingId) {
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: resolvedBookingId },
+    });
+    if (booking) {
+      return {
+        ...mapped,
+        booking: {
+          id: booking.id,
+          status: booking.status,
+          payment_expires_at: booking.paymentExpiresAt,
+          total_amount: Number(
+            (booking.snapshot as { total_charged?: number } | null)?.total_charged ?? 0,
+          ),
+        },
+      };
+    }
+  }
   return mapped;
 }
 
@@ -1447,6 +1493,54 @@ export async function listContestRegistrations(
       !query?.payment_status || registration.payment_status === query.payment_status;
     return matchesQuery && matchesStatus && matchesPayment;
   });
+}
+
+export async function listContestBookings(contestId: string, viewer: Viewer) {
+  await assertContestProviderOrAssignedStaff(contestId, viewer);
+  const rows = await AppDataSource.query<
+    {
+      id: string;
+      status: string;
+      slot_start: Date;
+      slot_end: Date;
+      source: string;
+      customer_id: string;
+      customer_name: string | null;
+      customer_email: string | null;
+      registration_id: string | null;
+      registration_status: string | null;
+      check_in_code: string | null;
+    }[]
+  >(
+    `SELECT b.id, b.status, b.slot_start, b.slot_end, b.source, b.customer_id,
+            u.full_name AS customer_name, u.email AS customer_email,
+            r.id AS registration_id, r.status AS registration_status, r.check_in_code
+     FROM bookings b
+     LEFT JOIN users u ON u.id = b.customer_id
+     LEFT JOIN contest_registrations r ON r.booking_id = b.id
+     WHERE b.contest_id = $1
+     ORDER BY b.slot_start ASC`,
+    [contestId],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    source: row.source,
+    slot_start: row.slot_start,
+    slot_end: row.slot_end,
+    customer: {
+      id: row.customer_id,
+      full_name: row.customer_name,
+      email: row.customer_email,
+    },
+    registration: row.registration_id
+      ? {
+          id: row.registration_id,
+          status: row.registration_status,
+          check_in_code: row.check_in_code,
+        }
+      : null,
+  }));
 }
 
 async function getContestRegistrationForOwner(registrationId: string, viewer: Viewer) {
@@ -1585,6 +1679,53 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
   return mapped;
 }
 
+/**
+ * WF-B cleanup: when a registration is rejected/cancelled, cancel its linked
+ * contest rental booking if it is still unpaid (PENDING — PAYMENT_TIMEOUT moves
+ * it to CANCELLED and releases slot locks). Bookings that were already paid or
+ * consumed (CONFIRMED / AWAITING_PAYMENT / ...) are kept untouched — no automatic
+ * refund — and an audit log entry records that decision.
+ */
+export async function cleanupContestRentalBookingOnRegistrationCancel(
+  registration: ContestRegistration,
+  viewer: Viewer,
+  trigger: 'registration.rejected' | 'registration.cancelled',
+): Promise<void> {
+  if (!registration.bookingId) return;
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: registration.bookingId },
+  });
+  if (!booking || booking.contestId == null) return;
+
+  if (booking.status === BookingStatus.PENDING) {
+    await transition(booking.id, 'PAYMENT_TIMEOUT');
+    await writeContestAudit({
+      contestId: registration.contestId,
+      registrationId: registration.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'booking.contest_rental_cancelled',
+      beforeJson: { booking_status: BookingStatus.PENDING },
+      afterJson: { booking_status: BookingStatus.CANCELLED },
+      metadata: { booking_id: booking.id, trigger },
+    });
+    return;
+  }
+
+  if (booking.status === BookingStatus.CANCELLED) return;
+
+  await writeContestAudit({
+    contestId: registration.contestId,
+    registrationId: registration.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'booking.contest_rental_retained',
+    afterJson: { booking_status: booking.status },
+    reason: 'Booking đã thanh toán hoặc đã sử dụng — giữ nguyên, không tự refund',
+    metadata: { booking_id: booking.id, trigger },
+  });
+}
+
 export async function rejectRegistration(registrationId: string, viewer: Viewer, reason?: string) {
   const registration = await getContestRegistrationForOwner(registrationId, viewer);
   registration.status = ContestRegistrationStatus.CANCELLED;
@@ -1593,6 +1734,19 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
   registration.cancellationReason = reason ?? 'Rejected by provider';
   await AppDataSource.getRepository(ContestRegistration).save(registration);
   await removeRegistrationFromActiveMatches(registration.id);
+  try {
+    await cleanupContestRentalBookingOnRegistrationCancel(
+      registration,
+      viewer,
+      'registration.rejected',
+    );
+  } catch (err) {
+    logger.error(
+      'ContestService',
+      `rental booking cleanup failed registrationId=${registration.id}`,
+      err,
+    );
+  }
   await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,
@@ -1630,6 +1784,19 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
   registration.cancellationReason = reason ?? 'Cancelled';
   await repo.save(registration);
   await removeRegistrationFromActiveMatches(registration.id);
+  try {
+    await cleanupContestRentalBookingOnRegistrationCancel(
+      registration,
+      viewer,
+      'registration.cancelled',
+    );
+  } catch (err) {
+    logger.error(
+      'ContestService',
+      `rental booking cleanup failed registrationId=${registration.id}`,
+      err,
+    );
+  }
   await writeContestAudit({
     contestId: registration.contestId,
     registrationId: registration.id,

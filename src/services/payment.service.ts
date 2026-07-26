@@ -5,12 +5,14 @@ import { Booking } from '../models/booking.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
 import { Cafe } from '../models/cafe.entity';
+import { Contest } from '../models/contest.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
 import {
   AppError,
+  BookingSource,
   BookingStatus,
   FnbOrderType,
   PaymentComponentStatus,
@@ -22,7 +24,6 @@ import {
   NotificationType,
   ContestEntryFeePaymentStatus,
 } from '../types';
-import { createPaymentUrl, verifyVnpayParams } from './vnpay.service';
 import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { activateCustomerPackage, deductSlots } from './customer-package.service';
@@ -30,6 +31,13 @@ import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { writeContestAudit } from './contest.helpers';
+import {
+  applyContestRentalPricing,
+  getContestRentalPolicy,
+  type ContestPricingAdjustments,
+} from './contest-rental.service';
+import { getPaymentGateway } from './payment-gateway.factory';
+import type { PaymentVerificationResult } from './payment-gateway.interface';
 
 async function pushBookingNew(booking: Booking): Promise<void> {
   try {
@@ -55,7 +63,7 @@ async function pushBookingNew(booking: Booking): Promise<void> {
 /** Minimal shape required for refund calculation — stable across snapshot versions */
 export interface RefundSnapshot {
   slot_fee_total: number;
-  vehicles: Array<{ rental_fee: number; security_deposit: number }>;
+  vehicles: Array<{ rental_fee: number; security_deposit: number; booking_vehicle_id?: string }>;
   fnb_total: number;
   discount_amount: number;
   total_charged: number;
@@ -65,6 +73,11 @@ export interface RefundSnapshot {
 export interface BookingSnapshot extends RefundSnapshot {
   platform_fee_pct: number;
   captured_at: string;
+  contest_pricing?: {
+    contest_id: string;
+    waive_slot_fee: boolean;
+    deposit_multiplier: number;
+  };
   package_used?: {
     customer_package_id: string;
     package_id: string;
@@ -192,6 +205,28 @@ export function calculateRefundAmounts(
 
 // ── createCheckoutUrl ─────────────────────────────────────────────────────────
 
+/**
+ * Resolves contest-driven pricing adjustments for a booking.
+ * Regular bookings get the identity adjustment; contest bookings read the
+ * contest's config.rental_policy (read-only). Exported for unit tests.
+ */
+export async function resolveContestPricingAdjustments(
+  booking: Pick<Booking, 'contestId' | 'source'>,
+): Promise<ContestPricingAdjustments & { contestId: string | null }> {
+  const identity = { waiveSlotFee: false, depositMultiplier: 1, contestId: null };
+  const isContestBooking = booking.contestId != null || booking.source === BookingSource.CONTEST;
+  if (!isContestBooking || !booking.contestId) return identity;
+
+  const contest = await AppDataSource.getRepository(Contest).findOne({
+    where: { id: booking.contestId },
+    select: ['id', 'config'],
+  });
+  if (!contest) return identity;
+
+  const adjustments = applyContestRentalPricing(booking, getContestRentalPolicy(contest));
+  return { ...adjustments, contestId: contest.id };
+}
+
 export interface CheckoutResult {
   payment_url: string | null;
   txn_ref: string;
@@ -206,6 +241,7 @@ export async function createCheckoutUrl(
   bookingId: string,
   ipAddr: string,
   customReturnUrl?: string,
+  gatewayName = 'vnpay',
 ): Promise<CheckoutResult> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
@@ -217,6 +253,8 @@ export async function createCheckoutUrl(
     await transition(bookingId, 'PAYMENT_TIMEOUT');
     throw new AppError('Payment window expired', 400, 'PAYMENT_EXPIRED');
   }
+
+  const gateway = getPaymentGateway(gatewayName);
 
   // Collect pricing from child rows to freeze into snapshot
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
@@ -237,10 +275,6 @@ export async function createCheckoutUrl(
   const fnbTotal = fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
 
   const rentalFeeTotal = bookingVehicles.reduce((sum, v) => sum + Number(v.rentalFeeSnapshot), 0);
-  const depositTotal = bookingVehicles.reduce(
-    (sum, v) => sum + Number(v.securityDepositSnapshot),
-    0,
-  );
 
   // Compute slot fee from cafe rate × number of slots × player count (Constitution Principle I)
   const cafeRepo = AppDataSource.getRepository(Cafe);
@@ -267,21 +301,36 @@ export async function createCheckoutUrl(
   const packageUsed = (booking.snapshot as unknown as BookingSnapshot | null)?.package_used;
   const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
 
-  const grossTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  // Contest rental policy: optionally waive the slot fee and reduce/waive the deposit.
+  const contestAdj = await resolveContestPricingAdjustments(booking);
+  const finalSlotFee = contestAdj.waiveSlotFee ? 0 : slotFee;
+  const adjustedDepositByVehicleId = new Map(
+    bookingVehicles.map((v) => [
+      v.id,
+      Math.round(Number(v.securityDepositSnapshot) * contestAdj.depositMultiplier),
+    ]),
+  );
+  const adjustedDepositTotal = bookingVehicles.reduce(
+    (sum, v) => sum + (adjustedDepositByVehicleId.get(v.id) ?? 0),
+    0,
+  );
+
+  const grossTotal = finalSlotFee + rentalFeeTotal + adjustedDepositTotal + fnbTotal;
   const discountAmount = Number(booking.discountAmount) || 0;
   const totalCharged = Math.max(0, grossTotal - discountAmount);
 
   logger.info('PaymentService', 'checkout totals', {
     bookingId,
-    slotFee,
+    slotFee: finalSlotFee,
     rentalFeeTotal,
-    depositTotal,
+    depositTotal: adjustedDepositTotal,
     fnbTotal,
     discountAmount,
     totalCharged,
     playerCount,
     slotCount,
     slotMultiplier,
+    contestPricing: contestAdj.contestId ? contestAdj : undefined,
   });
 
   // Preserve creation-time fields so PaymentResultPage and invoice can still read them
@@ -298,16 +347,28 @@ export async function createCheckoutUrl(
   }
 
   const snapshot: BookingSnapshot = {
-    slot_fee_total: slotFee,
+    slot_fee_total: finalSlotFee,
     vehicles: bookingVehicles.map((v) => ({
+      booking_vehicle_id: v.id,
       rental_fee: Number(v.rentalFeeSnapshot),
-      security_deposit: Number(v.securityDepositSnapshot),
+      // Freeze the ACTUALLY CHARGED deposit (after contest policy) so refunds
+      // and payment components are based on what the customer really paid.
+      security_deposit: adjustedDepositByVehicleId.get(v.id) ?? Number(v.securityDepositSnapshot),
     })),
     fnb_total: fnbTotal,
     discount_amount: discountAmount,
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
+    ...(contestAdj.contestId
+      ? {
+          contest_pricing: {
+            contest_id: contestAdj.contestId,
+            waive_slot_fee: contestAdj.waiveSlotFee,
+            deposit_multiplier: contestAdj.depositMultiplier,
+          },
+        }
+      : {}),
     ...(packageUsed ? { package_used: packageUsed } : {}),
     ...preservedCreationFields,
   } as BookingSnapshot;
@@ -395,7 +456,7 @@ export async function createCheckoutUrl(
   // Tạo txnRef duy nhất cho lần thanh toán này để cho phép thanh toán lại khi bị lỗi/hủy (giới hạn tối đa 30 ký tự của VNPay)
   const txnRef = `${bookingId.replace(/-/g, '').substring(0, 20)}_${Date.now().toString().slice(-4)}`;
 
-  const vnpayPaymentUrl = createPaymentUrl({
+  const gatewayResult = gateway.createPaymentUrl({
     amount: totalCharged,
     txnRef,
     orderInfo: `RCField booking ${bookingId.substring(0, 8)}`,
@@ -405,8 +466,8 @@ export async function createCheckoutUrl(
   });
 
   logger.debug(
-    'VNPay',
-    `payment URL params: amount=${totalCharged} txnRef=${txnRef} url=${vnpayPaymentUrl}`,
+    'PaymentService',
+    `payment URL params: amount=${totalCharged} txnRef=${txnRef} gateway=${gateway.name} url=${gatewayResult.payment_url}`,
   );
 
   // Record pending transaction
@@ -419,7 +480,7 @@ export async function createCheckoutUrl(
       contestRegistrationId: null,
       subjectType: PaymentTransactionSubjectType.BOOKING,
       type: PaymentTransactionType.PAYMENT,
-      gateway: 'VNPAY',
+      gateway: gateway.name,
       txnRef,
       amount: totalCharged,
       status: PaymentTransactionStatus.PENDING,
@@ -427,13 +488,15 @@ export async function createCheckoutUrl(
         bookingId,
         totalCharged,
         ipAddr,
+        gateway: gateway.name,
         components: buildInitialPaymentReceiptComponents(snapshot),
       },
     });
     await txRepo.save(tx);
   }
 
-  if (env.vnpay.mockEnabled) {
+  // Auto-confirm for local/test flows: legacy VNPay mock env OR explicit mock gateway.
+  if (gateway.name === 'MOCK' || env.vnpay.mockEnabled) {
     await processMockConfirmation(txnRef);
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
@@ -449,7 +512,11 @@ export async function createCheckoutUrl(
 
   logger.info('PaymentService', `checkout created txnRef=${txnRef} bookingId=${bookingId}`);
 
-  return { payment_url: vnpayPaymentUrl, txn_ref: txnRef, total_amount: totalCharged };
+  return {
+    payment_url: gatewayResult.payment_url,
+    txn_ref: txnRef,
+    total_amount: totalCharged,
+  };
 }
 
 // ── createPaymentComponents ───────────────────────────────────────────────────
@@ -462,16 +529,28 @@ export async function createPaymentComponents(
   const slotFeeTotal = Number(
     snapshot.slot_fee_total ?? (snapshot as unknown as Record<string, unknown>).slot_fee ?? 0,
   );
+  const waiveSlotFee = snapshot.contest_pricing?.waive_slot_fee === true;
 
-  const components: Partial<PaymentComponent>[] = [
-    {
+  const components: Partial<PaymentComponent>[] = [];
+  if (!waiveSlotFee) {
+    components.push({
       bookingId: booking.id,
       bookingVehicleId: null,
       type: PaymentComponentType.SLOT_FEE,
       amount: slotFeeTotal,
       status: PaymentComponentStatus.HELD,
-    },
-  ];
+    });
+  }
+
+  // Deposits frozen in the checkout snapshot already include contest policy
+  // adjustments — they are the amounts actually charged. Fall back to the
+  // booking-vehicle snapshot for older bookings without per-vehicle overrides.
+  const adjustedDepositByVehicleId = new Map<string, number>();
+  for (const v of snapshot.vehicles ?? []) {
+    if (v.booking_vehicle_id) {
+      adjustedDepositByVehicleId.set(v.booking_vehicle_id, Number(v.security_deposit));
+    }
+  }
 
   for (const bv of bookingVehicles) {
     components.push({
@@ -481,12 +560,14 @@ export async function createPaymentComponents(
       amount: Number(bv.rentalFeeSnapshot ?? 0),
       status: PaymentComponentStatus.HELD,
     });
-    if (Number(bv.securityDepositSnapshot ?? 0) > 0) {
+    const depositAmount =
+      adjustedDepositByVehicleId.get(bv.id) ?? Number(bv.securityDepositSnapshot ?? 0);
+    if (depositAmount > 0) {
       components.push({
         bookingId: booking.id,
         bookingVehicleId: bv.id,
         type: PaymentComponentType.SECURITY_DEPOSIT,
-        amount: Number(bv.securityDepositSnapshot ?? 0),
+        amount: depositAmount,
         status: PaymentComponentStatus.HELD,
       });
     }
@@ -515,16 +596,32 @@ export async function createPaymentComponents(
 
 // ── processConfirmation ───────────────────────────────────────────────────────
 
-/** Idempotent IPN/return handler — safe to call multiple times for same txnRef */
+/** Idempotent IPN/return handler for VNPay — kept for backward compatibility. */
 export async function processConfirmation(
   vnpParams: Record<string, unknown>,
 ): Promise<{ rspCode: string; message: string }> {
-  const result = verifyVnpayParams(vnpParams);
+  return processGatewayConfirmation(vnpParams, 'vnpay');
+}
+
+/** Generic gateway confirmation: verify then apply business logic. */
+export async function processGatewayConfirmation(
+  params: Record<string, unknown>,
+  gatewayName: string,
+): Promise<{ rspCode: string; message: string }> {
+  const gateway = getPaymentGateway(gatewayName);
+  const result = gateway.verifyCallback(params);
 
   if (!result.isValid) {
     return { rspCode: '97', message: 'Invalid signature' };
   }
 
+  return processConfirmationResult(result);
+}
+
+/** Apply business logic once a transaction has been verified. */
+export async function processConfirmationResult(
+  result: PaymentVerificationResult,
+): Promise<{ rspCode: string; message: string }> {
   const txRepo = AppDataSource.getRepository(PaymentTransaction);
   const tx = await txRepo.findOne({ where: { txnRef: result.txnRef } });
 
@@ -540,7 +637,7 @@ export async function processConfirmation(
   if (!result.isSuccess) {
     await txRepo.update(tx.id, {
       status: PaymentTransactionStatus.FAILED,
-      rawResponse: vnpParams as object,
+      rawResponse: result.raw as object,
     });
     logger.info('PaymentService', `payment failed txnRef=${result.txnRef}`);
     return { rspCode: result.responseCode, message: 'Payment failed' };
@@ -549,8 +646,10 @@ export async function processConfirmation(
   // Mark transaction SUCCESS
   await txRepo.update(tx.id, {
     status: PaymentTransactionStatus.SUCCESS,
-    rawResponse: vnpParams as object,
+    rawResponse: result.raw as object,
   });
+
+  const paymentSource = tx.gateway ?? 'VNPAY';
 
   if (tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY) {
     if (!tx.contestRegistrationId) {
@@ -572,7 +671,7 @@ export async function processConfirmation(
     registration.entryFeeMarkedPaidBy = null;
     registration.metadata = {
       ...(registration.metadata ?? {}),
-      payment_source: 'VNPAY',
+      payment_source: paymentSource,
       payment_txn_ref: result.txnRef,
     };
     await registrationRepo.save(registration);
@@ -582,8 +681,8 @@ export async function processConfirmation(
       actorId: null,
       actorRole: 'SYSTEM',
       eventType: 'registration.entry_fee_marked_paid',
-      afterJson: { paymentStatus: registration.paymentStatus, payment_source: 'VNPAY' },
-      reason: 'VNPay confirmation',
+      afterJson: { paymentStatus: registration.paymentStatus, payment_source: paymentSource },
+      reason: `${paymentSource} confirmation`,
     });
     logger.info(
       'PaymentService',
@@ -604,7 +703,7 @@ export async function processConfirmation(
     const pendingComponents = await getPendingComponentsForAdditionalTransaction(tx);
 
     await AppDataSource.transaction(async (em) => {
-      // Mark all service components as DISBURSED (paid via VNPAY)
+      // Mark all service components as DISBURSED (paid via gateway)
       for (const comp of pendingComponents) {
         comp.status = PaymentComponentStatus.DISBURSED;
         await em.save(comp);
@@ -621,7 +720,7 @@ export async function processConfirmation(
             booking.customerId,
             NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
             'Thanh toán dịch vụ phát sinh thành công',
-            `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công qua VNPAY.`,
+            `Phí phát sinh đơn hàng ${booking.id.substring(0, 8).toUpperCase()} đã được thanh toán online thành công qua ${paymentSource}.`,
             {
               bookingId: tx.bookingId,
               totalCounterBill: tx.amount,
@@ -950,10 +1049,6 @@ export async function mockConfirmPayment(
   const fnbTotal = fnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
 
   const rentalFeeTotal = bookingVehicles.reduce((sum, v) => sum + Number(v.rentalFeeSnapshot), 0);
-  const depositTotal = bookingVehicles.reduce(
-    (sum, v) => sum + Number(v.securityDepositSnapshot),
-    0,
-  );
 
   const cafeRepo = AppDataSource.getRepository(Cafe);
   const cafe = await cafeRepo.findOne({ where: { id: booking.cafeId } });
@@ -972,8 +1067,24 @@ export async function mockConfirmPayment(
   const rawSlotFee = Math.round(
     Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier,
   );
+  // If package was applied, slot fee is 0 (createBooking already validated ownership)
   const slotFee = booking.customerPackageId ? 0 : rawSlotFee;
-  const grossMockTotal = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+
+  // Contest rental policy (same rules as createCheckoutUrl).
+  const contestAdj = await resolveContestPricingAdjustments(booking);
+  const finalMockSlotFee = contestAdj.waiveSlotFee ? 0 : slotFee;
+  const adjustedDepositByVehicleId = new Map(
+    bookingVehicles.map((v) => [
+      v.id,
+      Math.round(Number(v.securityDepositSnapshot) * contestAdj.depositMultiplier),
+    ]),
+  );
+  const adjustedDepositTotal = bookingVehicles.reduce(
+    (sum, v) => sum + (adjustedDepositByVehicleId.get(v.id) ?? 0),
+    0,
+  );
+
+  const grossMockTotal = finalMockSlotFee + rentalFeeTotal + adjustedDepositTotal + fnbTotal;
   const mockDiscountAmount = Number(booking.discountAmount) || 0;
   const totalCharged = Math.max(0, grossMockTotal - mockDiscountAmount);
 
@@ -993,10 +1104,11 @@ export async function mockConfirmPayment(
   const packageUsed = (mockCreationSnapshot as unknown as BookingSnapshot | null)?.package_used;
 
   const snapshot: BookingSnapshot = {
-    slot_fee_total: slotFee,
+    slot_fee_total: finalMockSlotFee,
     vehicles: bookingVehicles.map((v) => ({
+      booking_vehicle_id: v.id,
       rental_fee: Number(v.rentalFeeSnapshot),
-      security_deposit: Number(v.securityDepositSnapshot),
+      security_deposit: adjustedDepositByVehicleId.get(v.id) ?? Number(v.securityDepositSnapshot),
     })),
     fnb_total: fnbTotal,
     discount_amount: mockDiscountAmount,
@@ -1004,6 +1116,15 @@ export async function mockConfirmPayment(
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
     ...(packageUsed ? { package_used: packageUsed } : {}),
+    ...(contestAdj.contestId
+      ? {
+          contest_pricing: {
+            contest_id: contestAdj.contestId,
+            waive_slot_fee: contestAdj.waiveSlotFee,
+            deposit_multiplier: contestAdj.depositMultiplier,
+          },
+        }
+      : {}),
     ...mockPreservedFields,
   } as BookingSnapshot;
 
@@ -1205,10 +1326,13 @@ export async function createCheckoutAdditionalPaymentUrl(
   bookingId: string,
   ipAddr: string,
   customReturnUrl?: string,
+  gatewayName = 'vnpay',
 ): Promise<{ payment_url: string | null; txn_ref: string; total_amount: number }> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  const gateway = getPaymentGateway(gatewayName);
 
   const compRepo = AppDataSource.getRepository(PaymentComponent);
   const pendingComponents = await compRepo.find({
@@ -1229,7 +1353,7 @@ export async function createCheckoutAdditionalPaymentUrl(
     .toString()
     .slice(-4)}`;
 
-  const vnpayPaymentUrl = createPaymentUrl({
+  const gatewayResult = gateway.createPaymentUrl({
     amount: totalCharged,
     txnRef,
     orderInfo: `RCField checkout ${bookingId.substring(0, 8)}`,
@@ -1246,7 +1370,7 @@ export async function createCheckoutAdditionalPaymentUrl(
     contestRegistrationId: null,
     subjectType: PaymentTransactionSubjectType.BOOKING,
     type: PaymentTransactionType.PAYMENT,
-    gateway: 'VNPAY',
+    gateway: gateway.name,
     txnRef,
     amount: totalCharged,
     status: PaymentTransactionStatus.PENDING,
@@ -1261,11 +1385,12 @@ export async function createCheckoutAdditionalPaymentUrl(
         amount: Number(component.amount),
       })),
       returnUrl: customReturnUrl,
+      gateway: gateway.name,
     },
   });
   await txRepo.save(tx);
 
-  if (env.vnpay.mockEnabled) {
+  if (gateway.name === 'MOCK' || env.vnpay.mockEnabled) {
     await processMockConfirmation(txnRef);
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
@@ -1275,5 +1400,5 @@ export async function createCheckoutAdditionalPaymentUrl(
     return { payment_url: target.toString(), txn_ref: txnRef, total_amount: totalCharged };
   }
 
-  return { payment_url: vnpayPaymentUrl, txn_ref: txnRef, total_amount: totalCharged };
+  return { payment_url: gatewayResult.payment_url, txn_ref: txnRef, total_amount: totalCharged };
 }

@@ -70,6 +70,13 @@ contestRouter.post(
   contestController.generateMatches,
 );
 contestRouter.post(
+  '/contests/:contestId/matches/generate-final-bracket',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.generateFinalBracket,
+);
+contestRouter.post(
   '/contests/:contestId/leaderboard/publish',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
@@ -171,6 +178,13 @@ contestRouter.get(
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.listContestRegistrations,
+);
+contestRouter.get(
+  '/contests/:contestId/bookings',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestController.listContestBookings,
 );
 contestRouter.post(
   '/contest-registrations/:registrationId/create-entry-fee-payment',

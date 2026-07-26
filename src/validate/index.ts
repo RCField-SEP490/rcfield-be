@@ -1244,6 +1244,15 @@ export const CancelBookingSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+export const CreateContestRentalBookingSchema = z.object({
+  contest_id: z.string().uuid(),
+  cafe_id: z.string().uuid(),
+  slot_start: z.string().datetime({ offset: true }),
+  slot_end: z.string().datetime({ offset: true }),
+  track_config_id: z.string().uuid().optional(),
+  vehicle_catalog_id: z.string().uuid().optional(),
+});
+
 export const ListCafeBookingsSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: z.nativeEnum(BookingStatus).optional(),

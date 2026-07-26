@@ -456,6 +456,7 @@ export interface CreateBookingBody {
   track_config_id?: string;
   customer_package_id?: string;
   contest_id?: string;
+  source?: BookingSource;
 }
 
 export interface BookingBreakdown {
@@ -876,7 +877,7 @@ export async function createBooking(
         trackTypeId,
         trackConfigId: resolvedTrackConfig?.id ?? null,
         playMode: body.play_mode,
-        source: BookingSource.APP,
+        source: body.source ?? BookingSource.APP,
         status: BookingStatus.PENDING,
         slotStart,
         slotEnd,
@@ -884,6 +885,7 @@ export async function createBooking(
         discountAmount,
         promotionId: appliedPromotion?.id ?? null,
         customerPackageId: customerPackage?.id ?? null,
+        contestId: body.contest_id ?? null,
         snapshot: Object.keys(snapshot).length > 0 ? snapshot : null,
       });
       await em.save(newBooking);

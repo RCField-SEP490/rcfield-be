@@ -68,6 +68,10 @@ import {
   RENTAL_INSPECTION_MIN_PHOTOS,
   hasValidRentalInspectionPhotoCount,
 } from '../lib/inspection-photo-policy';
+import {
+  logContestVehicleCheckedOut,
+  syncContestRegistrationOnVehicleCheckIn,
+} from './contest-rental.service';
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -113,6 +117,7 @@ export interface TodayBookingItem {
   bookingMode: 'SINGLE' | 'PACKAGE' | 'SUBSCRIPTION';
   playMode: BookingMode;
   source: BookingSource;
+  contestId: string | null;
   status: BookingStatus;
   slotStart: string;
   slotEnd: string;
@@ -524,6 +529,7 @@ export async function getBookingsByDate(
        b.status,
        b.play_mode,
        b.source,
+       b.contest_id,
        b.slot_start,
        b.slot_end,
        b.slot_count,
@@ -634,6 +640,7 @@ export async function getBookingsByDate(
       bookingMode: 'SINGLE',
       playMode: row.play_mode,
       source: row.source,
+      contestId: row.contest_id ?? null,
       status: row.status,
       slotStart: row.slot_start.toISOString(),
       slotEnd: row.slot_end.toISOString(),
@@ -1288,6 +1295,22 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
     }
   }
 
+  // Mirror contest registration check-in for contest rental bookings. The sync
+  // never blocks the vehicle check-in — failures are logged only.
+  if (booking.contestId) {
+    try {
+      const contestCheckin = await syncContestRegistrationOnVehicleCheckIn(booking, {
+        staffUserId,
+      });
+      (session as any).contest_checkin = contestCheckin;
+    } catch (error) {
+      logger.warn('Staff', 'startCheckIn: contest registration sync failed', {
+        bookingId,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+  }
+
   return session;
 }
 
@@ -1585,6 +1608,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     cafeName: cafe.name,
     cafeAddress: cafe.address,
     bookingSource: booking.source,
+    contestId: booking.contestId ?? null,
     playMode: booking.playMode,
     status: session.status,
     staffName: staffUser?.full_name || 'Nhân viên trực ca',
@@ -3358,6 +3382,18 @@ export async function staffConfirmCheckout(
   });
   if (booking) {
     await reconcileBookingAfterCheckout(booking);
+  }
+  // Audit trail for contest rental bookings; never blocks checkout completion.
+  if (booking?.contestId) {
+    try {
+      await logContestVehicleCheckedOut(booking, session);
+    } catch (error) {
+      logger.warn('Staff', 'staffConfirmCheckout: contest checkout audit failed', {
+        sessionId,
+        bookingId: booking.id,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
   }
 
   logger.info('Staff', 'staffConfirmCheckout', { sessionId, inspectionId, staffUserId });
