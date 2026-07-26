@@ -61,6 +61,25 @@ export const providerDashboardController = {
     }
   },
 
+  // GET /api/v1/provider/dashboard/booking-channels
+  async getBookingChannels(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const providerId = req.user!.userId;
+      const { from, to, cafeId } = req.query;
+
+      const channels = await providerDashboardService.getProviderBookingChannels(
+        providerId,
+        from ? String(from) : undefined,
+        to ? String(to) : undefined,
+        cafeId ? String(cafeId) : undefined,
+      );
+
+      res.json({ success: true, data: channels });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /api/v1/provider/dashboard/branch-performance
   async getBranchPerformance(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

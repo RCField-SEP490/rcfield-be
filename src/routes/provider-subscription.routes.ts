@@ -105,6 +105,11 @@ providerSubscriptionRouter.get(
   providerDashboardController.getRevenueBreakdown,
 );
 providerSubscriptionRouter.get(
+  '/dashboard/booking-channels',
+  requireActiveProvider,
+  providerDashboardController.getBookingChannels,
+);
+providerSubscriptionRouter.get(
   '/dashboard/branch-performance',
   requireActiveProvider,
   providerDashboardController.getBranchPerformance,

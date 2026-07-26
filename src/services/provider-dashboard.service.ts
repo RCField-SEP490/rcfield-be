@@ -324,6 +324,79 @@ export async function getProviderRevenueBreakdown(
   return items;
 }
 
+// ── Kênh đặt lịch ─────────────────────────────────────────────────────────────
+
+export interface BookingChannelItem {
+  /** Giá trị enum BookingSource: APP | STAFF_MANUAL | CONTEST */
+  source: string;
+  label: string;
+  bookingCount: number;
+  /** Doanh thu đã ghi nhận, KHÔNG tính tiền cọc (giống các KPI doanh thu khác). */
+  revenue: number;
+  /** Tỉ lệ số đơn trên tổng, 0–1. */
+  bookingShare: number;
+}
+
+const BOOKING_SOURCE_LABELS: Record<string, string> = {
+  APP: 'Khách tự đặt qua app',
+  STAFF_MANUAL: 'Nhân viên tạo (khách vãng lai)',
+  CONTEST: 'Giải đấu',
+};
+
+/**
+ * Cơ cấu đơn đặt theo kênh — trả lời câu hỏi "khách tự đặt qua app nhiều hơn
+ * hay khách vãng lai nhiều hơn".
+ *
+ * Đơn bị hủy vẫn được đếm vào `bookingCount` vì chúng phản ánh nhu cầu đến từ
+ * kênh nào; nhưng `revenue` chỉ cộng khoản đã ghi nhận nên đơn hủy không làm
+ * sai lệch tiền. Luôn trả về đủ 3 kênh, kể cả kênh chưa có đơn nào — để biểu đồ
+ * không nhảy cột khi một kênh về 0.
+ */
+export async function getProviderBookingChannels(
+  providerId: string,
+  from?: string,
+  to?: string,
+  cafeId?: string,
+): Promise<BookingChannelItem[]> {
+  const fromDate = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const toDate = to || new Date().toISOString();
+
+  const rows = await AppDataSource.query<
+    { source: string; bookingCount: string; revenue: string }[]
+  >(
+    `SELECT
+       b.source AS "source",
+       COUNT(DISTINCT b.id)::int AS "bookingCount",
+       COALESCE(SUM(pc.amount) FILTER (
+         WHERE pc.status IN ('HELD', 'DISBURSED') AND pc.type != 'SECURITY_DEPOSIT'
+       ), 0)::float AS "revenue"
+     FROM bookings b
+     JOIN cafes c ON c.id = b.cafe_id
+     LEFT JOIN payment_components pc ON pc.booking_id = b.id
+     WHERE c.provider_id = $1
+       AND b.slot_start >= $2::timestamptz
+       AND b.slot_start <= $3::timestamptz
+       AND ($4::uuid IS NULL OR b.cafe_id = $4)
+     GROUP BY b.source`,
+    [providerId, fromDate, toDate, cafeId || null],
+  );
+
+  const bySource = new Map(rows.map((row) => [row.source, row]));
+  const totalBookings = rows.reduce((sum, row) => sum + Number(row.bookingCount), 0);
+
+  return Object.keys(BOOKING_SOURCE_LABELS).map((source) => {
+    const row = bySource.get(source);
+    const bookingCount = Number(row?.bookingCount ?? 0);
+    return {
+      source,
+      label: BOOKING_SOURCE_LABELS[source],
+      bookingCount,
+      revenue: Number(row?.revenue ?? 0),
+      bookingShare: totalBookings > 0 ? bookingCount / totalBookings : 0,
+    };
+  });
+}
+
 export async function getProviderBranchPerformance(
   providerId: string,
   from?: string,
