@@ -1,6 +1,10 @@
 import type { Request, Response, NextFunction } from 'express';
-import { AuthRequest, AppError, ReviewStatus, UserRole } from '../types';
-import { CreateReviewSchema, UpdateReviewVisibilitySchema } from '../validate';
+import { AuthRequest, AppError, UserRole } from '../types';
+import {
+  CreateReviewSchema,
+  ProviderReviewQuerySchema,
+  UpdateReviewVisibilitySchema,
+} from '../validate';
 import * as reviewService from '../services/review.service';
 
 // ── Customer endpoints ────────────────────────────────────────────────────────
@@ -81,16 +85,11 @@ export async function listProviderReviews(
     if (req.user.role !== UserRole.PROVIDER && req.user.role !== UserRole.ADMIN) {
       throw new AppError('Forbidden', 403, 'FORBIDDEN');
     }
-    const page = parseInt(String(req.query.page ?? 1), 10);
-    const limit = parseInt(String(req.query.limit ?? 20), 10);
-    const cafeId = req.query.cafe_id as string | undefined;
-    const status = req.query.status as ReviewStatus | undefined;
-    const result = await reviewService.getProviderReviews(req.user.userId, {
-      cafeId,
-      status,
-      page,
-      limit,
-    });
+    const { cafe_id: cafeId, status, page, limit } = ProviderReviewQuerySchema.parse(req.query);
+    const result = await reviewService.getProviderReviews(
+      { userId: req.user.userId, role: req.user.role },
+      { cafeId, status, page, limit },
+    );
     res.json({ success: true, ...result });
   } catch (err) {
     next(err);
@@ -109,7 +108,11 @@ export async function updateVisibility(
       throw new AppError('Forbidden', 403, 'FORBIDDEN');
     }
     const { status } = UpdateReviewVisibilitySchema.parse(req.body);
-    const review = await reviewService.setVisibility(req.params.reviewId, req.user.userId, status);
+    const review = await reviewService.setVisibility(
+      req.params.reviewId,
+      { userId: req.user.userId, role: req.user.role },
+      status,
+    );
     res.json({ success: true, data: review });
   } catch (err) {
     next(err);

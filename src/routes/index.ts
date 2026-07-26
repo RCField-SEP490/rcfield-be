@@ -118,6 +118,8 @@ router.use('/admin/dashboard', adminDashboardRouter);
 router.use('/admin/feature-flags', adminFeatureFlagsRouter);
 router.use('/notifications', notificationRouter);
 router.use('/provider/notifications', notificationRouter);
+// Mount before the general /provider router because this endpoint also allows ADMIN.
+router.use('/provider/reviews', providerReviewRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/staff', staffRouter);
 router.use('/system', systemRouter);
@@ -136,7 +138,6 @@ router.use('/', featuredPopupRouter);
 router.use('/', racingNetworkRouter);
 router.use('/customer/reviews', reviewRouter);
 router.use('/customer/favorites', favoriteRouter);
-router.use('/provider/reviews', providerReviewRouter);
 router.use('/', customerPackageRouter);
 router.use('/', pricingRouter);
 router.get(
