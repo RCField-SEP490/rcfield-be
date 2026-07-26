@@ -4000,7 +4000,7 @@ export async function getMaintenanceLogs(
 
   if (status && status !== 'ALL') {
     params.push(status);
-    statusClause = `AND (vml.status = $${params.length} OR v.status = $${params.length})`;
+    statusClause = `AND (COALESCE(vml.status, CASE WHEN v.status = 'AVAILABLE' THEN 'COMPLETED' ELSE 'PENDING_REPAIR' END) = $${params.length})`;
   }
 
   if (search && search.trim()) {
