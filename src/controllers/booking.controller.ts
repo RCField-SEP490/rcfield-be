@@ -378,14 +378,18 @@ export const bookingController = {
       void vehicleIds; // suppress unused warning
 
       // Enrich FnbOrder items with menu item names across all orders (exclude CANCELLED)
-      let fnbItems: (FnbOrderItem & { itemName: string | null })[] = [];
+      type EnrichedFnbOrderItem = FnbOrderItem & {
+        itemName: string | null;
+        variantName: string | null;
+      };
+      let fnbItems: EnrichedFnbOrderItem[] = [];
       let fnbOrdersWithItems: Array<{
         id: string;
         bookingId: string;
         orderType: FnbOrder['orderType'];
         status: FnbOrder['status'];
         totalAmount: number;
-        items: (FnbOrderItem & { itemName: string | null })[];
+        items: EnrichedFnbOrderItem[];
       }> = [];
       let mergedFnbOrder = null;
 
@@ -414,22 +418,23 @@ export const bookingController = {
 
         fnbItems = allRawItems.map((i) => ({
           ...i,
-          itemName: (i.menuItemId ? menuMap.get(i.menuItemId) : null) ?? i.itemNameSnapshot ?? null,
+          // Snapshot takes precedence so an old paid order does not silently
+          // change its label after Provider renames a menu item.
+          itemName: i.itemNameSnapshot ?? (i.menuItemId ? menuMap.get(i.menuItemId) : null) ?? null,
+          variantName: i.variantNameSnapshot ?? null,
         }));
 
-        const enrichedItemsByOrderId = new Map<
-          string,
-          (FnbOrderItem & { itemName: string | null })[]
-        >();
+        const enrichedItemsByOrderId = new Map<string, EnrichedFnbOrderItem[]>();
         for (const [orderId, items] of itemsByOrderId) {
           enrichedItemsByOrderId.set(
             orderId,
             items.map((item) => ({
               ...item,
               itemName:
-                (item.menuItemId ? menuMap.get(item.menuItemId) : null) ??
                 item.itemNameSnapshot ??
+                (item.menuItemId ? menuMap.get(item.menuItemId) : null) ??
                 null,
+              variantName: item.variantNameSnapshot ?? null,
             })),
           );
         }

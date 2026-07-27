@@ -242,8 +242,8 @@ async function main() {
   );
 
   print(`\n${BOLD}[STEP 10] Staff adds on-site F&B order...${RESET}`);
-  const [menuItem] = await ds.query<{ name: string; price: string }[]>(
-    `SELECT name, price FROM menu_items
+  const [menuItem] = await ds.query<{ id: string }[]>(
+    `SELECT id FROM menu_items
      WHERE cafe_id = $1 AND is_available = true AND deleted_at IS NULL
      ORDER BY created_at ASC
      LIMIT 1`,
@@ -251,7 +251,7 @@ async function main() {
   );
   if (menuItem) {
     const fnbOrder = await staffService.addSessionFnbOrder(session.id, staff.id, {
-      items: [{ name: menuItem.name, qty: 2, price: Number(menuItem.price) }],
+      items: [{ menu_item_id: menuItem.id, quantity: 2 }],
     });
     print(
       `${GREEN}✓ F&B order placed. ID: ${BOLD}${fnbOrder.id}${RESET}  Total: ${BOLD}${Number(fnbOrder.totalAmount).toLocaleString()} VND${RESET}`,

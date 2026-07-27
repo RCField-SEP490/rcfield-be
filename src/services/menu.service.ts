@@ -1,6 +1,8 @@
+import { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { MenuItem } from '../models/menu-item.entity';
 import { MenuItemComponent } from '../models/menu-item-component.entity';
+import { MenuItemVariant } from '../models/menu-item-variant.entity';
 import { AppError, UserRole } from '../types';
 import { getCafeDetail, getManagedCafeOrThrow } from './cafe.service';
 import { resolveCategoryOrThrow } from './menu-category.service';
@@ -30,12 +32,22 @@ export interface CreateMenuItemBody {
   category_id?: string | null;
   image_url?: string | null;
   is_available?: boolean;
+  /** Optional final-price choices, e.g. size M/L. */
+  variants?: MenuVariantInput[];
 }
 
 export type UpdateMenuItemBody = Partial<CreateMenuItemBody>;
 
+export interface MenuVariantInput {
+  name: string;
+  price: number;
+  is_available?: boolean;
+}
+
 export interface ComboComponentInput {
   item_id: string;
+  /** A combo may pin a component to one sellable choice (e.g. size M). */
+  variant_id?: string | null;
   quantity: number;
 }
 
@@ -56,7 +68,21 @@ export type UpdateComboBody = Partial<CreateComboBody>;
  * `categoryName` phẳng đi kèm `categoryId` sẵn có.
  */
 export type MenuItemWithComponents = Omit<MenuItem, 'category'> & {
-  components?: Array<{ itemId: string; name: string; quantity: number }>;
+  variants: Array<{
+    id: string;
+    name: string;
+    price: string;
+    displayOrder: number;
+    isAvailable: boolean;
+  }>;
+  components?: Array<{
+    itemId: string;
+    name: string;
+    variantId: string | null;
+    variantName: string | null;
+    variantPrice: string | null;
+    quantity: number;
+  }>;
   /** Tên danh mục Provider đặt; null = "Chưa phân loại". */
   categoryName: string | null;
 };
@@ -83,6 +109,7 @@ function toResponseShape(item: MenuItem, categoryName: string | null): MenuItemW
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     deletedAt: item.deletedAt,
+    variants: [],
   };
 }
 
@@ -106,6 +133,31 @@ async function getMenuItemOrThrow(cafeId: string, itemId: string): Promise<MenuI
   return item;
 }
 
+async function attachVariants(items: MenuItemWithComponents[]): Promise<MenuItemWithComponents[]> {
+  if (!items.length) return items;
+
+  const rows = await AppDataSource.getRepository(MenuItemVariant)
+    .createQueryBuilder('variant')
+    .where('variant.menu_item_id = ANY(:itemIds)', { itemIds: items.map((item) => item.id) })
+    .orderBy('variant.displayOrder', 'ASC')
+    .addOrderBy('variant.createdAt', 'ASC')
+    .getMany();
+
+  const byItem = new Map<string, MenuItemWithComponents['variants']>();
+  for (const row of rows) {
+    if (!byItem.has(row.menuItemId)) byItem.set(row.menuItemId, []);
+    byItem.get(row.menuItemId)!.push({
+      id: row.id,
+      name: row.name,
+      price: row.price,
+      displayOrder: row.displayOrder,
+      isAvailable: row.isAvailable,
+    });
+  }
+
+  return items.map((item) => ({ ...item, variants: byItem.get(item.id) ?? [] }));
+}
+
 async function attachComponents(
   items: MenuItemWithComponents[],
 ): Promise<MenuItemWithComponents[]> {
@@ -113,28 +165,110 @@ async function attachComponents(
   if (!comboIds.length) return items;
 
   const rows = await AppDataSource.query<
-    { combo_id: string; item_id: string; item_name: string; quantity: number }[]
+    {
+      combo_id: string;
+      item_id: string;
+      item_name: string;
+      variant_id: string | null;
+      variant_name: string | null;
+      variant_price: string | null;
+      quantity: number;
+    }[]
   >(
-    `SELECT mc.combo_id, mc.item_id, mi.name AS item_name, mc.quantity
+    `SELECT mc.combo_id, mc.item_id, mi.name AS item_name,
+            mc.variant_id, variant.name AS variant_name, variant.price::text AS variant_price,
+            mc.quantity
        FROM menu_item_components mc
        JOIN menu_items mi ON mi.id = mc.item_id AND mi.deleted_at IS NULL
+       LEFT JOIN menu_item_variants variant ON variant.id = mc.variant_id
       WHERE mc.combo_id = ANY($1::uuid[])
       ORDER BY mc.created_at ASC`,
     [comboIds],
   );
 
-  const byCombo = new Map<string, Array<{ itemId: string; name: string; quantity: number }>>();
+  const byCombo = new Map<string, NonNullable<MenuItemWithComponents['components']>>();
   for (const row of rows) {
     if (!byCombo.has(row.combo_id)) byCombo.set(row.combo_id, []);
-    byCombo
-      .get(row.combo_id)!
-      .push({ itemId: row.item_id, name: row.item_name, quantity: row.quantity });
+    byCombo.get(row.combo_id)!.push({
+      itemId: row.item_id,
+      name: row.item_name,
+      variantId: row.variant_id,
+      variantName: row.variant_name,
+      variantPrice: row.variant_price,
+      quantity: row.quantity,
+    });
   }
 
   return items.map((item) => ({
     ...item,
     components: item.isCombo ? (byCombo.get(item.id) ?? []) : undefined,
   }));
+}
+
+async function hydrateMenuItems(
+  items: MenuItemWithComponents[],
+): Promise<MenuItemWithComponents[]> {
+  return attachComponents(await attachVariants(items));
+}
+
+function normalizeVariants(variants: MenuVariantInput[]): MenuVariantInput[] {
+  const names = new Set<string>();
+  return variants.map((variant) => {
+    const name = variant.name.trim();
+    const dedupeKey = name.toLocaleLowerCase('vi');
+    if (names.has(dedupeKey)) {
+      throw new AppError('Tên lựa chọn không được trùng nhau', 400, 'DUPLICATE_VARIANT_NAME');
+    }
+    names.add(dedupeKey);
+    return { ...variant, name };
+  });
+}
+
+async function replaceVariants(
+  manager: EntityManager,
+  menuItemId: string,
+  variants: MenuVariantInput[],
+): Promise<void> {
+  const normalized = normalizeVariants(variants);
+  const variantRepo = manager.getRepository(MenuItemVariant);
+  await variantRepo.delete({ menuItemId });
+  if (normalized.length) {
+    await variantRepo.save(
+      normalized.map((variant, displayOrder) =>
+        variantRepo.create({
+          menuItemId,
+          name: variant.name,
+          price: variant.price.toFixed(2),
+          displayOrder,
+          isAvailable: variant.is_available ?? true,
+        }),
+      ),
+    );
+  }
+}
+
+async function validateComponentVariants(
+  manager: EntityManager,
+  components: ComboComponentInput[],
+): Promise<void> {
+  const selectedVariantIds = components
+    .map((component) => component.variant_id)
+    .filter((variantId): variantId is string => Boolean(variantId));
+  if (!selectedVariantIds.length) return;
+
+  const variants = await manager.getRepository(MenuItemVariant).findByIds(selectedVariantIds);
+  if (variants.length !== selectedVariantIds.length) {
+    throw new AppError('Lựa chọn trong combo không hợp lệ', 400, 'INVALID_COMBO_VARIANT');
+  }
+  const variantById = new Map(variants.map((variant) => [variant.id, variant]));
+  const invalid = components.some((component) => {
+    if (!component.variant_id) return false;
+    const variant = variantById.get(component.variant_id);
+    return !variant || variant.menuItemId !== component.item_id;
+  });
+  if (invalid) {
+    throw new AppError('Lựa chọn không thuộc món của combo', 400, 'INVALID_COMBO_VARIANT');
+  }
 }
 
 export async function listMenuItems(
@@ -175,7 +309,7 @@ export async function listMenuItems(
     .take(limit)
     .getManyAndCount();
 
-  return { data: await attachComponents(mapLoadedItems(data)), total };
+  return { data: await hydrateMenuItems(mapLoadedItems(data)), total };
 }
 
 // ── Món phổ biến (social proof cho luồng đặt lịch) ────────────────────────────
@@ -238,20 +372,26 @@ export async function createMenuItem(
 
   const category = await resolveCategoryOrThrow(cafeId, body.category_id);
 
-  const repo = AppDataSource.getRepository(MenuItem);
-  const item = repo.create({
-    cafeId,
-    name: body.name,
-    description: body.description ?? null,
-    price: body.price.toFixed(2),
-    categoryId: category?.id ?? null,
-    isCombo: false,
-    imageUrl: body.image_url ?? null,
-    isAvailable: body.is_available ?? true,
+  const saved = await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(MenuItem);
+    const item = await repo.save(
+      repo.create({
+        cafeId,
+        name: body.name,
+        description: body.description ?? null,
+        price: body.price.toFixed(2),
+        categoryId: category?.id ?? null,
+        isCombo: false,
+        imageUrl: body.image_url ?? null,
+        isAvailable: body.is_available ?? true,
+      }),
+    );
+    if (body.variants !== undefined) await replaceVariants(manager, item.id, body.variants);
+    return item;
   });
 
-  const saved = await repo.save(item);
-  return toResponseShape(saved, category?.name ?? null);
+  const [result] = await hydrateMenuItems([toResponseShape(saved, category?.name ?? null)]);
+  return result;
 }
 
 export async function updateMenuItem(
@@ -278,8 +418,13 @@ export async function updateMenuItem(
   if (body.is_available !== undefined) item.isAvailable = body.is_available;
 
   const categoryName = item.category?.name ?? null;
-  const saved = await AppDataSource.getRepository(MenuItem).save(item);
-  return toResponseShape(saved, categoryName);
+  const saved = await AppDataSource.transaction(async (manager) => {
+    const result = await manager.getRepository(MenuItem).save(item);
+    if (body.variants !== undefined) await replaceVariants(manager, item.id, body.variants);
+    return result;
+  });
+  const [result] = await hydrateMenuItems([toResponseShape(saved, categoryName)]);
+  return result;
 }
 
 export async function deleteMenuItem(
@@ -331,17 +476,23 @@ export async function createCombo(
       }),
     );
 
+    await validateComponentVariants(manager, body.components);
     const compRepo = manager.getRepository(MenuItemComponent);
     await compRepo.save(
       body.components.map((c) =>
-        compRepo.create({ comboId: created.id, itemId: c.item_id, quantity: c.quantity }),
+        compRepo.create({
+          comboId: created.id,
+          itemId: c.item_id,
+          variantId: c.variant_id ?? null,
+          quantity: c.quantity,
+        }),
       ),
     );
 
     return created;
   });
 
-  const [result] = await attachComponents([toResponseShape(combo, category?.name ?? null)]);
+  const [result] = await hydrateMenuItems([toResponseShape(combo, category?.name ?? null)]);
   return result;
 }
 
@@ -388,11 +539,17 @@ export async function updateCombo(
         throw new AppError('Không thể thêm combo vào trong combo', 400, 'COMBO_IN_COMBO');
       }
 
+      await validateComponentVariants(manager, body.components);
       const compRepo = manager.getRepository(MenuItemComponent);
       await compRepo.delete({ comboId: combo.id });
       await compRepo.save(
         body.components.map((c) =>
-          compRepo.create({ comboId: combo.id, itemId: c.item_id, quantity: c.quantity }),
+          compRepo.create({
+            comboId: combo.id,
+            itemId: c.item_id,
+            variantId: c.variant_id ?? null,
+            quantity: c.quantity,
+          }),
         ),
       );
     }
@@ -400,6 +557,6 @@ export async function updateCombo(
     return combo;
   });
 
-  const [result] = await attachComponents([toResponseShape(updated, categoryName)]);
+  const [result] = await hydrateMenuItems([toResponseShape(updated, categoryName)]);
   return result;
 }

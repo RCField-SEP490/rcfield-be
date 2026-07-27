@@ -11,6 +11,7 @@ import { Cafe } from '../models/cafe.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { MenuItem } from '../models/menu-item.entity';
+import { MenuItemVariant } from '../models/menu-item-variant.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { TrackType } from '../models/track-type.entity';
 import { User } from '../models/user.entity';
@@ -38,6 +39,7 @@ import { refundSlots } from './customer-package.service';
 import { getEffectiveMultiplier } from './pricing.service';
 import { validatePromoCode } from './promotion.service';
 import { assertBookingNotBlockedByContest } from './contest-lock.service';
+import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import type { Promotion } from '../models/promotion.entity';
 import type { CafeOperatingHours } from '../types';
 
@@ -67,6 +69,17 @@ function getVietnamLocalMidnightUtcMs(value: Date): number {
 function getOperatingDayKey(localMidnightUtcMs: number): string {
   const local = new Date(localMidnightUtcMs + VN_TZ_OFFSET_MS);
   return DAY_KEYS[local.getUTCDay()]!;
+}
+
+function isVietnamToday(value: Date): boolean {
+  const format = (date: Date) =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  return format(value) === format(new Date());
 }
 
 function parseOperatingTimeToMinutes(value?: string): number | null {
@@ -424,6 +437,30 @@ export async function transition(bookingId: string, event: string): Promise<Book
     logger.info('BookingService', `transition → NO_SHOW bookingId=${bookingId}`);
   }
 
+  // A paid/confirmed preorder belongs in the staff preparation queue. Future
+  // dates are intentionally not alerted yet: this screen operates on today.
+  if (newStatus === BookingStatus.CONFIRMED && isVietnamToday(booking.slotStart)) {
+    const fnbOrders = await AppDataSource.query<{ id: string; order_type: FnbOrderType }[]>(
+      `SELECT id, order_type
+         FROM fnb_orders
+        WHERE booking_id = $1
+          AND order_type = 'PRE_ORDER'
+          AND status = 'PENDING'`,
+      [bookingId],
+    );
+    await Promise.all(
+      fnbOrders.map((order) =>
+        notifyCafeStaffAboutFnbPrep({
+          cafeId: booking.cafeId,
+          bookingId,
+          orderId: order.id,
+          orderType: order.order_type,
+          scheduledFor: booking.slotStart,
+        }),
+      ),
+    );
+  }
+
   booking.status = newStatus;
   return booking;
 }
@@ -439,6 +476,7 @@ export interface ParticipantInput {
 
 export interface FnbItemInput {
   menu_item_id: string;
+  variant_id?: string;
   quantity: number;
   notes?: string;
 }
@@ -756,6 +794,9 @@ export async function createBooking(
   let fnbTotal = 0;
   const fnbPricings: Array<{
     menuItemId: string;
+    menuItemVariantId: string | null;
+    itemName: string;
+    variantName: string | null;
     quantity: number;
     unitPrice: number;
     subtotal: number;
@@ -764,7 +805,9 @@ export async function createBooking(
   if (body.fnb_items.length > 0) {
     const menuRepo = AppDataSource.getRepository(MenuItem);
     for (const item of body.fnb_items) {
-      const menuItem = await menuRepo.findOne({ where: { id: item.menu_item_id } });
+      const menuItem = await menuRepo.findOne({
+        where: { id: item.menu_item_id, cafeId: body.cafe_id },
+      });
       if (!menuItem || !menuItem.isAvailable) {
         throw new AppError(
           `Menu item ${item.menu_item_id} not available`,
@@ -772,11 +815,25 @@ export async function createBooking(
           'MENU_ITEM_UNAVAILABLE',
         );
       }
-      const unitPrice = Number(menuItem.price);
+      if (item.variant_id && menuItem.isCombo) {
+        throw new AppError('Combo không có lựa chọn riêng', 400, 'INVALID_MENU_VARIANT');
+      }
+      const variant = item.variant_id
+        ? await AppDataSource.getRepository(MenuItemVariant).findOne({
+            where: { id: item.variant_id, menuItemId: menuItem.id },
+          })
+        : null;
+      if (item.variant_id && (!variant || !variant.isAvailable)) {
+        throw new AppError('Lựa chọn món không khả dụng', 400, 'MENU_VARIANT_UNAVAILABLE');
+      }
+      const unitPrice = Number(variant?.price ?? menuItem.price);
       const subtotal = unitPrice * item.quantity;
       fnbTotal += subtotal;
       fnbPricings.push({
         menuItemId: item.menu_item_id,
+        menuItemVariantId: variant?.id ?? null,
+        itemName: menuItem.name,
+        variantName: variant?.name ?? null,
         quantity: item.quantity,
         unitPrice,
         subtotal,
@@ -939,9 +996,12 @@ export async function createBooking(
           const item = em.create(FnbOrderItem, {
             fnbOrderId: fnbOrder.id,
             menuItemId: fp.menuItemId,
+            menuItemVariantId: fp.menuItemVariantId,
             quantity: fp.quantity,
             unitPrice: fp.unitPrice,
             subtotal: fp.subtotal,
+            itemNameSnapshot: fp.itemName,
+            variantNameSnapshot: fp.variantName,
             notes: fp.notes ?? null,
           });
           await em.save(item);
