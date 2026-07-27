@@ -351,9 +351,10 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
        RETURNING id`,
       [staffUser.id, cafe.id, trackTypeId, slotStart, slotEnd],
     );
-    await AppDataSource.query(
+    const [menuItem] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO menu_items (cafe_id, name, price, is_available)
-       VALUES ($1, 'Nước kiểm thử', 30000, true)`,
+       VALUES ($1, 'Nước kiểm thử', 30000, true)
+       RETURNING id`,
       [cafe.id],
     );
     const session = await AppDataSource.getRepository(Session).save({
@@ -367,7 +368,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     });
 
     const order = await staffService.addSessionFnbOrder(session.id, staffUser.id, {
-      items: [{ name: 'Nước kiểm thử', qty: 2, price: 30000 }],
+      items: [{ menu_item_id: menuItem.id, quantity: 2 }],
     });
     const componentRepo = AppDataSource.getRepository(PaymentComponent);
     const component = await componentRepo.findOne({
@@ -376,7 +377,12 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     expect(component).toMatchObject({ status: PaymentComponentStatus.PENDING });
     expect(Number(component!.amount)).toBe(60000);
 
-    await staffService.updateFnbOrderStatus(order.id, cafe.id, FnbOrderStatus.CANCELLED);
+    await staffService.updateFnbOrderStatus(
+      order.id,
+      cafe.id,
+      FnbOrderStatus.CANCELLED,
+      staffUser.id,
+    );
     expect(
       await componentRepo.findOne({
         where: { bookingId: bookingRow.id, type: PaymentComponentType.FNB_ON_SITE },

@@ -11,6 +11,7 @@ import {
   UpdateDamageItemsSchema,
   EscalateDisputeSchema,
   StaffBookingsQuerySchema,
+  AddSessionFnbOrderSchema,
 } from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
@@ -251,7 +252,12 @@ export const staffController = {
       if (!req.user.cafeId)
         throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
       const { status } = UpdateFnbOrderStatusSchema.parse(req.body);
-      await staffService.updateFnbOrderStatus(req.params.orderId, req.user.cafeId, status);
+      await staffService.updateFnbOrderStatus(
+        req.params.orderId,
+        req.user.cafeId,
+        status,
+        req.user.userId,
+      );
       logger.info('Staff', 'fnb order updated via API', {
         orderId: req.params.orderId,
         cafeId: req.user.cafeId,
@@ -316,10 +322,11 @@ export const staffController = {
   async addSessionFnbOrder(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const body = AddSessionFnbOrderSchema.parse(req.body);
       const data = await staffService.addSessionFnbOrder(
         req.params.sessionId,
         req.user.userId,
-        req.body,
+        body,
       );
       res.status(201).json({ success: true, data });
     } catch (err) {
