@@ -557,6 +557,7 @@ export async function listGlobalLeaderboard(query: GlobalLeaderboardQuery) {
       contest_name: string | null;
       display_name: string | null;
       driver_handle: string | null;
+      avatar_url: string | null;
       current_title_code: string | null;
       current_title_label: string | null;
     }[]
@@ -575,6 +576,7 @@ export async function listGlobalLeaderboard(query: GlobalLeaderboardQuery) {
        contest.name AS contest_name,
        u.racing_profile->>'display_name' AS display_name,
        u.racing_profile->>'driver_handle' AS driver_handle,
+       u.avatar_url,
        u.racing_profile->>'current_title_code' AS current_title_code,
        u.racing_profile->>'current_title_label' AS current_title_label
      FROM race_records r
@@ -598,6 +600,7 @@ export async function listGlobalLeaderboard(query: GlobalLeaderboardQuery) {
     user_id: row.user_id,
     display_name: row.display_name || row.driver_handle || `Driver ${row.user_id.slice(0, 8)}`,
     driver_handle: row.driver_handle,
+    avatar_url: row.avatar_url,
     current_title: {
       code: row.current_title_code,
       label: row.current_title_label,
