@@ -214,6 +214,13 @@ contestRouter.post(
   contestController.waiveEntryFee,
 );
 contestRouter.post(
+  '/contest-registrations/:registrationId/refunds/:refundTxnId/confirm',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  requireActiveProvider,
+  contestController.confirmEntryFeeRefund,
+);
+contestRouter.post(
   '/contest-registrations/:registrationId/approve',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),

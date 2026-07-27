@@ -1,7 +1,9 @@
 import cron from 'node-cron';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
+import { LessThanOrEqual, MoreThan } from 'typeorm';
 import { ContestRegistration } from '../models/contest-registration.entity';
+import { ContestMatch } from '../models/contest-match.entity';
 import { Contest } from '../models/contest.entity';
 import { writeContestAudit } from '../services/contest.helpers';
 import { emailService } from '../services/email.service';
@@ -160,10 +162,48 @@ export async function processContestAutoClose() {
   }
 }
 
+export async function processContestAutoRunning() {
+  const repo = AppDataSource.getRepository(Contest);
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const closedContests = await repo.find({
+    where: {
+      status: ContestStatus.CLOSED,
+      startsAt: LessThanOrEqual(new Date()),
+      endsAt: MoreThan(new Date()),
+    },
+  });
+
+  for (const contest of closedContests) {
+    try {
+      const hasMatch = await matchRepo.findOne({
+        where: { contestId: contest.id },
+        select: ['id'],
+      });
+      if (!hasMatch) {
+        logger.warn('ContestAutoRunning', `contest ${contest.id} has no matches, skipping`);
+        continue;
+      }
+      contest.status = ContestStatus.RUNNING;
+      await repo.save(contest);
+      await writeContestAudit({
+        contestId: contest.id,
+        actorId: null,
+        actorRole: 'SYSTEM',
+        eventType: 'contest.auto_running',
+        afterJson: { status: ContestStatus.RUNNING },
+      });
+      logger.info('ContestAutoRunning', `contest ${contest.id} auto-running`);
+    } catch (error) {
+      logger.error('ContestAutoRunning', 'failed to auto-run contest', error);
+    }
+  }
+}
+
 export function startContestReminderJob() {
   cron.schedule('*/15 * * * *', async () => {
     await processContestReminders();
     await processContestAutoClose();
+    await processContestAutoRunning();
   });
 
   logger.info('ContestReminder', 'Cron scheduled - runs every 15 minutes');

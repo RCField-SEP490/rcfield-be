@@ -413,6 +413,53 @@ function getUserRacingProfile(user?: User | null) {
   };
 }
 
+async function maskLeaderboardForPrivacy(
+  leaderboard: Record<string, unknown>,
+  viewer?: Viewer,
+  isOperator?: boolean,
+): Promise<Record<string, unknown>> {
+  const clone = { ...leaderboard };
+  const entries = Array.isArray(clone.entries) ? [...clone.entries] : [];
+  const userIds = new Set<string>();
+  for (const entry of entries) {
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      typeof (entry as Record<string, unknown>).user_id === 'string'
+    ) {
+      userIds.add((entry as Record<string, unknown>).user_id as string);
+    }
+  }
+  const userMap = await loadUsersMap(Array.from(userIds));
+  clone.entries = entries.map((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return entry;
+    }
+    const item = entry as Record<string, unknown>;
+    const userId = item.user_id as string;
+    if (isOperator) {
+      return entry;
+    }
+    if (viewer && viewer.userId === userId) {
+      return entry;
+    }
+    const user = userMap.get(userId);
+    const profile = (user?.racing_profile ?? {}) as Record<string, unknown>;
+    const publicProfileEnabled = profile.public_profile_enabled !== false;
+    const leaderboardOptIn = profile.leaderboard_opt_in !== false;
+    if (!publicProfileEnabled || !leaderboardOptIn) {
+      return {
+        ...item,
+        display_name: 'VĐV ẩn danh',
+        driver_handle: null,
+        driver_title_label: '',
+      };
+    }
+    return entry;
+  });
+  return clone;
+}
+
 async function loadLatestMatchMapForRegistrations(registrationIds: string[]) {
   if (registrationIds.length === 0) return new Map<string, Record<string, unknown>>();
 
@@ -649,6 +696,19 @@ function stripRuntimeManagedConfig(config: Record<string, unknown> | null | unde
 
 async function assertContestProviderOrAssignedStaff(contestId: string, viewer: Viewer) {
   return assertContestOperator(contestId, viewer);
+}
+
+async function assertContestProviderOrAssignedStaffByRegistration(
+  registrationId: string,
+  viewer: Viewer,
+) {
+  const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+    where: { id: registrationId },
+  });
+  if (!registration) {
+    throw new AppError('Không tìm thấy đăng ký', 404, 'REGISTRATION_NOT_FOUND');
+  }
+  return assertContestOperator(registration.contestId, viewer);
 }
 
 async function resolveContestProviderIdForViewer(
@@ -892,6 +952,7 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
           }),
         )
       : false;
+  const isOperator = isOwner || isAssignedStaff || viewer?.role === UserRole.ADMIN;
 
   if (
     !isOwner &&
@@ -907,6 +968,9 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
     string,
     unknown
   > | null;
+  const maskedLeaderboard = publishedLeaderboard
+    ? await maskLeaderboardForPrivacy(publishedLeaderboard, viewer, isOperator)
+    : null;
 
   if (viewer?.role === UserRole.CUSTOMER) {
     const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
@@ -919,7 +983,7 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
       return {
         ...payload,
         my_registration: mappedRegistration,
-        published_leaderboard: publishedLeaderboard,
+        published_leaderboard: maskedLeaderboard,
         runtime_summary: runtimeSummary,
         highlight_rounds: runtimeSummary?.highlight_rounds ?? [],
       };
@@ -929,7 +993,7 @@ export async function getContestDetail(contestId: string, viewer?: Viewer) {
   return {
     ...payload,
     operator_access: isOwner || isAssignedStaff,
-    published_leaderboard: publishedLeaderboard,
+    published_leaderboard: maskedLeaderboard,
     runtime_summary: runtimeSummary,
     highlight_rounds: runtimeSummary?.highlight_rounds ?? [],
   };
@@ -1153,7 +1217,7 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   return getContestDetail(contest.id, viewer);
 }
 
-async function cleanUpContestOnCancel(contestId: string, actorId: string) {
+async function cleanUpContestOnCancel(contestId: string, actorId: string, actorRole: string) {
   const registrationRepo = AppDataSource.getRepository(ContestRegistration);
   const registrations = await registrationRepo.find({
     where: { contestId, status: Not(ContestRegistrationStatus.CANCELLED) },
@@ -1164,11 +1228,70 @@ async function cleanUpContestOnCancel(contestId: string, actorId: string) {
     registration.cancelledBy = actorId;
     registration.cancelledAt = new Date();
     registration.cancellationReason = 'Contest cancelled';
+
+    const needsRefund = registration.paymentStatus === ContestEntryFeePaymentStatus.MARKED_PAID;
+    let refundTxn: PaymentTransaction | null = null;
+
+    if (needsRefund) {
+      const originalTxn = await AppDataSource.getRepository(PaymentTransaction).findOne({
+        where: {
+          contestRegistrationId: registration.id,
+          subjectType: PaymentTransactionSubjectType.CONTEST_ENTRY,
+          type: PaymentTransactionType.PAYMENT,
+          status: PaymentTransactionStatus.SUCCESS,
+        },
+        order: { createdAt: 'DESC' },
+      });
+
+      if (originalTxn) {
+        const refundTxnRef = `contest_rfnd_${registration.id.replace(/-/g, '').slice(0, 18)}_${Date.now().toString().slice(-4)}_${Math.random().toString(36).slice(2, 6)}`;
+        refundTxn = await AppDataSource.getRepository(PaymentTransaction).save(
+          AppDataSource.getRepository(PaymentTransaction).create({
+            bookingId: null,
+            customerPackageId: null,
+            contestRegistrationId: registration.id,
+            subjectType: PaymentTransactionSubjectType.CONTEST_ENTRY,
+            type: PaymentTransactionType.REFUND,
+            gateway: originalTxn.gateway,
+            txnRef: refundTxnRef,
+            amount: Number(registration.entryFeeAmount),
+            status: PaymentTransactionStatus.PENDING,
+            rawRequest: {
+              original_txn_ref: originalTxn.txnRef,
+              original_txn_id: originalTxn.id,
+              cancelled_by: actorId,
+              cancelled_by_role: actorRole,
+              reason: 'Contest cancelled',
+            },
+          }),
+        );
+      }
+    }
+
     registration.metadata = {
       ...(registration.metadata ?? {}),
-      refund_needed: registration.paymentStatus === ContestEntryFeePaymentStatus.MARKED_PAID,
+      refund_needed: needsRefund,
+      refund_txn_id: refundTxn?.id ?? null,
+      refund_txn_ref: refundTxn?.txnRef ?? null,
     };
     await registrationRepo.save(registration);
+
+    if (refundTxn) {
+      await writeContestAudit({
+        contestId,
+        registrationId: registration.id,
+        actorId,
+        actorRole,
+        eventType: 'registration.refund_requested',
+        beforeJson: { payment_status: ContestEntryFeePaymentStatus.MARKED_PAID },
+        afterJson: {
+          refund_txn_id: refundTxn.id,
+          refund_txn_ref: refundTxn.txnRef,
+          amount: refundTxn.amount,
+        },
+        reason: 'Contest cancelled',
+      });
+    }
   }
 
   const matchRepo = AppDataSource.getRepository(ContestMatch);
@@ -1179,6 +1302,64 @@ async function cleanUpContestOnCancel(contestId: string, actorId: string) {
     match.endedAt = match.endedAt ?? new Date();
     await matchRepo.save(match);
   }
+}
+
+export async function confirmContestEntryRefund(
+  registrationId: string,
+  refundTxnId: string,
+  viewer: Viewer,
+) {
+  const contest = await assertContestProviderOrAssignedStaffByRegistration(registrationId, viewer);
+
+  const refundRepo = AppDataSource.getRepository(PaymentTransaction);
+  const refundTxn = await refundRepo.findOne({
+    where: {
+      id: refundTxnId,
+      contestRegistrationId: registrationId,
+      subjectType: PaymentTransactionSubjectType.CONTEST_ENTRY,
+      type: PaymentTransactionType.REFUND,
+      status: PaymentTransactionStatus.PENDING,
+    },
+  });
+  if (!refundTxn) {
+    throw new AppError('Không tìm thấy yêu cầu hoàn tiền đang chờ xử lý', 404, 'REFUND_NOT_FOUND');
+  }
+
+  const registrationRepo = AppDataSource.getRepository(ContestRegistration);
+  const registration = await registrationRepo.findOne({ where: { id: registrationId } });
+  if (!registration) {
+    throw new AppError('Không tìm thấy đăng ký', 404, 'REGISTRATION_NOT_FOUND');
+  }
+
+  await AppDataSource.transaction(async (em) => {
+    refundTxn.status = PaymentTransactionStatus.SUCCESS;
+    refundTxn.rawResponse = {
+      ...(refundTxn.rawResponse ?? {}),
+      confirmed_at: new Date().toISOString(),
+      confirmed_by: viewer.userId,
+      confirmed_by_role: viewer.role,
+    };
+    await em.save(refundTxn);
+
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      refund_confirmed_at: new Date().toISOString(),
+      refund_confirmed_by: viewer.userId,
+    };
+    await em.save(registration);
+  });
+
+  await writeContestAudit({
+    contestId: contest.id,
+    registrationId: registration.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'registration.refund_confirmed',
+    beforeJson: { refund_txn_id: refundTxn.id, status: PaymentTransactionStatus.PENDING },
+    afterJson: { refund_txn_id: refundTxn.id, status: PaymentTransactionStatus.SUCCESS },
+  });
+
+  return refundTxn;
 }
 
 export async function changeContestStatus(
@@ -1203,7 +1384,7 @@ export async function changeContestStatus(
   }
 
   if (nextStatus === ContestStatus.CANCELLED) {
-    await cleanUpContestOnCancel(contest.id, viewer.userId);
+    await cleanUpContestOnCancel(contest.id, viewer.userId, viewer.role);
   }
 
   contest.status = nextStatus;
@@ -2086,6 +2267,20 @@ export async function createContestEntryPaymentUrl(
       },
     }),
   );
+
+  await writeContestAudit({
+    contestId: contest.id,
+    registrationId: registration.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'registration.entry_fee_payment_initiated',
+    afterJson: {
+      txn_ref: txnRef,
+      amount: Number(registration.entryFeeAmount),
+      gateway: env.vnpay.mockEnabled ? 'MOCK' : 'VNPAY',
+      status: PaymentTransactionStatus.PENDING,
+    },
+  });
 
   if (env.vnpay.mockEnabled) {
     await processMockConfirmation(txnRef);

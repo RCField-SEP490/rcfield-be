@@ -243,6 +243,20 @@ export const contestController = {
     }
   },
 
+  async confirmEntryFeeRefund(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.confirmContestEntryRefund(
+        req.params.registrationId,
+        req.params.refundTxnId,
+        viewer,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async approveRegistration(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);

@@ -54,6 +54,11 @@ function withReason(text: string, reason?: string | null): string {
   return trimmed ? `${text} — lý do: ${trimmed}` : text;
 }
 
+function formatCurrencyVnd(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value);
+}
+
 export function buildContestAuditSummary(log: ContestAuditSummaryInput): string {
   const before = asRecord(log.beforeJson);
   const after = asRecord(log.afterJson);
@@ -103,6 +108,16 @@ export function buildContestAuditSummary(log: ContestAuditSummaryInput): string 
     }
     case 'registration.entry_fee_waived':
       return `Miễn phí tham gia cho ${registrationRef(log)}`;
+    case 'registration.refund_requested': {
+      const amount = readNumber(after, 'amount');
+      const amountText = formatCurrencyVnd(amount);
+      return `Yêu cầu hoàn lệ phí cho ${registrationRef(log)}${amountText ? ` (${amountText})` : ''}`;
+    }
+    case 'registration.refund_confirmed': {
+      const amount = readNumber(after, 'amount');
+      const amountText = formatCurrencyVnd(amount);
+      return `Xác nhận đã hoàn lệ phí cho ${registrationRef(log)}${amountText ? ` (${amountText})` : ''}`;
+    }
     case 'booking.contest_rental_cancelled': {
       const bookingShort = shortId(metadata.booking_id);
       return `Hủy booking thuê xe chưa thanh toán${bookingShort ? ` #${bookingShort}` : ''} của ${registrationRef(log)}`;
@@ -145,6 +160,18 @@ export function buildContestAuditSummary(log: ContestAuditSummaryInput): string 
       const bye = after.bye === true;
       return `Đưa ${winnerCount} người thắng của ${matchRef(log)} vào trận tiếp theo${bye ? ' (bye)' : ''}`;
     }
+    case 'contest.auto_running':
+      return 'Hệ thống tự động chuyển contest sang trạng thái đang diễn ra (RUNNING)';
+    case 'registration.entry_fee_payment_initiated': {
+      const amount = readNumber(after, 'amount');
+      const amountText = formatCurrencyVnd(amount);
+      const gateway = readString(after, 'gateway');
+      return `Khách tạo link thanh toán lệ phí cho ${registrationRef(log)}${amountText ? ` (${amountText})` : ''}${gateway ? ` qua ${gateway}` : ''}`;
+    }
+    case 'registration.entry_fee_payment_failed': {
+      const responseCode = readString(after, 'response_code');
+      return `Thanh toán lệ phí thất bại cho ${registrationRef(log)}${responseCode ? ` (mã lỗi: ${responseCode})` : ''}`;
+    }
     case 'contest.leaderboard_published': {
       const entryCount = asArray(after.entries).length;
       return `Công bố bảng xếp hạng với ${entryCount} entries`;
@@ -152,7 +179,13 @@ export function buildContestAuditSummary(log: ContestAuditSummaryInput): string 
     case 'race_records.synced': {
       const synced = readNumber(metadata, 'synced_count') ?? 0;
       const superseded = readNumber(metadata, 'superseded_count') ?? 0;
-      return `Đồng bộ race records: ${synced} bản ghi mới, ${superseded} bản ghi bị thay thế`;
+      const syncedIds = asArray(metadata.synced_record_ids);
+      const supersededIds = asArray(metadata.superseded_record_ids);
+      const idNote =
+        syncedIds.length > 0 || supersededIds.length > 0
+          ? ` (${syncedIds.length} id mới, ${supersededIds.length} id thay thế)`
+          : '';
+      return `Đồng bộ race records: ${synced} bản ghi mới, ${superseded} bản ghi bị thay thế${idNote}`;
     }
     case 'contest.staff_assigned': {
       const staffShort = shortId(after.staff_id);

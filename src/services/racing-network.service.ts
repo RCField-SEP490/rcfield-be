@@ -706,6 +706,8 @@ export async function syncContestRaceRecords(contestId: string, viewer: Viewer) 
   const raceRecordRepo = AppDataSource.getRepository(RaceRecord);
   let syncedCount = 0;
   let supersededCount = 0;
+  const syncedRecordIds: string[] = [];
+  const supersededRecordIds: string[] = [];
   const affectedUserIds = new Set<string>();
 
   for (const row of sourceRows) {
@@ -764,10 +766,12 @@ export async function syncContestRaceRecords(contestId: string, viewer: Viewer) 
       existing.metadata = { ...(existing.metadata ?? {}), superseded_at: new Date().toISOString() };
       await raceRecordRepo.save(existing);
       supersededCount += 1;
+      supersededRecordIds.push(existing.id);
     }
 
-    await raceRecordRepo.save(raceRecordRepo.create(nextPayload));
+    const saved = await raceRecordRepo.save(raceRecordRepo.create(nextPayload));
     syncedCount += 1;
+    syncedRecordIds.push(saved.id);
     affectedUserIds.add(row.user_id);
   }
 
@@ -786,6 +790,8 @@ export async function syncContestRaceRecords(contestId: string, viewer: Viewer) 
       synced_count: syncedCount,
       superseded_count: supersededCount,
       affected_user_count: affectedUserIds.size,
+      synced_record_ids: syncedRecordIds,
+      superseded_record_ids: supersededRecordIds,
     },
   };
   await AppDataSource.getRepository(Contest).save(contest);
@@ -800,6 +806,8 @@ export async function syncContestRaceRecords(contestId: string, viewer: Viewer) 
       synced_count: syncedCount,
       superseded_count: supersededCount,
       affected_user_count: affectedUserIds.size,
+      synced_record_ids: syncedRecordIds,
+      superseded_record_ids: supersededRecordIds,
     },
   });
 

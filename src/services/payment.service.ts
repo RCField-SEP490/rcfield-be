@@ -640,6 +640,33 @@ export async function processConfirmationResult(
       rawResponse: result.raw as object,
     });
     logger.info('PaymentService', `payment failed txnRef=${result.txnRef}`);
+
+    if (
+      tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY &&
+      tx.contestRegistrationId
+    ) {
+      const registrationRepo = AppDataSource.getRepository(ContestRegistration);
+      const registration = await registrationRepo.findOne({
+        where: { id: tx.contestRegistrationId },
+      });
+      if (registration) {
+        await writeContestAudit({
+          contestId: registration.contestId,
+          registrationId: registration.id,
+          actorId: null,
+          actorRole: 'SYSTEM',
+          eventType: 'registration.entry_fee_payment_failed',
+          afterJson: {
+            txn_ref: result.txnRef,
+            response_code: result.responseCode,
+            response_message: (result as { message?: string | null }).message ?? null,
+            status: PaymentTransactionStatus.FAILED,
+          },
+          reason: `VNPay failed: ${result.responseCode}`,
+        });
+      }
+    }
+
     return { rspCode: result.responseCode, message: 'Payment failed' };
   }
 
