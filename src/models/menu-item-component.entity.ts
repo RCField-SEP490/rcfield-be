@@ -11,6 +11,10 @@ export class MenuItemComponent {
   @Column({ name: 'item_id', type: 'uuid' })
   itemId: string;
 
+  /** Optional fixed choice used by a combo, e.g. "Cà phê sữa đá · M". */
+  @Column({ name: 'variant_id', type: 'uuid', nullable: true })
+  variantId: string | null;
+
   @Column({ type: 'smallint', default: 1 })
   quantity: number;
 
