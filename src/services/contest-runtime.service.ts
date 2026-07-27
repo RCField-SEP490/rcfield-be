@@ -1134,6 +1134,7 @@ type LeaderboardEntry = {
   registration_id: string;
   user_id: string | null;
   display_name: string | null;
+  avatar_url: string | null;
   driver_handle: string | null;
   driver_title_label: string | null;
   wins: number;
@@ -1200,6 +1201,7 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
         registration_id: participant.registrationId,
         user_id: registration?.userId ?? null,
         display_name: user?.full_name ?? null,
+        avatar_url: user?.avatar_url ?? null,
         driver_handle: racing.driverHandle,
         driver_title_label: racing.titleLabel,
         wins: 0,
