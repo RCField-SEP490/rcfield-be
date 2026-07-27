@@ -37,7 +37,7 @@ contestRouter.post(
 contestRouter.patch(
   '/contests/:contestId',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.updateContest,
 );
@@ -58,7 +58,7 @@ contestRouter.post(
 contestRouter.post(
   '/contests/:contestId/cancel',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.cancelContest,
 );
@@ -72,14 +72,14 @@ contestRouter.post(
 contestRouter.post(
   '/contests/:contestId/matches/generate-final-bracket',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.generateFinalBracket,
 );
 contestRouter.post(
   '/contests/:contestId/leaderboard/publish',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.publishLeaderboard,
 );
@@ -93,7 +93,7 @@ contestRouter.post(
 contestRouter.get(
   '/contests/:contestId/audit-logs',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  authorize(UserRole.PROVIDER, UserRole.STAFF, UserRole.ADMIN),
   requireActiveProvider,
   contestController.listAuditLogs,
 );
@@ -196,6 +196,7 @@ contestRouter.get(
   '/contests/:contestId/registrations/lookup',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
   contestController.lookupRegistration,
 );
 contestRouter.post(
@@ -208,7 +209,7 @@ contestRouter.post(
 contestRouter.post(
   '/contest-registrations/:registrationId/waive-entry-fee',
   authenticate,
-  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  authorize(UserRole.PROVIDER),
   requireActiveProvider,
   contestController.waiveEntryFee,
 );
@@ -237,35 +238,41 @@ contestRouter.post(
   '/contest-registrations/:registrationId/cancel',
   authenticate,
   authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  requireActiveProvider,
   contestController.cancelRegistration,
 );
 contestRouter.post(
   '/contest-registrations/:registrationId/check-in',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
   contestController.checkInRegistration,
 );
 contestRouter.patch(
   '/contest-matches/:matchId/participants',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
   contestController.updateMatchParticipants,
 );
 contestRouter.post(
   '/contest-matches/:matchId/results',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
   contestController.submitMatchResults,
 );
 contestRouter.post(
   '/contest-matches/:matchId/results/correct',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
   contestController.correctMatchResults,
 );
 contestRouter.post(
   '/contest-matches/:matchId/advance',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
   contestController.advanceMatch,
 );

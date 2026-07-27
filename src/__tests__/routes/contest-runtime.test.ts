@@ -461,18 +461,18 @@ describe('Contest runtime routes', () => {
     const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL');
     const registration = await createRegistrationFixture(contestId, 'CONFIRMED');
 
-    await request(app)
-      .post(`/api/v1/contests/${contestId}/staff-assignments`)
-      .set('Authorization', `Bearer ${providerToken}`)
-      .send({ staff_id: staff.id })
-      .expect(200);
-
-    // Staff must also be assigned to the cafe to operate there.
+    // Staff must be assigned to the cafe before they can be assigned to the contest.
     await AppDataSource.query(
       `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
        VALUES ($1, $2, $3)`,
       [staff.id, cafe.id, provider.id],
     );
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/staff-assignments`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ staff_id: staff.id })
+      .expect(200);
 
     // Check-in requires the contest to be CLOSED or RUNNING and within the race window.
     await AppDataSource.query(
@@ -1027,5 +1027,114 @@ describe('Contest runtime routes', () => {
     );
 
     expect(Number(reminderNotifications[0].total)).toBe(1);
+  });
+
+  it('staff được phân công contest không thể thực hiện các thao tác tác động lớn của provider', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const providerToken = generateToken(provider);
+    const staffToken = generateToken(staff);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      entryFee: 50000,
+    });
+
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by)
+       VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
+    );
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/staff-assignments`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ staff_id: staff.id })
+      .expect(200);
+
+    const registration = await createRegistrationFixture(contestId, 'CONFIRMED');
+
+    // Staff cannot cancel contest.
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/cancel`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ reason: 'Staff tries to cancel' })
+      .expect(403);
+
+    // Staff cannot update contest.
+    await request(app)
+      .patch(`/api/v1/contests/${contestId}`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ name: 'Hacked by staff' })
+      .expect(403);
+
+    // Staff cannot waive entry fee.
+    await request(app)
+      .post(`/api/v1/contest-registrations/${registration.id}/waive-entry-fee`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(403);
+
+    // Prepare running contest so provider can generate matches.
+    await AppDataSource.query(
+      `UPDATE contests
+       SET starts_at = NOW() - INTERVAL '1 hour', ends_at = NOW() + INTERVAL '1 hour'
+       WHERE id = $1`,
+      [contestId],
+    );
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/close`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
+
+    await request(app)
+      .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ checked_in_cafe_id: cafe.id })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({ cafe_id: cafe.id, registration_ids: [registration.id] })
+      .expect(201);
+
+    const matchesRes = await request(app)
+      .get(`/api/v1/contests/${contestId}/matches`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
+    const matchId = matchesRes.body.data[0].id;
+
+    await request(app)
+      .post(`/api/v1/contest-matches/${matchId}/results`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .send({
+        reason: 'Staff run time trial',
+        results: [
+          {
+            registration_id: registration.id,
+            finish_position: 1,
+            best_lap_seconds: 32.45,
+            total_time_seconds: 32.45,
+          },
+        ],
+      })
+      .expect(200);
+
+    // Staff cannot generate final bracket.
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate-final-bracket`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(403);
+
+    // Staff cannot publish leaderboard.
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/leaderboard/publish`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .expect(403);
+
+    // Provider can publish.
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/leaderboard/publish`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
   });
 });

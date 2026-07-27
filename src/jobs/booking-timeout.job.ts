@@ -3,6 +3,7 @@ import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import { transition } from '../services/booking.service';
 import { processRefund } from '../services/payment.service';
+import { writeContestAudit } from '../services/contest.helpers';
 import { Session } from '../models/session.entity';
 import { ExtensionProposal } from '../models/extension-proposal.entity';
 import { Notification } from '../models/notification.entity';
@@ -127,6 +128,55 @@ async function expireStaleExtensionProposals(): Promise<void> {
   }
 }
 
+/**
+ * WF-B cleanup: a PENDING contest registration whose rental booking just died
+ * from payment timeout must not linger as a zombie — cancel it and record a
+ * SYSTEM audit entry so the contest timeline explains what happened.
+ */
+export async function cancelContestRegistrationsForExpiredBookings(
+  bookingIds: string[],
+): Promise<void> {
+  if (bookingIds.length === 0) return;
+
+  const staleRegistrations = await AppDataSource.query<{ id: string; contest_id: string }[]>(
+    `SELECT id, contest_id
+     FROM contest_registrations
+     WHERE booking_id = ANY($1::uuid[])
+       AND status = 'PENDING'`,
+    [bookingIds],
+  );
+
+  for (const registration of staleRegistrations) {
+    await AppDataSource.query(
+      `UPDATE contest_registrations
+       SET status = 'CANCELLED',
+           cancelled_at = NOW(),
+           cancellation_reason = 'Booking thuê xe hết hạn thanh toán',
+           updated_at = NOW()
+       WHERE id = $1 AND status = 'PENDING'`,
+      [registration.id],
+    );
+    await writeContestAudit({
+      contestId: registration.contest_id,
+      registrationId: registration.id,
+      actorId: null,
+      actorRole: 'SYSTEM',
+      eventType: 'registration.cancelled',
+      beforeJson: { status: 'PENDING' },
+      afterJson: { status: 'CANCELLED' },
+      reason: 'Booking thuê xe hết hạn thanh toán',
+      metadata: { trigger: 'booking_payment_timeout' },
+    });
+  }
+
+  if (staleRegistrations.length > 0) {
+    logger.info(
+      'BookingTimeout',
+      `cancelled ${staleRegistrations.length} contest registration(s) for expired bookings`,
+    );
+  }
+}
+
 /** Runs every minute — expires PENDING bookings and marks CONFIRMED no-shows */
 export function scheduleBookingTimeout(): void {
   cron.schedule('* * * * *', async () => {
@@ -145,6 +195,11 @@ export function scheduleBookingTimeout(): void {
             logger.error('BookingTimeout', `failed to expire bookingId=${row.id}`, err);
           });
         }
+        await cancelContestRegistrationsForExpiredBookings(expired.map((row) => row.id)).catch(
+          (err) => {
+            logger.error('BookingTimeout', 'failed to cancel contest registrations', err);
+          },
+        );
       }
 
       // NO_SHOW: a CHECKED_IN session only represents a handover in progress.

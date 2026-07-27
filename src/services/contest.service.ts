@@ -630,8 +630,13 @@ async function resolveProviderBranchesOrThrow(providerId: string, cafeIds: strin
   return cafes;
 }
 
-function getRuntimeFormatFromCatalog(contestFormatCode: string) {
-  return contestFormatCode === 'TIME_TRIAL' ? 'TIME_TRIAL' : 'KNOCKOUT';
+function getRuntimeFormatFromCatalog(
+  contestFormatCode: string,
+): 'KNOCKOUT' | 'TIME_TRIAL' | 'QUALIFYING_FINAL' {
+  if (contestFormatCode === 'TIME_TRIAL' || contestFormatCode === 'QUALIFYING_FINAL') {
+    return contestFormatCode;
+  }
+  return 'KNOCKOUT';
 }
 
 function stripRuntimeManagedConfig(config: Record<string, unknown> | null | undefined) {
@@ -1952,11 +1957,28 @@ export async function listContestStaffAssignments(contestId: string, viewer: Vie
 
 export async function assignContestStaff(contestId: string, staffId: string, viewer: Viewer) {
   assertProviderViewer(viewer);
-  await assertContestOwner(contestId, viewer);
+  const contest = await assertContestOwner(contestId, viewer);
   const staff = await AppDataSource.getRepository(User).findOne({
     where: { id: staffId, role: UserRole.STAFF, is_active: true },
   });
   if (!staff) throw new AppError('Staff không tồn tại', 404, 'STAFF_NOT_FOUND');
+  const employment = await AppDataSource.query(
+    `SELECT 1
+     FROM staff_cafe_assignments sca
+     JOIN cafes c ON c.id = sca.cafe_id
+     WHERE sca.staff_id = $1
+       AND c.provider_id = $2
+       AND c.deleted_at IS NULL
+     LIMIT 1`,
+    [staffId, contest.providerId],
+  );
+  if (employment.length === 0) {
+    throw new AppError(
+      'Nhân viên không thuộc chi nhánh của bạn',
+      400,
+      'CONTEST_STAFF_NOT_EMPLOYED',
+    );
+  }
   const assignmentRepo = AppDataSource.getRepository(ContestStaffAssignment);
   const existing = await assignmentRepo.findOne({ where: { contestId, staffId } });
   if (!existing) {

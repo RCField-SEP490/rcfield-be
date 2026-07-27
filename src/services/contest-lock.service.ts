@@ -127,7 +127,7 @@ export async function resolveContestResourceLocks(
 
 export function mergeContestConfig(
   baseConfig: Record<string, unknown> | null | undefined,
-  runtimeFormat: 'KNOCKOUT' | 'TIME_TRIAL',
+  runtimeFormat: 'KNOCKOUT' | 'TIME_TRIAL' | 'QUALIFYING_FINAL',
   resourceLocks: ContestResourceLock[],
 ) {
   const nextConfig = {
@@ -140,6 +140,14 @@ export function mergeContestConfig(
   if (runtimeFormat === 'KNOCKOUT') {
     nextConfig.leaderboard_mode = 'KNOCKOUT_WINS';
     if (typeof nextConfig.drivers_per_match !== 'number') nextConfig.drivers_per_match = 2;
+  } else if (runtimeFormat === 'QUALIFYING_FINAL') {
+    // Grand Prix: vòng loại xếp hạng theo best lap nhưng leaderboard cuối cùng
+    // tính theo số trận thắng knockout ở vòng chung kết.
+    if (nextConfig.leaderboard_mode === undefined || nextConfig.leaderboard_mode === 'BEST_LAP') {
+      nextConfig.leaderboard_mode = 'KNOCKOUT_WINS';
+    }
+    if (typeof nextConfig.drivers_per_match !== 'number') nextConfig.drivers_per_match = 2;
+    if (typeof nextConfig.finalists !== 'number') nextConfig.finalists = 4;
   } else {
     if (nextConfig.leaderboard_mode === 'KNOCKOUT_WINS') {
       nextConfig.leaderboard_mode = 'BEST_LAP';

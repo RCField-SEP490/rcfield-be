@@ -18,6 +18,7 @@ import {
   UserRole,
 } from '../types';
 import { Viewer } from './cafe.service';
+import { buildContestAuditSummary } from './contest-audit-summary';
 import {
   assertContestOperator,
   getContestOrThrow,
@@ -833,6 +834,15 @@ export async function updateMatchParticipants(
     actorId: viewer.userId,
     actorRole: viewer.role,
     eventType: 'match.participants_updated',
+    beforeJson: {
+      participants: participants.map((item) => ({
+        registration_id: item.registrationId,
+        slot_no: item.slotNo,
+        lane: item.lane,
+        grid_position: item.gridPosition,
+        seed_no: item.seedNo,
+      })),
+    },
     afterJson: { participants: body.participants },
   });
 
@@ -843,6 +853,13 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
   const { match, participants } = await loadMatchBundle(matchId);
   await assertViewerCanOperateMatch(match, viewer);
   const contest = await getContestOrThrow(match.contestId);
+  if (contest.config?.published_leaderboard) {
+    throw new AppError(
+      'Leaderboard đã được công bố, không thể thay đổi kết quả',
+      409,
+      'CONTEST_LEADERBOARD_PUBLISHED',
+    );
+  }
   const engine = getEngine(contest);
   if (participants.length === 0) {
     throw new AppError('Match chưa có participant', 400, 'MATCH_HAS_NO_PARTICIPANTS');
@@ -938,6 +955,15 @@ export async function correctMatchResults(
   const { match } = await loadMatchBundle(matchId);
   await assertViewerCanOperateMatch(match, viewer);
 
+  const contest = await getContestOrThrow(match.contestId);
+  if (contest.config?.published_leaderboard) {
+    throw new AppError(
+      'Leaderboard đã được công bố, không thể thay đổi kết quả',
+      409,
+      'CONTEST_LEADERBOARD_PUBLISHED',
+    );
+  }
+
   if (viewer.role === UserRole.STAFF && body.force_cascade) {
     throw new AppError('Staff không được force cascade khi sửa kết quả', 403, 'FORBIDDEN');
   }
@@ -945,6 +971,8 @@ export async function correctMatchResults(
   if (match.status !== ContestMatchStatus.COMPLETED) {
     throw new AppError('Chỉ sửa được match đã hoàn tất', 400, 'MATCH_NOT_COMPLETED');
   }
+
+  const previousResultSummary = match.resultSummary;
 
   await protectDownstreamCorrection(match, Boolean(body.force_cascade));
 
@@ -980,7 +1008,7 @@ export async function correctMatchResults(
     actorId: viewer.userId,
     actorRole: viewer.role,
     eventType: 'match.results_corrected',
-    beforeJson: { result_summary: match.resultSummary },
+    beforeJson: { result_summary: previousResultSummary },
     reason: body.reason,
     metadata: { force_cascade: Boolean(body.force_cascade) },
   });
@@ -1327,7 +1355,10 @@ export async function listContestAuditLogs(
   viewer: Viewer,
   options?: { page?: number; limit?: number },
 ) {
-  await assertContestOperator(contestId, viewer);
+  // ADMIN has read-only oversight and does not need ownership/assignment.
+  if (viewer.role !== UserRole.ADMIN) {
+    await assertContestOperator(contestId, viewer);
+  }
   const page = Math.max(1, options?.page ?? 1);
   const limit = Math.max(1, Math.min(200, options?.limit ?? 20));
   const [rows, total] = await AppDataSource.getRepository(ContestAuditLog).findAndCount({
@@ -1336,7 +1367,15 @@ export async function listContestAuditLogs(
     skip: (page - 1) * limit,
     take: limit,
   });
-  return { data: rows, meta: { total, page, limit } };
+  const actorMap = await loadUsersMap(
+    Array.from(new Set(rows.map((row) => row.actorId).filter((id): id is string => Boolean(id)))),
+  );
+  const data = rows.map((row) => ({
+    ...row,
+    actionSummary: buildContestAuditSummary(row),
+    actorName: row.actorId ? (actorMap.get(row.actorId)?.full_name ?? null) : null,
+  }));
+  return { data, meta: { total, page, limit } };
 }
 
 export async function getContestMetrics(contestId: string, viewer: Viewer) {

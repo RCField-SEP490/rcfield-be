@@ -50,6 +50,8 @@ type PassportResponse = {
   driver_handle: string;
   display_name: string;
   passport_code: string;
+  public_profile_enabled: boolean;
+  leaderboard_opt_in: boolean;
   current_title: { code: string | null; label: string | null };
   stats: RacingStats;
   achievements: Array<{
@@ -403,6 +405,8 @@ function mapPassportResponse(
     driver_handle: profile.driver_handle,
     display_name: profile.display_name,
     passport_code: profile.passport_code,
+    public_profile_enabled: profile.public_profile_enabled,
+    leaderboard_opt_in: profile.leaderboard_opt_in,
     current_title: {
       code: profile.current_title_code,
       label: profile.current_title_label,
