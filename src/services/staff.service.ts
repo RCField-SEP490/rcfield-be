@@ -1890,6 +1890,25 @@ export async function submitInspection(
           inspectionId: inspection.id,
           sessionStatus: session.status,
         });
+        // Thông báo realtime cho Provider (owner của cafe)
+        try {
+          const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+            `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+            [session.cafeId],
+          );
+          if (cafeRow) {
+            wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+              sessionId,
+              sessionStatus: session.status,
+            });
+          }
+        } catch (notifyErr) {
+          logger.error(
+            'InspectionNotification',
+            'Failed to push SESSION_STATUS_CHANGED to provider',
+            notifyErr,
+          );
+        }
       } catch (err) {
         logger.error('InspectionNotification', 'Failed to notify staff check-in confirmation', err);
       }
@@ -1911,6 +1930,26 @@ export async function submitInspection(
       session.status = SessionStatus.CHECKING_OUT;
       session.checkedOutBy = staffUserId;
       await AppDataSource.getRepository(Session).save(session);
+    }
+
+    // Thông báo realtime cho Provider khi trạng thái session thay đổi
+    try {
+      const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+        `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+        [session.cafeId],
+      );
+      if (cafeRow) {
+        wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+          sessionId,
+          sessionStatus: session.status,
+        });
+      }
+    } catch (notifyErr) {
+      logger.error(
+        'StaffService',
+        'Failed to push SESSION_STATUS_CHANGED to provider on checkout',
+        notifyErr,
+      );
     }
 
     if (activeSVs.length > 0) {
@@ -3104,6 +3143,25 @@ export async function customerConfirmInspection(
         inspectionId,
         sessionStatus: session.status,
       });
+      // Thông báo realtime cho Provider khi khách xác nhận trả xe
+      try {
+        const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+          `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+          [session.cafeId],
+        );
+        if (cafeRow) {
+          wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+            sessionId,
+            sessionStatus: session.status,
+          });
+        }
+      } catch (notifyErr) {
+        logger.error(
+          'StaffService',
+          'Failed to push SESSION_STATUS_CHANGED to provider on customer confirm checkout',
+          notifyErr,
+        );
+      }
     }
   } else {
     // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
@@ -3452,11 +3510,11 @@ async function reconcileBookingAfterCheckout(booking: Booking): Promise<{
   return { allSessionsCompleted: true, pendingCount: 0, newlyCompleted };
 }
 
-function pushCheckoutCompletedEvents(
+async function pushCheckoutCompletedEvents(
   booking: Booking,
   sessionId: string,
   staffUserId: string,
-): void {
+): Promise<void> {
   const payload = {
     sessionId,
     bookingId: booking.id,
@@ -3465,6 +3523,25 @@ function pushCheckoutCompletedEvents(
   wsService.pushToUser(staffUserId, 'SESSION_CHECKOUT_COMPLETED', payload);
   if (booking.customerId) {
     wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', payload);
+  }
+  // Thông báo realtime cho Provider khi session hoàn tất
+  try {
+    const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+      `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+      [booking.cafeId],
+    );
+    if (cafeRow) {
+      wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+        sessionId,
+        sessionStatus: SessionStatus.COMPLETED,
+      });
+    }
+  } catch (notifyErr) {
+    logger.error(
+      'StaffService',
+      'Failed to push SESSION_STATUS_CHANGED to provider on checkout completed',
+      notifyErr,
+    );
   }
 }
 
@@ -3510,7 +3587,7 @@ export async function staffConfirmCheckout(
 
   logger.info('Staff', 'staffConfirmCheckout', { sessionId, inspectionId, staffUserId });
   if (booking) {
-    pushCheckoutCompletedEvents(booking, sessionId, staffUserId);
+    void pushCheckoutCompletedEvents(booking, sessionId, staffUserId);
   }
   return {
     success: true,
@@ -3867,7 +3944,7 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     if (checkoutWasCompletedDuringSettlement) {
       await reconcileBookingAfterCheckout(booking);
       if (completedSessionIdDuringSettlement) {
-        pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
+        void pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
       }
       return {
         success: true,
@@ -4026,7 +4103,7 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
 
   const bookingReconciliation = await reconcileBookingAfterCheckout(booking);
   if (completedSessionIdDuringSettlement) {
-    pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
+    void pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
   }
   if (
     bookingReconciliation.newlyCompleted &&
