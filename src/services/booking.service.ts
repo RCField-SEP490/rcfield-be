@@ -1167,6 +1167,7 @@ export async function listCafeBookings(
 
   let qb = AppDataSource.createQueryBuilder(Booking, 'b')
     .innerJoin('users', 'u', 'u.id = b.customer_id')
+    .leftJoin(Session, 's', 's.booking_id = b.id')
     .select([
       'b.id AS id',
       'b.status AS status',
@@ -1179,6 +1180,7 @@ export async function listCafeBookings(
       'b.cancellation_reason AS "cancellationReason"',
       'u.full_name AS "customerName"',
       'u.phone AS "customerPhone"',
+      's.status AS "sessionStatus"',
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.slot_start >= :dayStart', { dayStart })
@@ -1208,6 +1210,7 @@ export interface CafeBookingListItem {
   cancellationReason: string | null;
   customerName: string;
   customerPhone: string | null;
+  sessionStatus?: string | null;
 }
 
 async function cancelPendingFnbOrders(bookingId: string): Promise<void> {

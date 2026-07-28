@@ -9,6 +9,7 @@ import {
   InspectionType,
   PaymentComponentStatus,
   PaymentComponentType,
+  ExtensionProposalStatus,
 } from '../types';
 import {
   CreateBookingSchema,
@@ -44,6 +45,7 @@ import { Session } from '../models/session.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
 import { Inspection } from '../models/inspection.entity';
 import { DamageLineItem } from '../models/damage-line-item.entity';
+import { ExtensionProposal } from '../models/extension-proposal.entity';
 import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
 
 function getInitialPaymentReceiptComponents(
@@ -479,11 +481,47 @@ export const bookingController = {
       // Resolve track type name: snapshot first, then DB lookup
       const snapshot = booking.snapshot as Record<string, unknown> | null;
       let trackTypeName: string | null = (snapshot?.track_type_name as string) ?? null;
-      if (!trackTypeName && booking.trackTypeId) {
+      let trackTypeCoverImage: string | null = null;
+      if (booking.trackConfigId) {
+        const [trackConfigRow] = await AppDataSource.query<{ images: string[]; name: string }[]>(
+          `SELECT ctc.images, tt.name FROM cafe_track_configs ctc
+           JOIN track_types tt ON tt.id = ctc.track_type_id
+           WHERE ctc.id = $1 LIMIT 1`,
+          [booking.trackConfigId],
+        );
+        if (trackConfigRow) {
+          if (!trackTypeName) trackTypeName = trackConfigRow.name;
+          trackTypeCoverImage =
+            Array.isArray(trackConfigRow.images) && trackConfigRow.images.length > 0
+              ? trackConfigRow.images[0]
+              : null;
+        }
+      } else if (booking.trackTypeId) {
         const tt = await AppDataSource.getRepository(TrackType).findOne({
           where: { id: booking.trackTypeId },
         });
-        trackTypeName = tt?.name ?? null;
+        if (tt && !trackTypeName) trackTypeName = tt.name;
+      }
+
+      let proposedExtensionMinutes: number | null = null;
+      let approvedExtensionMinutes = 0;
+      if (session) {
+        if (session.status === 'EXTENDING') {
+          const proposal = await AppDataSource.getRepository(ExtensionProposal).findOne({
+            where: { sessionId: session.id, status: ExtensionProposalStatus.PENDING },
+            order: { createdAt: 'DESC' },
+          });
+          if (proposal) {
+            proposedExtensionMinutes = Number(proposal.durationMinutes);
+          }
+        }
+        const approvedProposals = await AppDataSource.getRepository(ExtensionProposal).find({
+          where: { sessionId: session.id, status: ExtensionProposalStatus.APPROVED },
+        });
+        approvedExtensionMinutes = approvedProposals.reduce(
+          (sum, p) => sum + Number(p.durationMinutes),
+          0,
+        );
       }
 
       res.json({
@@ -509,8 +547,16 @@ export const bookingController = {
           })),
           fnb_orders: fnbOrdersWithItems,
           fnb_order: mergedFnbOrder,
-          cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
+          cafe: cafe
+            ? {
+                name: cafe.name,
+                address: cafe.address,
+                city: cafe.city,
+                coverImageUrl: cafe.coverImageUrl,
+              }
+            : null,
           track_type_name: trackTypeName,
+          track_type_cover_image: trackTypeCoverImage,
           session: session
             ? {
                 id: session.id,
@@ -518,6 +564,8 @@ export const bookingController = {
                 plannedEndAt: session.plannedEndAt,
                 actualStartAt: session.actualStartAt,
                 actualEndAt: session.actualEndAt,
+                proposedExtensionMinutes,
+                approvedExtensionMinutes,
               }
             : null,
           damage_breakdown: damageBreakdown,
