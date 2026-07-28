@@ -21,6 +21,7 @@ import {
   VehicleStatus,
   VehicleSource,
   DamagePartType,
+  SessionStatus,
 } from '../types';
 
 extendZodWithOpenApi(z);
@@ -1363,6 +1364,13 @@ export const CreateContestRentalBookingSchema = z.object({
 export const ListCafeBookingsSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: z.nativeEnum(BookingStatus).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const ListCafeSessionsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.nativeEnum(SessionStatus).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });

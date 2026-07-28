@@ -147,6 +147,20 @@ router.get(
   bookingController.listCafeBookings,
 );
 
+router.get(
+  '/provider/cafes/:cafeId/sessions',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  bookingController.listCafeSessions,
+);
+
+router.get(
+  '/provider/cafes/:cafeId/sessions/stats',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  bookingController.listCafeSessionStats,
+);
+
 // router.use('/bookings', bookingsRouter);
 // router.use('/vehicles', vehiclesRouter);
 // router.use('/inspections', inspectionsRouter);
