@@ -16,6 +16,7 @@ import {
   CancelBookingSchema,
   ListMyBookingsSchema,
   ListCafeBookingsSchema,
+  ListCafeSessionsSchema,
 } from '../validate';
 import * as bookingService from '../services/booking.service';
 import { bookContestRental } from '../services/contest-rental.service';
@@ -647,6 +648,33 @@ export const bookingController = {
       const cafeId = req.params.cafeId;
       const query = ListCafeBookingsSchema.parse(req.query) as bookingService.ListCafeBookingsQuery;
       const result = await bookingService.listCafeBookings(cafeId, query);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/cafes/:cafeId/sessions  [auth PROVIDER, STAFF]
+  async listCafeSessions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cafeId = req.params.cafeId;
+      const query = ListCafeSessionsSchema.parse(req.query);
+      const result = await bookingService.listCafeSessions(cafeId, query);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/cafes/:cafeId/sessions/stats  [auth PROVIDER, STAFF]
+  async listCafeSessionStats(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cafeId = req.params.cafeId;
+      const date =
+        typeof req.query.date === 'string'
+          ? req.query.date
+          : new Date().toISOString().split('T')[0];
+      const result = await bookingService.listCafeSessionStats(cafeId, date);
       res.json({ success: true, data: result });
     } catch (err) {
       next(err);
