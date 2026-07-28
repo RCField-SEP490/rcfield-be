@@ -1634,13 +1634,23 @@ export async function createWalkInBooking(
 
 // ── listCafeSessions ──────────────────────────────────────────────────────────
 
+export interface CafeSessionVehicle {
+  catalogName: string | null;
+  identifier: string | null;
+  color: string | null;
+  tier: string | null;
+  vehicleSource: string;
+}
+
 export interface CafeSessionListItem {
   sessionId: string;
   sessionCode: string;
   bookingId: string;
   bookingCode: string;
-  vehiclesInfo: string;
+  vehicles: CafeSessionVehicle[];
   staffName: string;
+  customerName: string;
+  customerPhone: string | null;
   actualStartAt: Date;
   plannedEndAt: Date;
   actualEndAt: Date | null;
@@ -1659,6 +1669,7 @@ export async function listCafeSessions(
     .createQueryBuilder('s')
     .innerJoin(Booking, 'b', 's.bookingId = b.id')
     .leftJoin(User, 'u_staff', 's.checkedInBy = u_staff.id')
+    .leftJoin(User, 'u_cust', 'b.customerId = u_cust.id')
     .select([
       's.id AS "sessionId"',
       's.bookingId AS "bookingId"',
@@ -1667,7 +1678,9 @@ export async function listCafeSessions(
       's.plannedEndAt AS "plannedEndAt"',
       's.actualEndAt AS "actualEndAt"',
       'b.playMode AS "playMode"',
-      'u_staff.fullName AS "staffName"',
+      'u_staff.full_name AS "staffName"',
+      'u_cust.full_name AS "customerName"',
+      'u_cust.phone AS "customerPhone"',
     ])
     .where('s.cafeId = :cafeId', { cafeId })
     .andWhere('s.actualStartAt >= :dayStart', { dayStart })
@@ -1698,7 +1711,7 @@ export async function listCafeSessions(
   const sessions: CafeSessionListItem[] = [];
   for (const raw of rawSessions) {
     const sessionCode = `SS-${raw.sessionId.substring(0, 4).toUpperCase()}`;
-    const bookingCode = `BK-${raw.bookingId.substring(0, 4).toUpperCase()}`;
+    const bookingCode = raw.bookingId.substring(0, 8).toUpperCase();
 
     // Lấy thông tin xe gán cho phiên chơi
     const sessionVehicles = await AppDataSource.query<
@@ -1708,9 +1721,11 @@ export async function listCafeSessions(
         vehicleId: string | null;
         identifier: string | null;
         catalogName: string | null;
+        color: string | null;
+        tier: string | null;
       }>
     >(
-      `SELECT sv.id, sv.vehicle_source AS "vehicleSource", sv.vehicle_id AS "vehicleId", v.identifier AS "identifier", vc.name AS "catalogName"
+      `SELECT sv.id, sv.vehicle_source AS "vehicleSource", sv.vehicle_id AS "vehicleId", v.identifier AS "identifier", vc.name AS "catalogName", v.color AS "color", vc.tier AS "tier"
        FROM session_vehicles sv
        LEFT JOIN vehicles v ON sv.vehicle_id = v.id
        LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
@@ -1718,17 +1733,13 @@ export async function listCafeSessions(
       [raw.sessionId],
     );
 
-    let vehiclesInfo = 'Xe riêng (BYOC)';
-    if (sessionVehicles.length > 0) {
-      vehiclesInfo = sessionVehicles
-        .map((sv) => {
-          if (sv.vehicleSource === 'RENTAL' && sv.catalogName) {
-            return `${sv.catalogName} (${sv.identifier || 'Xe thuê'})`;
-          }
-          return 'Xe riêng (BYOC)';
-        })
-        .join(', ');
-    }
+    const vehicles: CafeSessionVehicle[] = sessionVehicles.map((sv) => ({
+      catalogName: sv.catalogName,
+      identifier: sv.identifier,
+      color: sv.color,
+      tier: sv.tier,
+      vehicleSource: sv.vehicleSource,
+    }));
 
     // Kiểm tra xem có biên bản checkout ghi nhận hư hỏng không
     const hasIssue = await AppDataSource.getRepository(Inspection).exists({
@@ -1744,8 +1755,10 @@ export async function listCafeSessions(
       sessionCode,
       bookingId: raw.bookingId,
       bookingCode,
-      vehiclesInfo,
+      vehicles,
       staffName: raw.staffName || 'Hệ thống',
+      customerName: raw.customerName || 'Khách vãng lai',
+      customerPhone: raw.customerPhone || null,
       actualStartAt: raw.actualStartAt,
       plannedEndAt: raw.plannedEndAt,
       actualEndAt: raw.actualEndAt,

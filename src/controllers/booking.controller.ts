@@ -354,6 +354,7 @@ export const bookingController = {
         // retained only for walk-in guests without an account.
         resolvedName: userMap.get(p.userId ?? '')?.full_name ?? p.guestName ?? null,
         resolvedPhone: userMap.get(p.userId ?? '')?.phone ?? p.guestPhone ?? null,
+        resolvedAvatarUrl: userMap.get(p.userId ?? '')?.avatar_url ?? null,
       }));
 
       // Enrich vehicles with catalog info (name, tier, identifier, color, image)
