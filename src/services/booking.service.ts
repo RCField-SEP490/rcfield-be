@@ -11,11 +11,14 @@ import { Cafe } from '../models/cafe.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { MenuItem } from '../models/menu-item.entity';
+import { MenuItemVariant } from '../models/menu-item-variant.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { TrackType } from '../models/track-type.entity';
 import { User } from '../models/user.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
+import { Session } from '../models/session.entity';
+import { Inspection } from '../models/inspection.entity';
 import {
   AppError,
   BookingMode,
@@ -32,12 +35,15 @@ import {
   PaymentTransactionType,
   PaymentTransactionStatus,
   AuthProvider,
+  SessionStatus,
+  InspectionType,
 } from '../types';
 import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
 import { getEffectiveMultiplier } from './pricing.service';
 import { validatePromoCode } from './promotion.service';
 import { assertBookingNotBlockedByContest } from './contest-lock.service';
+import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import type { Promotion } from '../models/promotion.entity';
 import type { CafeOperatingHours } from '../types';
 
@@ -67,6 +73,17 @@ function getVietnamLocalMidnightUtcMs(value: Date): number {
 function getOperatingDayKey(localMidnightUtcMs: number): string {
   const local = new Date(localMidnightUtcMs + VN_TZ_OFFSET_MS);
   return DAY_KEYS[local.getUTCDay()]!;
+}
+
+function isVietnamToday(value: Date): boolean {
+  const format = (date: Date) =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  return format(value) === format(new Date());
 }
 
 function parseOperatingTimeToMinutes(value?: string): number | null {
@@ -424,6 +441,30 @@ export async function transition(bookingId: string, event: string): Promise<Book
     logger.info('BookingService', `transition → NO_SHOW bookingId=${bookingId}`);
   }
 
+  // A paid/confirmed preorder belongs in the staff preparation queue. Future
+  // dates are intentionally not alerted yet: this screen operates on today.
+  if (newStatus === BookingStatus.CONFIRMED && isVietnamToday(booking.slotStart)) {
+    const fnbOrders = await AppDataSource.query<{ id: string; order_type: FnbOrderType }[]>(
+      `SELECT id, order_type
+         FROM fnb_orders
+        WHERE booking_id = $1
+          AND order_type = 'PRE_ORDER'
+          AND status = 'PENDING'`,
+      [bookingId],
+    );
+    await Promise.all(
+      fnbOrders.map((order) =>
+        notifyCafeStaffAboutFnbPrep({
+          cafeId: booking.cafeId,
+          bookingId,
+          orderId: order.id,
+          orderType: order.order_type,
+          scheduledFor: booking.slotStart,
+        }),
+      ),
+    );
+  }
+
   booking.status = newStatus;
   return booking;
 }
@@ -439,6 +480,7 @@ export interface ParticipantInput {
 
 export interface FnbItemInput {
   menu_item_id: string;
+  variant_id?: string;
   quantity: number;
   notes?: string;
 }
@@ -756,6 +798,9 @@ export async function createBooking(
   let fnbTotal = 0;
   const fnbPricings: Array<{
     menuItemId: string;
+    menuItemVariantId: string | null;
+    itemName: string;
+    variantName: string | null;
     quantity: number;
     unitPrice: number;
     subtotal: number;
@@ -764,7 +809,9 @@ export async function createBooking(
   if (body.fnb_items.length > 0) {
     const menuRepo = AppDataSource.getRepository(MenuItem);
     for (const item of body.fnb_items) {
-      const menuItem = await menuRepo.findOne({ where: { id: item.menu_item_id } });
+      const menuItem = await menuRepo.findOne({
+        where: { id: item.menu_item_id, cafeId: body.cafe_id },
+      });
       if (!menuItem || !menuItem.isAvailable) {
         throw new AppError(
           `Menu item ${item.menu_item_id} not available`,
@@ -772,11 +819,25 @@ export async function createBooking(
           'MENU_ITEM_UNAVAILABLE',
         );
       }
-      const unitPrice = Number(menuItem.price);
+      if (item.variant_id && menuItem.isCombo) {
+        throw new AppError('Combo không có lựa chọn riêng', 400, 'INVALID_MENU_VARIANT');
+      }
+      const variant = item.variant_id
+        ? await AppDataSource.getRepository(MenuItemVariant).findOne({
+            where: { id: item.variant_id, menuItemId: menuItem.id },
+          })
+        : null;
+      if (item.variant_id && (!variant || !variant.isAvailable)) {
+        throw new AppError('Lựa chọn món không khả dụng', 400, 'MENU_VARIANT_UNAVAILABLE');
+      }
+      const unitPrice = Number(variant?.price ?? menuItem.price);
       const subtotal = unitPrice * item.quantity;
       fnbTotal += subtotal;
       fnbPricings.push({
         menuItemId: item.menu_item_id,
+        menuItemVariantId: variant?.id ?? null,
+        itemName: menuItem.name,
+        variantName: variant?.name ?? null,
         quantity: item.quantity,
         unitPrice,
         subtotal,
@@ -939,9 +1000,12 @@ export async function createBooking(
           const item = em.create(FnbOrderItem, {
             fnbOrderId: fnbOrder.id,
             menuItemId: fp.menuItemId,
+            menuItemVariantId: fp.menuItemVariantId,
             quantity: fp.quantity,
             unitPrice: fp.unitPrice,
             subtotal: fp.subtotal,
+            itemNameSnapshot: fp.itemName,
+            variantNameSnapshot: fp.variantName,
             notes: fp.notes ?? null,
           });
           await em.save(item);
@@ -1103,6 +1167,7 @@ export async function listCafeBookings(
 
   let qb = AppDataSource.createQueryBuilder(Booking, 'b')
     .innerJoin('users', 'u', 'u.id = b.customer_id')
+    .leftJoin(Session, 's', 's.booking_id = b.id')
     .select([
       'b.id AS id',
       'b.status AS status',
@@ -1115,6 +1180,7 @@ export async function listCafeBookings(
       'b.cancellation_reason AS "cancellationReason"',
       'u.full_name AS "customerName"',
       'u.phone AS "customerPhone"',
+      's.status AS "sessionStatus"',
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.slot_start >= :dayStart', { dayStart })
@@ -1144,6 +1210,7 @@ export interface CafeBookingListItem {
   cancellationReason: string | null;
   customerName: string;
   customerPhone: string | null;
+  sessionStatus?: string | null;
 }
 
 async function cancelPendingFnbOrders(bookingId: string): Promise<void> {
@@ -1566,4 +1633,189 @@ export async function createWalkInBooking(
     }
     throw err;
   }
+}
+
+// ── listCafeSessions ──────────────────────────────────────────────────────────
+
+export interface CafeSessionVehicle {
+  catalogName: string | null;
+  identifier: string | null;
+  color: string | null;
+  tier: string | null;
+  vehicleSource: string;
+}
+
+export interface CafeSessionListItem {
+  sessionId: string;
+  sessionCode: string;
+  bookingId: string;
+  bookingCode: string;
+  vehicles: CafeSessionVehicle[];
+  staffName: string;
+  customerName: string;
+  customerPhone: string | null;
+  actualStartAt: Date;
+  plannedEndAt: Date;
+  actualEndAt: Date | null;
+  status: SessionStatus;
+  hasIssue: boolean;
+}
+
+export async function listCafeSessions(
+  cafeId: string,
+  query: { date: string; status?: string; page: number; limit: number },
+): Promise<{ sessions: CafeSessionListItem[]; total: number; page: number; limit: number }> {
+  const dayStart = new Date(`${query.date}T00:00:00+07:00`);
+  const dayEnd = new Date(`${query.date}T23:59:59+07:00`);
+
+  let qb = AppDataSource.getRepository(Session)
+    .createQueryBuilder('s')
+    .innerJoin(Booking, 'b', 's.bookingId = b.id')
+    .leftJoin(User, 'u_staff', 's.checkedInBy = u_staff.id')
+    .leftJoin(User, 'u_cust', 'b.customerId = u_cust.id')
+    .select([
+      's.id AS "sessionId"',
+      's.bookingId AS "bookingId"',
+      's.status AS "status"',
+      's.actualStartAt AS "actualStartAt"',
+      's.plannedEndAt AS "plannedEndAt"',
+      's.actualEndAt AS "actualEndAt"',
+      'b.playMode AS "playMode"',
+      'u_staff.full_name AS "staffName"',
+      'u_cust.full_name AS "customerName"',
+      'u_cust.phone AS "customerPhone"',
+    ])
+    .where('s.cafeId = :cafeId', { cafeId })
+    .andWhere('s.actualStartAt >= :dayStart', { dayStart })
+    .andWhere('s.actualStartAt <= :dayEnd', { dayEnd });
+
+  if (query.status) {
+    qb = qb.andWhere('s.status = :status', { status: query.status });
+  }
+
+  qb = qb
+    .orderBy('s.actualStartAt', 'DESC')
+    .offset((query.page - 1) * query.limit)
+    .limit(query.limit);
+
+  const rawSessions = await qb.getRawMany();
+
+  // Đếm tổng số lượng
+  let countQb = AppDataSource.getRepository(Session)
+    .createQueryBuilder('s')
+    .where('s.cafeId = :cafeId', { cafeId })
+    .andWhere('s.actualStartAt >= :dayStart', { dayStart })
+    .andWhere('s.actualStartAt <= :dayEnd', { dayEnd });
+  if (query.status) {
+    countQb = countQb.andWhere('s.status = :status', { status: query.status });
+  }
+  const total = await countQb.getCount();
+
+  const sessions: CafeSessionListItem[] = [];
+  for (const raw of rawSessions) {
+    const sessionCode = `SS-${raw.sessionId.substring(0, 4).toUpperCase()}`;
+    const bookingCode = raw.bookingId.substring(0, 8).toUpperCase();
+
+    // Lấy thông tin xe gán cho phiên chơi
+    const sessionVehicles = await AppDataSource.query<
+      Array<{
+        id: string;
+        vehicleSource: string;
+        vehicleId: string | null;
+        identifier: string | null;
+        catalogName: string | null;
+        color: string | null;
+        tier: string | null;
+      }>
+    >(
+      `SELECT sv.id, sv.vehicle_source AS "vehicleSource", sv.vehicle_id AS "vehicleId", v.identifier AS "identifier", vc.name AS "catalogName", v.color AS "color", vc.tier AS "tier"
+       FROM session_vehicles sv
+       LEFT JOIN vehicles v ON sv.vehicle_id = v.id
+       LEFT JOIN vehicle_catalogs vc ON v.catalog_id = vc.id
+       WHERE sv.session_id = $1`,
+      [raw.sessionId],
+    );
+
+    const vehicles: CafeSessionVehicle[] = sessionVehicles.map((sv) => ({
+      catalogName: sv.catalogName,
+      identifier: sv.identifier,
+      color: sv.color,
+      tier: sv.tier,
+      vehicleSource: sv.vehicleSource,
+    }));
+
+    // Kiểm tra xem có biên bản checkout ghi nhận hư hỏng không
+    const hasIssue = await AppDataSource.getRepository(Inspection).exists({
+      where: {
+        sessionId: raw.sessionId,
+        type: InspectionType.CHECK_OUT,
+        damageNoted: true,
+      },
+    });
+
+    sessions.push({
+      sessionId: raw.sessionId,
+      sessionCode,
+      bookingId: raw.bookingId,
+      bookingCode,
+      vehicles,
+      staffName: raw.staffName || 'Hệ thống',
+      customerName: raw.customerName || 'Khách vãng lai',
+      customerPhone: raw.customerPhone || null,
+      actualStartAt: raw.actualStartAt,
+      plannedEndAt: raw.plannedEndAt,
+      actualEndAt: raw.actualEndAt,
+      status: raw.status as SessionStatus,
+      hasIssue,
+    });
+  }
+
+  return { sessions, total, page: query.page, limit: query.limit };
+}
+
+// ── listCafeSessionStats ──────────────────────────────────────────────────────
+
+export async function listCafeSessionStats(
+  cafeId: string,
+  dateStr: string,
+): Promise<{ active: number; extending: number; checkingOut: number; issue: number }> {
+  const dayStart = new Date(`${dateStr}T00:00:00+07:00`);
+  const dayEnd = new Date(`${dateStr}T23:59:59+07:00`);
+
+  const active = await AppDataSource.getRepository(Session)
+    .createQueryBuilder('s')
+    .where('s.cafeId = :cafeId', { cafeId })
+    .andWhere('s.actualStartAt >= :dayStart', { dayStart })
+    .andWhere('s.actualStartAt <= :dayEnd', { dayEnd })
+    .andWhere('s.status = :status', { status: SessionStatus.ACTIVE })
+    .getCount();
+
+  const extending = await AppDataSource.getRepository(Session)
+    .createQueryBuilder('s')
+    .where('s.cafeId = :cafeId', { cafeId })
+    .andWhere('s.actualStartAt >= :dayStart', { dayStart })
+    .andWhere('s.actualStartAt <= :dayEnd', { dayEnd })
+    .andWhere('s.status = :status', { status: SessionStatus.EXTENDING })
+    .getCount();
+
+  const checkingOut = await AppDataSource.getRepository(Session)
+    .createQueryBuilder('s')
+    .where('s.cafeId = :cafeId', { cafeId })
+    .andWhere('s.actualStartAt >= :dayStart', { dayStart })
+    .andWhere('s.actualStartAt <= :dayEnd', { dayEnd })
+    .andWhere('s.status = :status', { status: SessionStatus.CHECKING_OUT })
+    .getCount();
+
+  // Đếm sự cố (sessions trong ngày có CHECK_OUT inspection damageNoted = true)
+  const issue = await AppDataSource.getRepository(Session)
+    .createQueryBuilder('s')
+    .innerJoin(Inspection, 'i', 'i.sessionId = s.id')
+    .where('s.cafeId = :cafeId', { cafeId })
+    .andWhere('s.actualStartAt >= :dayStart', { dayStart })
+    .andWhere('s.actualStartAt <= :dayEnd', { dayEnd })
+    .andWhere('i.type = :type', { type: 'CHECK_OUT' })
+    .andWhere('i.damageNoted = :damageNoted', { damageNoted: true })
+    .getCount();
+
+  return { active, extending, checkingOut, issue };
 }

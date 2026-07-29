@@ -21,6 +21,7 @@ import {
   VehicleStatus,
   VehicleSource,
   DamagePartType,
+  SessionStatus,
 } from '../types';
 
 extendZodWithOpenApi(z);
@@ -901,6 +902,20 @@ export const MenuListQuerySchema = z.object({
     .openapi({ example: 'true' }),
 });
 
+const MenuImageUrlSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => /^https?:\/\//i.test(value) || value.startsWith('/images/menu/'),
+    'image_url phải là URL hợp lệ hoặc asset menu nội bộ',
+  );
+
+export const MenuVariantSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  price: z.coerce.number().nonnegative(),
+  is_available: z.boolean().optional().default(true),
+});
+
 export const CreateMenuItemSchema = z.object({
   name: z.string().trim().min(2).max(255).openapi({ example: 'Cold Brew Nitro' }),
   description: z
@@ -918,14 +933,11 @@ export const CreateMenuItemSchema = z.object({
     .nullable()
     .optional()
     .openapi({ example: '9b1c7c2a-6a5b-4a4c-9b9e-63b3e8c1f002' }),
-  image_url: z
-    .string()
-    .trim()
-    .url()
-    .nullable()
+  image_url: MenuImageUrlSchema.nullable()
     .optional()
     .openapi({ example: 'https://cdn.rcfield.vn/menu/cold-brew.jpg' }),
   is_available: z.boolean().optional().default(true).openapi({ example: true }),
+  variants: z.array(MenuVariantSchema).max(12).optional(),
 });
 
 export const UpdateMenuItemSchema = CreateMenuItemSchema.partial().refine(
@@ -939,12 +951,13 @@ export const CreateComboSchema = z.object({
   price: z.coerce.number().nonnegative(),
   // Provider tự gán danh mục cho combo giống món lẻ — hệ thống KHÔNG tự gán (FR-013)
   category_id: z.string().uuid().nullable().optional(),
-  image_url: z.string().trim().url().nullable().optional(),
+  image_url: MenuImageUrlSchema.nullable().optional(),
   is_available: z.boolean().optional().default(true),
   components: z
     .array(
       z.object({
         item_id: z.string().uuid(),
+        variant_id: z.string().uuid().nullable().optional(),
         quantity: z.number().int().positive().max(99),
       }),
     )
@@ -1015,6 +1028,29 @@ export const MenuItemResponseSchema = z.object({
   categoryName: z.string().nullable().openapi({ example: 'Do uong' }),
   imageUrl: z.string().nullable().openapi({ example: 'https://cdn.rcfield.vn/menu/cold-brew.jpg' }),
   isAvailable: z.boolean().openapi({ example: true }),
+  variants: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string(),
+        price: z.string(),
+        displayOrder: z.number().int(),
+        isAvailable: z.boolean(),
+      }),
+    )
+    .default([]),
+  components: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        name: z.string(),
+        variantId: z.string().uuid().nullable(),
+        variantName: z.string().nullable(),
+        variantPrice: z.string().nullable(),
+        quantity: z.number().int(),
+      }),
+    )
+    .optional(),
   createdAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   updatedAt: z.string().datetime().openapi({ example: '2026-05-27T09:00:00.000Z' }),
   deletedAt: z.string().datetime().nullable().openapi({ example: null }),
@@ -1278,8 +1314,24 @@ const ParticipantSchema = z.object({
 
 const FnbItemSchema = z.object({
   menu_item_id: z.string().uuid(),
+  variant_id: z.string().uuid().optional(),
   quantity: z.number().int().min(1),
   notes: z.string().max(500).optional(),
+});
+
+/** Direct on-site orders from staff: price is deliberately absent. */
+export const AddSessionFnbOrderSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        menu_item_id: z.string().uuid(),
+        variant_id: z.string().uuid().optional(),
+        quantity: z.number().int().min(1).max(99),
+        notes: z.string().trim().max(500).optional(),
+      }),
+    )
+    .min(1, 'Không có sản phẩm nào được chọn')
+    .max(30),
 });
 
 export const CreateBookingSchema = z.object({
@@ -1312,6 +1364,13 @@ export const CreateContestRentalBookingSchema = z.object({
 export const ListCafeBookingsSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   status: z.nativeEnum(BookingStatus).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const ListCafeSessionsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.nativeEnum(SessionStatus).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });

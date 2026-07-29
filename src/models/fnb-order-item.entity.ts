@@ -12,6 +12,9 @@ export class FnbOrderItem {
   @Column({ name: 'menu_item_id', type: 'uuid', nullable: true })
   menuItemId: string | null;
 
+  @Column({ name: 'menu_item_variant_id', type: 'uuid', nullable: true })
+  menuItemVariantId: string | null;
+
   @Column({ name: 'quantity', type: 'int' })
   quantity: number;
 
@@ -23,6 +26,9 @@ export class FnbOrderItem {
 
   @Column({ name: 'item_name_snapshot', type: 'varchar', length: 255, nullable: true })
   itemNameSnapshot: string | null;
+
+  @Column({ name: 'variant_name_snapshot', type: 'varchar', length: 80, nullable: true })
+  variantNameSnapshot: string | null;
 
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;

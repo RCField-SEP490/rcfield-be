@@ -54,12 +54,14 @@ import { ExtensionProposal } from '../models/extension-proposal.entity';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { FnbOrderItem } from '../models/fnb-order-item.entity';
 import { MenuItem } from '../models/menu-item.entity';
+import { MenuItemVariant } from '../models/menu-item-variant.entity';
 import { emailService } from './email.service';
 import { authService } from './auth.service';
 import { transition } from './booking.service';
 import { env } from '../config/env';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
+import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { createWalkInBooking as createWalkInBookingService } from './booking.service';
 import { getSessionOperationalTiming } from '../lib/session-operational-timing';
 import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
@@ -674,6 +676,7 @@ export async function getBookingsByDate(
 
 export interface FnbOrderItemDetail {
   name: string;
+  variantName: string | null;
   quantity: number;
   unitPrice: number;
   subtotal: number;
@@ -683,6 +686,7 @@ export interface FnbOrderItemDetail {
 export interface TodayFnbOrderItem {
   id: string;
   bookingId: string;
+  orderType: FnbOrderType;
   status: string;
   totalAmount: number;
   createdAt: string;
@@ -696,6 +700,7 @@ export async function getTodayFnbOrders(cafeId: string): Promise<TodayFnbOrderIt
     {
       id: string;
       booking_id: string;
+      order_type: FnbOrderType;
       status: string;
       total_amount: string;
       created_at: Date;
@@ -708,13 +713,15 @@ export async function getTodayFnbOrders(cafeId: string): Promise<TodayFnbOrderIt
        fo.id,
        fo.booking_id,
        fo.status,
+       fo.order_type,
        fo.total_amount,
        fo.created_at,
        b.slot_start,
-       u.full_name  AS customer_name,
+       COALESCE(u.full_name, 'Khách tại quầy') AS customer_name,
        json_agg(
          json_build_object(
            'name',      COALESCE(mi.name, foi.item_name_snapshot, 'Món ăn'),
+           'variantName', foi.variant_name_snapshot,
            'quantity',  foi.quantity,
            'unitPrice', foi.unit_price,
            'subtotal',  foi.subtotal,
@@ -723,21 +730,31 @@ export async function getTodayFnbOrders(cafeId: string): Promise<TodayFnbOrderIt
        ) FILTER (WHERE foi.id IS NOT NULL) AS items
      FROM fnb_orders fo
      JOIN bookings b ON b.id = fo.booking_id
-     JOIN users u    ON u.id = b.customer_id
+     LEFT JOIN users u ON u.id = b.customer_id
      LEFT JOIN fnb_order_items foi ON foi.fnb_order_id = fo.id
      LEFT JOIN menu_items mi       ON mi.id = foi.menu_item_id
      WHERE b.cafe_id = $1
-       AND b.slot_start::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
-       AND fo.order_type = 'PRE_ORDER'
        AND fo.status != 'CANCELLED'
+       AND (
+         (fo.order_type = 'PRE_ORDER'
+           AND b.status IN ('CONFIRMED', 'COMPLETED')
+           AND (b.slot_start AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+         OR
+         (fo.order_type = 'ON_SITE'
+           AND (fo.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+       )
      GROUP BY fo.id, b.slot_start, u.full_name
-     ORDER BY b.slot_start ASC`,
+     ORDER BY
+       CASE WHEN fo.order_type = 'ON_SITE' THEN 0 ELSE 1 END,
+       CASE WHEN fo.order_type = 'ON_SITE' THEN fo.created_at END DESC,
+       CASE WHEN fo.order_type = 'PRE_ORDER' THEN b.slot_start END ASC`,
     [cafeId],
   );
 
   return rows.map((row) => ({
     id: row.id,
     bookingId: row.booking_id,
+    orderType: row.order_type,
     status: row.status,
     totalAmount: Number(row.total_amount),
     createdAt: row.created_at.toISOString(),
@@ -751,6 +768,7 @@ export async function updateFnbOrderStatus(
   orderId: string,
   cafeId: string,
   newStatus: string,
+  staffUserId: string,
 ): Promise<void> {
   const [order] = await AppDataSource.query<
     {
@@ -786,10 +804,20 @@ export async function updateFnbOrderStatus(
     );
   }
 
-  await AppDataSource.query(`UPDATE fnb_orders SET status = $1 WHERE id = $2`, [
-    newStatus,
-    orderId,
-  ]);
+  await AppDataSource.query(
+    `UPDATE fnb_orders
+        SET status = $1::fnb_order_status_enum,
+            confirmed_by = CASE
+              WHEN $1::fnb_order_status_enum = 'CONFIRMED'::fnb_order_status_enum THEN $2::uuid
+              ELSE confirmed_by
+            END,
+            confirmed_at = CASE
+              WHEN $1::fnb_order_status_enum = 'CONFIRMED'::fnb_order_status_enum THEN NOW()
+              ELSE confirmed_at
+            END
+      WHERE id = $3`,
+    [newStatus, staffUserId, orderId],
+  );
 
   if (newStatus === FnbOrderStatus.CANCELLED && order.session_id) {
     const session = await AppDataSource.getRepository(Session).findOne({
@@ -804,12 +832,12 @@ export async function updateFnbOrderStatus(
     }
   }
 
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: order.booking_id },
+  });
+
   if (order.order_type === FnbOrderType.ON_SITE) {
     await syncOnsiteFnbFeeComponent(order.booking_id);
-
-    const booking = await AppDataSource.getRepository(Booking).findOne({
-      where: { id: order.booking_id },
-    });
     if (booking?.customerId) {
       wsService.pushToUser(booking.customerId, 'SESSION_FNB_ORDER_UPDATED', {
         bookingId: booking.id,
@@ -817,6 +845,28 @@ export async function updateFnbOrderStatus(
         orderId,
         status: newStatus,
       });
+    }
+  }
+
+  if (newStatus === FnbOrderStatus.DELIVERED && booking?.customerId) {
+    try {
+      const orderSource = order.order_type === FnbOrderType.ON_SITE ? 'gọi tại quầy' : 'đặt trước';
+      const message = `Đơn đồ ăn & thức uống ${orderSource} của bạn đã được phục vụ.`;
+      const data = { bookingId: booking.id, orderId, route: `/booking/${booking.id}` };
+      await createNotification(
+        booking.customerId,
+        NotificationType.FNB_ORDER_SERVED,
+        'Món của bạn đã sẵn sàng',
+        message,
+        data,
+      );
+      wsService.pushToUser(booking.customerId, 'FNB_ORDER_SERVED', data);
+    } catch (error) {
+      logger.error(
+        'FnbOrderNotification',
+        'Failed to notify customer about served F&B order',
+        error,
+      );
     }
   }
 
@@ -1513,8 +1563,10 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
         : null;
       itemDetails.push({
         name: menuItem?.name || item.itemNameSnapshot || 'Món ăn',
+        variantName: item.variantNameSnapshot,
         qty: item.quantity,
         price: Number(item.unitPrice),
+        notes: item.notes,
       });
     }
     mappedFnbOrders.push({
@@ -1838,6 +1890,25 @@ export async function submitInspection(
           inspectionId: inspection.id,
           sessionStatus: session.status,
         });
+        // Thông báo realtime cho Provider (owner của cafe)
+        try {
+          const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+            `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+            [session.cafeId],
+          );
+          if (cafeRow) {
+            wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+              sessionId,
+              sessionStatus: session.status,
+            });
+          }
+        } catch (notifyErr) {
+          logger.error(
+            'InspectionNotification',
+            'Failed to push SESSION_STATUS_CHANGED to provider',
+            notifyErr,
+          );
+        }
       } catch (err) {
         logger.error('InspectionNotification', 'Failed to notify staff check-in confirmation', err);
       }
@@ -1859,6 +1930,26 @@ export async function submitInspection(
       session.status = SessionStatus.CHECKING_OUT;
       session.checkedOutBy = staffUserId;
       await AppDataSource.getRepository(Session).save(session);
+    }
+
+    // Thông báo realtime cho Provider khi trạng thái session thay đổi
+    try {
+      const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+        `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+        [session.cafeId],
+      );
+      if (cafeRow) {
+        wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+          sessionId,
+          sessionStatus: session.status,
+        });
+      }
+    } catch (notifyErr) {
+      logger.error(
+        'StaffService',
+        'Failed to push SESSION_STATUS_CHANGED to provider on checkout',
+        notifyErr,
+      );
     }
 
     if (activeSVs.length > 0) {
@@ -2549,8 +2640,15 @@ export async function proposeExtension(
 export async function addSessionFnbOrder(
   sessionId: string,
   staffUserId: string,
-  data: any,
-): Promise<any> {
+  data: {
+    items: Array<{
+      menu_item_id: string;
+      variant_id?: string;
+      quantity: number;
+      notes?: string;
+    }>;
+  },
+): Promise<FnbOrder> {
   const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
   if (!session) {
     throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
@@ -2564,45 +2662,98 @@ export async function addSessionFnbOrder(
     );
   }
 
-  const { items } = data;
-  if (!items || !Array.isArray(items) || items.length === 0) {
-    throw new AppError('Không có sản phẩm nào được chọn', 400, 'EMPTY_FNB_ORDER');
-  }
+  const fnbOrder = await AppDataSource.transaction(async (manager) => {
+    const menuItemRepo = manager.getRepository(MenuItem);
+    const variantRepo = manager.getRepository(MenuItemVariant);
+    const resolvedItems: Array<{
+      menuItem: MenuItem;
+      variant: MenuItemVariant | null;
+      quantity: number;
+      notes: string | null;
+      unitPrice: number;
+    }> = [];
 
-  const total = items.reduce((sum, item) => sum + item.qty * item.price, 0);
-
-  const fnbOrder = new FnbOrder();
-  fnbOrder.bookingId = session.bookingId;
-  fnbOrder.sessionId = session.id;
-  fnbOrder.orderType = FnbOrderType.ON_SITE;
-  fnbOrder.status = FnbOrderStatus.PENDING;
-  fnbOrder.totalAmount = total;
-  fnbOrder.createdBy = staffUserId;
-  fnbOrder.notes = 'Gọi món tại quầy [ACTIVE SESSION]';
-  await AppDataSource.getRepository(FnbOrder).save(fnbOrder);
-
-  const menuItemRepo = AppDataSource.getRepository(MenuItem);
-
-  for (const item of items) {
-    const menuItem = await menuItemRepo.findOne({
-      where: { name: item.name, cafeId: session.cafeId },
-    });
-    if (!menuItem) {
-      throw new AppError(`Món ăn ${item.name} không tồn tại`, 404, 'MENU_ITEM_NOT_FOUND');
+    for (const item of data.items) {
+      const menuItem = await menuItemRepo.findOne({
+        where: { id: item.menu_item_id, cafeId: session.cafeId, isAvailable: true },
+      });
+      if (!menuItem) {
+        throw new AppError(
+          'Món đã chọn không tồn tại hoặc đang tạm ngừng bán',
+          400,
+          'MENU_ITEM_UNAVAILABLE',
+        );
+      }
+      if (item.variant_id && menuItem.isCombo) {
+        throw new AppError('Combo không có lựa chọn riêng', 400, 'INVALID_MENU_VARIANT');
+      }
+      const variant = item.variant_id
+        ? await variantRepo.findOne({
+            where: { id: item.variant_id, menuItemId: menuItem.id, isAvailable: true },
+          })
+        : null;
+      if (item.variant_id && !variant) {
+        throw new AppError(
+          'Lựa chọn món không tồn tại hoặc đang tạm ngừng bán',
+          400,
+          'MENU_VARIANT_UNAVAILABLE',
+        );
+      }
+      resolvedItems.push({
+        menuItem,
+        variant,
+        quantity: item.quantity,
+        notes: item.notes?.trim() || null,
+        unitPrice: Number(variant?.price ?? menuItem.price),
+      });
     }
 
-    const foi = new FnbOrderItem();
-    foi.fnbOrderId = fnbOrder.id;
-    foi.menuItemId = menuItem.id;
-    foi.quantity = item.qty;
-    foi.unitPrice = item.price;
-    foi.subtotal = item.qty * item.price;
-    await AppDataSource.getRepository(FnbOrderItem).save(foi);
-  }
+    const total = resolvedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    const orderRepo = manager.getRepository(FnbOrder);
+    const order = await orderRepo.save(
+      orderRepo.create({
+        bookingId: session.bookingId,
+        sessionId: session.id,
+        orderType: FnbOrderType.ON_SITE,
+        status: FnbOrderStatus.PENDING,
+        totalAmount: total,
+        createdBy: staffUserId,
+        notes: 'Gọi món tại quầy [ACTIVE SESSION]',
+      }),
+    );
 
-  session.actualTotalAmount = Number(session.actualTotalAmount) + total;
-  await AppDataSource.getRepository(Session).save(session);
+    const orderItemRepo = manager.getRepository(FnbOrderItem);
+    await orderItemRepo.save(
+      resolvedItems.map((item) =>
+        orderItemRepo.create({
+          fnbOrderId: order.id,
+          menuItemId: item.menuItem.id,
+          menuItemVariantId: item.variant?.id ?? null,
+          itemNameSnapshot: item.menuItem.name,
+          variantNameSnapshot: item.variant?.name ?? null,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          subtotal: item.quantity * item.unitPrice,
+          notes: item.notes,
+        }),
+      ),
+    );
+
+    session.actualTotalAmount = Number(session.actualTotalAmount) + total;
+    await manager.getRepository(Session).save(session);
+    return order;
+  });
+
+  const total = Number(fnbOrder.totalAmount);
   await syncOnsiteFnbFeeComponent(session.bookingId);
+
+  await notifyCafeStaffAboutFnbPrep({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    orderId: fnbOrder.id,
+    orderType: FnbOrderType.ON_SITE,
+    excludeStaffUserId: staffUserId,
+  });
 
   // Notify customer of new Fnb order added
   try {
@@ -2992,6 +3143,25 @@ export async function customerConfirmInspection(
         inspectionId,
         sessionStatus: session.status,
       });
+      // Thông báo realtime cho Provider khi khách xác nhận trả xe
+      try {
+        const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+          `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+          [session.cafeId],
+        );
+        if (cafeRow) {
+          wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+            sessionId,
+            sessionStatus: session.status,
+          });
+        }
+      } catch (notifyErr) {
+        logger.error(
+          'StaffService',
+          'Failed to push SESSION_STATUS_CHANGED to provider on customer confirm checkout',
+          notifyErr,
+        );
+      }
     }
   } else {
     // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
@@ -3340,11 +3510,11 @@ async function reconcileBookingAfterCheckout(booking: Booking): Promise<{
   return { allSessionsCompleted: true, pendingCount: 0, newlyCompleted };
 }
 
-function pushCheckoutCompletedEvents(
+async function pushCheckoutCompletedEvents(
   booking: Booking,
   sessionId: string,
   staffUserId: string,
-): void {
+): Promise<void> {
   const payload = {
     sessionId,
     bookingId: booking.id,
@@ -3353,6 +3523,25 @@ function pushCheckoutCompletedEvents(
   wsService.pushToUser(staffUserId, 'SESSION_CHECKOUT_COMPLETED', payload);
   if (booking.customerId) {
     wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', payload);
+  }
+  // Thông báo realtime cho Provider khi session hoàn tất
+  try {
+    const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+      `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+      [booking.cafeId],
+    );
+    if (cafeRow) {
+      wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
+        sessionId,
+        sessionStatus: SessionStatus.COMPLETED,
+      });
+    }
+  } catch (notifyErr) {
+    logger.error(
+      'StaffService',
+      'Failed to push SESSION_STATUS_CHANGED to provider on checkout completed',
+      notifyErr,
+    );
   }
 }
 
@@ -3398,7 +3587,7 @@ export async function staffConfirmCheckout(
 
   logger.info('Staff', 'staffConfirmCheckout', { sessionId, inspectionId, staffUserId });
   if (booking) {
-    pushCheckoutCompletedEvents(booking, sessionId, staffUserId);
+    void pushCheckoutCompletedEvents(booking, sessionId, staffUserId);
   }
   return {
     success: true,
@@ -3755,7 +3944,7 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     if (checkoutWasCompletedDuringSettlement) {
       await reconcileBookingAfterCheckout(booking);
       if (completedSessionIdDuringSettlement) {
-        pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
+        void pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
       }
       return {
         success: true,
@@ -3914,7 +4103,7 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
 
   const bookingReconciliation = await reconcileBookingAfterCheckout(booking);
   if (completedSessionIdDuringSettlement) {
-    pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
+    void pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
   }
   if (
     bookingReconciliation.newlyCompleted &&

@@ -9,6 +9,7 @@ import {
   InspectionType,
   PaymentComponentStatus,
   PaymentComponentType,
+  ExtensionProposalStatus,
 } from '../types';
 import {
   CreateBookingSchema,
@@ -16,6 +17,7 @@ import {
   CancelBookingSchema,
   ListMyBookingsSchema,
   ListCafeBookingsSchema,
+  ListCafeSessionsSchema,
 } from '../validate';
 import * as bookingService from '../services/booking.service';
 import { bookContestRental } from '../services/contest-rental.service';
@@ -43,6 +45,7 @@ import { Session } from '../models/session.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
 import { Inspection } from '../models/inspection.entity';
 import { DamageLineItem } from '../models/damage-line-item.entity';
+import { ExtensionProposal } from '../models/extension-proposal.entity';
 import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
 
 function getInitialPaymentReceiptComponents(
@@ -353,6 +356,7 @@ export const bookingController = {
         // retained only for walk-in guests without an account.
         resolvedName: userMap.get(p.userId ?? '')?.full_name ?? p.guestName ?? null,
         resolvedPhone: userMap.get(p.userId ?? '')?.phone ?? p.guestPhone ?? null,
+        resolvedAvatarUrl: userMap.get(p.userId ?? '')?.avatar_url ?? null,
       }));
 
       // Enrich vehicles with catalog info (name, tier, identifier, color, image)
@@ -378,14 +382,18 @@ export const bookingController = {
       void vehicleIds; // suppress unused warning
 
       // Enrich FnbOrder items with menu item names across all orders (exclude CANCELLED)
-      let fnbItems: (FnbOrderItem & { itemName: string | null })[] = [];
+      type EnrichedFnbOrderItem = FnbOrderItem & {
+        itemName: string | null;
+        variantName: string | null;
+      };
+      let fnbItems: EnrichedFnbOrderItem[] = [];
       let fnbOrdersWithItems: Array<{
         id: string;
         bookingId: string;
         orderType: FnbOrder['orderType'];
         status: FnbOrder['status'];
         totalAmount: number;
-        items: (FnbOrderItem & { itemName: string | null })[];
+        items: EnrichedFnbOrderItem[];
       }> = [];
       let mergedFnbOrder = null;
 
@@ -414,22 +422,23 @@ export const bookingController = {
 
         fnbItems = allRawItems.map((i) => ({
           ...i,
-          itemName: (i.menuItemId ? menuMap.get(i.menuItemId) : null) ?? i.itemNameSnapshot ?? null,
+          // Snapshot takes precedence so an old paid order does not silently
+          // change its label after Provider renames a menu item.
+          itemName: i.itemNameSnapshot ?? (i.menuItemId ? menuMap.get(i.menuItemId) : null) ?? null,
+          variantName: i.variantNameSnapshot ?? null,
         }));
 
-        const enrichedItemsByOrderId = new Map<
-          string,
-          (FnbOrderItem & { itemName: string | null })[]
-        >();
+        const enrichedItemsByOrderId = new Map<string, EnrichedFnbOrderItem[]>();
         for (const [orderId, items] of itemsByOrderId) {
           enrichedItemsByOrderId.set(
             orderId,
             items.map((item) => ({
               ...item,
               itemName:
-                (item.menuItemId ? menuMap.get(item.menuItemId) : null) ??
                 item.itemNameSnapshot ??
+                (item.menuItemId ? menuMap.get(item.menuItemId) : null) ??
                 null,
+              variantName: item.variantNameSnapshot ?? null,
             })),
           );
         }
@@ -472,11 +481,47 @@ export const bookingController = {
       // Resolve track type name: snapshot first, then DB lookup
       const snapshot = booking.snapshot as Record<string, unknown> | null;
       let trackTypeName: string | null = (snapshot?.track_type_name as string) ?? null;
-      if (!trackTypeName && booking.trackTypeId) {
+      let trackTypeCoverImage: string | null = null;
+      if (booking.trackConfigId) {
+        const [trackConfigRow] = await AppDataSource.query<{ images: string[]; name: string }[]>(
+          `SELECT ctc.images, tt.name FROM cafe_track_configs ctc
+           JOIN track_types tt ON tt.id = ctc.track_type_id
+           WHERE ctc.id = $1 LIMIT 1`,
+          [booking.trackConfigId],
+        );
+        if (trackConfigRow) {
+          if (!trackTypeName) trackTypeName = trackConfigRow.name;
+          trackTypeCoverImage =
+            Array.isArray(trackConfigRow.images) && trackConfigRow.images.length > 0
+              ? trackConfigRow.images[0]
+              : null;
+        }
+      } else if (booking.trackTypeId) {
         const tt = await AppDataSource.getRepository(TrackType).findOne({
           where: { id: booking.trackTypeId },
         });
-        trackTypeName = tt?.name ?? null;
+        if (tt && !trackTypeName) trackTypeName = tt.name;
+      }
+
+      let proposedExtensionMinutes: number | null = null;
+      let approvedExtensionMinutes = 0;
+      if (session) {
+        if (session.status === 'EXTENDING') {
+          const proposal = await AppDataSource.getRepository(ExtensionProposal).findOne({
+            where: { sessionId: session.id, status: ExtensionProposalStatus.PENDING },
+            order: { createdAt: 'DESC' },
+          });
+          if (proposal) {
+            proposedExtensionMinutes = Number(proposal.durationMinutes);
+          }
+        }
+        const approvedProposals = await AppDataSource.getRepository(ExtensionProposal).find({
+          where: { sessionId: session.id, status: ExtensionProposalStatus.APPROVED },
+        });
+        approvedExtensionMinutes = approvedProposals.reduce(
+          (sum, p) => sum + Number(p.durationMinutes),
+          0,
+        );
       }
 
       res.json({
@@ -502,8 +547,16 @@ export const bookingController = {
           })),
           fnb_orders: fnbOrdersWithItems,
           fnb_order: mergedFnbOrder,
-          cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
+          cafe: cafe
+            ? {
+                name: cafe.name,
+                address: cafe.address,
+                city: cafe.city,
+                coverImageUrl: cafe.coverImageUrl,
+              }
+            : null,
           track_type_name: trackTypeName,
+          track_type_cover_image: trackTypeCoverImage,
           session: session
             ? {
                 id: session.id,
@@ -511,6 +564,8 @@ export const bookingController = {
                 plannedEndAt: session.plannedEndAt,
                 actualStartAt: session.actualStartAt,
                 actualEndAt: session.actualEndAt,
+                proposedExtensionMinutes,
+                approvedExtensionMinutes,
               }
             : null,
           damage_breakdown: damageBreakdown,
@@ -642,6 +697,33 @@ export const bookingController = {
       const cafeId = req.params.cafeId;
       const query = ListCafeBookingsSchema.parse(req.query) as bookingService.ListCafeBookingsQuery;
       const result = await bookingService.listCafeBookings(cafeId, query);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/cafes/:cafeId/sessions  [auth PROVIDER, STAFF]
+  async listCafeSessions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cafeId = req.params.cafeId;
+      const query = ListCafeSessionsSchema.parse(req.query);
+      const result = await bookingService.listCafeSessions(cafeId, query);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/cafes/:cafeId/sessions/stats  [auth PROVIDER, STAFF]
+  async listCafeSessionStats(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cafeId = req.params.cafeId;
+      const date =
+        typeof req.query.date === 'string'
+          ? req.query.date
+          : new Date().toISOString().split('T')[0];
+      const result = await bookingService.listCafeSessionStats(cafeId, date);
       res.json({ success: true, data: result });
     } catch (err) {
       next(err);
