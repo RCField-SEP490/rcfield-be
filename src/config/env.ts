@@ -1,15 +1,33 @@
 import 'dotenv/config';
 
+function parseBoolean(value: string | undefined, fallback = false): boolean {
+  if (value === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function getSafeFrontendUrl(): string {
+  let url = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
+  url = url.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'http://' + url;
+  }
+  return url;
+}
+
 export const env = {
   NODE_ENV: process.env.NODE_ENV ?? 'development',
   PORT: parseInt(process.env.PORT ?? '3000', 10),
 
   db: {
+    url: process.env.DATABASE_URL,
     host: process.env.DB_HOST ?? 'localhost',
     port: parseInt(process.env.DB_PORT ?? '5432', 10),
     name: process.env.DB_NAME ?? 'rcfeild_db',
     username: process.env.DB_USERNAME ?? 'postgres',
     password: process.env.DB_PASSWORD ?? 'postgres',
+    ssl: parseBoolean(process.env.DB_SSL),
+    sslRejectUnauthorized: parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, true),
+    autoMigrate: parseBoolean(process.env.DB_AUTO_MIGRATE, true),
   },
 
   jwt: {
@@ -35,10 +53,40 @@ export const env = {
     clientId: process.env.GOOGLE_CLIENT_ID ?? '',
   },
 
+  email: {
+    provider: process.env.EMAIL_PROVIDER ?? 'Brevo',
+    brevoApiKey: process.env.EMAIL_BREVO_API_KEY ?? process.env.BREVO_API_KEY ?? '',
+    brevoBaseUrl: process.env.EMAIL_BREVO_BASE_URL ?? 'https://api.brevo.com/v3',
+    fromEmail:
+      process.env.EMAIL_FROM_EMAIL ?? process.env.BREVO_SENDER_EMAIL ?? 'no-reply@rcfield.local',
+    fromName: process.env.EMAIL_FROM_NAME ?? process.env.BREVO_SENDER_NAME ?? 'RCField',
+    passwordResetTtlMinutes: parseInt(process.env.PASSWORD_RESET_CODE_TTL_MINUTES ?? '30', 10),
+  },
+
   platform: {
     feePct: parseFloat(process.env.PLATFORM_FEE_PCT ?? '0.15'),
     paymentWindowMinutes: parseInt(process.env.PAYMENT_WINDOW_MINUTES ?? '30', 10),
     slotLockTtlSeconds: parseInt(process.env.SLOT_LOCK_TTL_SECONDS ?? '1800', 10),
+  },
+
+  vnpay: {
+    tmnCode: process.env.VNPAY_TMN_CODE ?? process.env.VNP_TMN_CODE ?? '',
+    hashSecret: process.env.VNPAY_HASH_SECRET ?? process.env.VNP_HASH_SECRET ?? '',
+    paymentUrl:
+      process.env.VNPAY_URL ??
+      process.env.VNP_URL ??
+      'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html',
+    returnUrl:
+      process.env.VNPAY_RETURN_URL ??
+      process.env.VNP_RETURN_URL ??
+      'http://localhost:3000/api/payments/vnpay-return',
+    ipnUrl:
+      process.env.VNPAY_IPN_URL ??
+      process.env.VNP_IPN_URL ??
+      'http://localhost:3000/api/payments/vnpay-ipn',
+    locale: process.env.VNPAY_LOCALE ?? 'vn',
+    currCode: process.env.VNPAY_CURR_CODE ?? 'VND',
+    mockEnabled: parseBoolean(process.env.VNPAY_MOCK_ENABLED),
   },
 
   ai: {
@@ -48,7 +96,8 @@ export const env = {
     supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.0-flash',
   },
 
-  frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:5173',
+  frontendUrl: getSafeFrontendUrl(),
+  apiBaseUrl: (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
 
   facebook: {
     appId: process.env.FB_APP_ID ?? '',

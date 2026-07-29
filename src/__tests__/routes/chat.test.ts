@@ -7,8 +7,7 @@ import { UserRole } from '../../types';
 // jest.mock hoisting requires require() to access mock handles after factory runs
 const geminiMocks = () =>
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require('@google/generative-ai') as {
-    __mockSendMessage: jest.Mock;
+  require('@google/genai') as {
     __mockGenerateContent: jest.Mock;
   };
 
@@ -20,21 +19,28 @@ jest.mock('../../config/nlu', () => ({
 }));
 
 jest.mock('../../services/rag-cache', () => ({
-  ragCache: { get: jest.fn().mockReturnValue(null), set: jest.fn() },
+  ragCache: { get: jest.fn().mockReturnValue(null), set: jest.fn(), clear: jest.fn() },
 }));
 
-jest.mock('@google/generative-ai', () => {
-  const sendMessage = jest.fn();
+jest.mock('@google/genai', () => {
   const generateContent = jest.fn();
   return {
-    GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
-      getGenerativeModel: jest.fn().mockReturnValue({
-        startChat: jest.fn().mockReturnValue({ sendMessage }),
+    GoogleGenAI: jest.fn().mockImplementation(() => ({
+      models: {
         generateContent,
-      }),
+      },
     })),
-    __mockSendMessage: sendMessage,
     __mockGenerateContent: generateContent,
+    Type: {
+      TYPE_UNSPECIFIED: 'TYPE_UNSPECIFIED',
+      STRING: 'STRING',
+      NUMBER: 'NUMBER',
+      INTEGER: 'INTEGER',
+      BOOLEAN: 'BOOLEAN',
+      ARRAY: 'ARRAY',
+      OBJECT: 'OBJECT',
+      NULL: 'NULL',
+    },
   };
 });
 
@@ -48,9 +54,42 @@ jest.mock('../../services/kb.service', () => ({
   },
 }));
 
+const mockGetWidgetConfigForCafe = jest.fn();
+jest.mock('../../services/chat.service', () => {
+  const original = jest.requireActual('../../services/chat.service');
+  return {
+    ...original,
+    getWidgetConfigForCafe: (cafeId: string) => mockGetWidgetConfigForCafe(cafeId),
+  };
+});
+
+beforeEach(() => {
+  const original = jest.requireActual('../../services/chat.service');
+  mockGetWidgetConfigForCafe.mockImplementation((id: string) =>
+    original.getWidgetConfigForCafe(id),
+  );
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function enableAiChat(cafeId: string) {
+  const [cafe] = await AppDataSource.query<{ provider_id: string }[]>(
+    `SELECT provider_id FROM cafes WHERE id = $1`,
+    [cafeId],
+  );
+  const [plan] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id FROM subscription_plans WHERE name = 'TRIAL' LIMIT 1`,
+  );
+
+  if (cafe && plan) {
+    await AppDataSource.query(
+      `INSERT INTO provider_subscriptions
+         (provider_id, plan_id, status, started_at, expires_at, ai_quota_reset_at)
+       VALUES ($1, $2, 'TRIAL', now(), now() + interval '30 days', now() + interval '30 days')`,
+      [cafe.provider_id, plan.id],
+    );
+  }
+
   await AppDataSource.query(
     `INSERT INTO feature_flags (feature_key, display_name, entity_type, entity_id, is_enabled, config)
      VALUES ('AI_CHATBOT', 'AI Chatbot', 'CAFE', $1, true, $2::jsonb)
@@ -74,11 +113,8 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
       confidence: 0,
       needs_llm_fallback: false,
     });
-    geminiMocks().__mockSendMessage.mockResolvedValue({
-      response: { text: () => 'Đây là câu trả lời test.' },
-    });
     geminiMocks().__mockGenerateContent.mockResolvedValue({
-      response: { text: () => '["Hỏi thêm về dịch vụ","Kiểm tra lịch trống","Xem bảng giá"]' },
+      text: 'Test answer.',
     });
   });
 
@@ -113,7 +149,7 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
     expect(res.status).toBe(200);
     expect(res.body.response_type).toBe('greeting');
     expect(res.body.answer).toBeDefined();
-    expect(geminiMocks().__mockSendMessage).not.toHaveBeenCalled();
+    expect(geminiMocks().__mockGenerateContent).not.toHaveBeenCalled();
   });
 
   it('thanks → 200, response_type=thanks, không gọi Gemini', async () => {
@@ -130,7 +166,7 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.response_type).toBe('thanks');
-    expect(geminiMocks().__mockSendMessage).not.toHaveBeenCalled();
+    expect(geminiMocks().__mockGenerateContent).not.toHaveBeenCalled();
   });
 
   it('farewell → 200, response_type=farewell, không gọi Gemini', async () => {
@@ -147,7 +183,7 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.response_type).toBe('farewell');
-    expect(geminiMocks().__mockSendMessage).not.toHaveBeenCalled();
+    expect(geminiMocks().__mockGenerateContent).not.toHaveBeenCalled();
   });
 
   it('RAG → 200, gọi Gemini, trả answer + response_type=text', async () => {
@@ -158,9 +194,9 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
       .send({ message: 'nội quy sân là gì', history: [] });
 
     expect(res.status).toBe(200);
-    expect(res.body.answer).toBe('Đây là câu trả lời test.');
+    expect(res.body.answer).toBe('Test answer.');
     expect(res.body.response_type).toBe('text');
-    expect(geminiMocks().__mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(geminiMocks().__mockGenerateContent).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -168,6 +204,7 @@ describe('POST /api/v1/cafes/:cafeId/chat', () => {
 
 describe('GET /api/v1/cafes/:cafeId/chat/config', () => {
   it('chưa có config → 200 default config', async () => {
+    mockGetWidgetConfigForCafe.mockResolvedValueOnce(null);
     const cafe = await createTestCafe();
     const res = await request(app).get(`/api/v1/cafes/${cafe.id}/chat/config`);
 

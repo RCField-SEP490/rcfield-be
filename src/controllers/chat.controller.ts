@@ -9,7 +9,6 @@ import {
   fastAnswer,
   thanksAnswer,
   farewellAnswer,
-  slotCheck,
   ragChat,
   ragChatStream,
   getWidgetConfigForCafe,
@@ -59,8 +58,6 @@ export async function chat(req: Request, res: Response, next: NextFunction): Pro
       response = thanksAnswer();
     } else if (chatRoute === 'farewell') {
       response = farewellAnswer();
-    } else if (chatRoute === 'slot_check') {
-      response = await slotCheck(cafeId, message);
     } else {
       response = await ragChat(cafeId, message, history, confidence);
     }
@@ -117,8 +114,7 @@ export async function chatStream(req: Request, res: Response, next: NextFunction
       let response;
       if (chatRoute === 'fast') response = await fastAnswer(cafeId);
       else if (chatRoute === 'thanks') response = thanksAnswer();
-      else if (chatRoute === 'farewell') response = farewellAnswer();
-      else response = await slotCheck(cafeId, message);
+      else response = farewellAnswer();
       send('chunk', { text: response.answer });
       send('done', {
         response_type: response.responseType,
@@ -172,6 +168,8 @@ export async function getWidgetConfig(
       return;
     }
 
+    // isEnabled = false means provider has never explicitly configured the widget
+    const isDefault = !config.isEnabled;
     res.json({
       greeting_message: config.greetingMessage,
       position: config.position.toLowerCase().replace('_', '-'),
@@ -179,7 +177,7 @@ export async function getWidgetConfig(
       avatar_url: config.avatarUrl,
       quick_replies: config.quickReplies,
       system_prompt: config.systemPrompt,
-      is_default: false,
+      is_default: isDefault,
     });
   } catch (err) {
     next(err);

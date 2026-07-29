@@ -283,3 +283,60 @@ describe('POST /api/v1/auth/logout', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('POST /api/v1/auth/register', () => {
+  it('đăng ký tài khoản mới thành công', async () => {
+    const email = `newuser_${Date.now()}@test.com`;
+    const res = await request(app).post('/api/v1/auth/register').send({
+      email,
+      full_name: 'Test Register User',
+      phone: '0912345678',
+      password: 'Password123',
+      role: 'CUSTOMER',
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.user.email).toBe(email);
+    expect(res.body.data.user.phone).toBe('0912345678');
+  });
+
+  it('đăng ký với số điện thoại của guest user có sẵn → nâng cấp tài khoản guest đó thay vì tạo mới', async () => {
+    const { User } = await import('../../models/user.entity');
+    const userRepo = AppDataSource.getRepository(User);
+    const guestPhone = '0981112222';
+    const guestEmail = `${guestPhone}@guest.rcfield.local`;
+
+    // 1. Tạo guest user vãng lai từ trước
+    const guest = await userRepo.save(
+      userRepo.create({
+        email: guestEmail,
+        full_name: 'Khách Vãng Lai',
+        phone: guestPhone,
+        password_hash: null,
+        role: UserRole.CUSTOMER,
+        is_active: true,
+      }),
+    );
+
+    // 2. Gọi API đăng ký với số điện thoại đó và email thật
+    const realEmail = 'realcustomer@gmail.com';
+    const res = await request(app).post('/api/v1/auth/register').send({
+      email: realEmail,
+      full_name: 'Khách Nâng Cấp',
+      phone: guestPhone,
+      password: 'Password123',
+      role: 'CUSTOMER',
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.user.id).toBe(guest.id); // Trùng ID khách vãng lai ban đầu!
+    expect(res.body.data.user.email).toBe(realEmail);
+    expect(res.body.data.user.phone).toBe(guestPhone);
+
+    // 3. Đảm bảo email cũ guest.rcfield.local không còn tồn tại
+    const oldUser = await userRepo.findOne({ where: { email: guestEmail } });
+    expect(oldUser).toBeNull();
+  });
+});

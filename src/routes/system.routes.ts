@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { AppDataSource } from '../config/database';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { upsertWidgetConfig } from '../services/chat.service';
-import { UserRole } from '../types';
+import { UserRole, WidgetConfigData } from '../types';
 
 const router = Router();
 
@@ -12,8 +12,8 @@ router.get('/widget-config', async (_req: Request, res: Response, next: NextFunc
   try {
     const ds = AppDataSource;
 
-    const [cafe] = await ds.query<{ id: string }[]>(
-      `SELECT id FROM cafes WHERE slug = 'rcfield-system' AND status = 'ACTIVE' LIMIT 1`,
+    const [cafe] = await ds.query<{ id: string; slug: string; widget_config: WidgetConfigData }[]>(
+      `SELECT id, slug, widget_config FROM cafes WHERE slug = 'rcfield-system' AND status = 'ACTIVE' LIMIT 1`,
     );
 
     if (!cafe) {
@@ -21,31 +21,20 @@ router.get('/widget-config', async (_req: Request, res: Response, next: NextFunc
       return;
     }
 
-    const [config] = await ds.query<
-      {
-        greeting_message: string;
-        position: string;
-        primary_color: string;
-        quick_replies: string[];
-        system_prompt: string | null;
-        is_enabled: boolean;
-      }[]
-    >(
-      `SELECT greeting_message, position, primary_color, quick_replies, system_prompt, is_enabled
-       FROM cafe_widget_configs WHERE cafe_id = $1`,
-      [cafe.id],
-    );
+    const config = cafe.widget_config;
 
     res.json({
       success: true,
       data: {
         cafeId: cafe.id,
-        greetingMessage: config?.greeting_message ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
+        cafeSlug: cafe.slug,
+        greetingMessage: config?.greetingMessage ?? 'Xin chào! Tôi có thể giúp gì cho bạn?',
         position: config?.position ?? 'BOTTOM_RIGHT',
-        primaryColor: config?.primary_color ?? '#EA580C',
-        quickReplies: config?.quick_replies ?? [],
-        systemPrompt: config?.system_prompt ?? null,
-        isEnabled: config?.is_enabled ?? false,
+        primaryColor: config?.primaryColor ?? '#EA580C',
+        quickReplies: config?.quickReplies ?? [],
+        systemPrompt: config?.systemPrompt ?? null,
+        isEnabled: config?.isEnabled ?? false,
+        fullPageEnabled: config?.fullPageEnabled ?? false,
       },
     });
   } catch (err) {
@@ -71,15 +60,23 @@ router.put(
         return;
       }
 
-      const { greetingMessage, position, primaryColor, quickReplies, systemPrompt, isEnabled } =
-        req.body as {
-          greetingMessage?: string;
-          position?: string;
-          primaryColor?: string;
-          quickReplies?: string[];
-          systemPrompt?: string | null;
-          isEnabled?: boolean;
-        };
+      const {
+        greetingMessage,
+        position,
+        primaryColor,
+        quickReplies,
+        systemPrompt,
+        isEnabled,
+        fullPageEnabled,
+      } = req.body as {
+        greetingMessage?: string;
+        position?: string;
+        primaryColor?: string;
+        quickReplies?: string[];
+        systemPrompt?: string | null;
+        isEnabled?: boolean;
+        fullPageEnabled?: boolean;
+      };
 
       await upsertWidgetConfig(cafe.id, {
         ...(greetingMessage !== undefined && { greetingMessage }),
@@ -87,14 +84,9 @@ router.put(
         ...(primaryColor !== undefined && { primaryColor }),
         ...(quickReplies !== undefined && { quickReplies }),
         ...(systemPrompt !== undefined && { systemPrompt }),
+        ...(isEnabled !== undefined && { isEnabled }),
+        ...(fullPageEnabled !== undefined && { fullPageEnabled }),
       });
-
-      if (isEnabled !== undefined) {
-        await ds.query(`UPDATE cafe_widget_configs SET is_enabled = $1 WHERE cafe_id = $2`, [
-          isEnabled,
-          cafe.id,
-        ]);
-      }
 
       res.json({ success: true });
     } catch (err) {

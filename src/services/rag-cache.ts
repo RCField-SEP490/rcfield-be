@@ -27,6 +27,7 @@ function cosine(a: number[], b: number[]): number {
 
 class RagCache {
   private store = new Map<string, CacheEntry[]>();
+  private cafeNames = new Map<string, string>();
 
   get(cafeId: string, embedding: number[]): CacheEntry | null {
     const entries = this.store.get(cafeId) ?? [];
@@ -47,15 +48,16 @@ class RagCache {
       }
     }
 
+    const cafeName = this.cafeNames.get(cafeId) ?? cafeId;
     if (best) {
       logger.info('RAG', `cache hit (sim=${bestSim.toFixed(3)}) from: "${best.question}"`, {
-        cafeId,
+        cafe: cafeName,
       });
     } else if (fresh.length > 0) {
       logger.info(
         'RAG',
         `cache miss (best sim=${topSim.toFixed(3)}, threshold=${SIMILARITY_THRESHOLD})`,
-        { cafeId },
+        { cafe: cafeName },
       );
     }
     return best;
@@ -63,22 +65,25 @@ class RagCache {
 
   set(
     cafeId: string,
+    cafeName: string,
     question: string,
     embedding: number[],
     answer: string,
     sources: string[],
     quickReplies: string[],
   ): void {
+    this.cafeNames.set(cafeId, cafeName);
     const entries = this.store.get(cafeId) ?? [];
     entries.push({ question, embedding, answer, sources, quickReplies, ts: Date.now() });
     if (entries.length > MAX_PER_CAFE) entries.splice(0, entries.length - MAX_PER_CAFE);
     this.store.set(cafeId, entries);
-    logger.info('RAG', `cache stored (${entries.length}/${MAX_PER_CAFE})`, { cafeId });
+    logger.info('RAG', `cache stored (${entries.length}/${MAX_PER_CAFE})`, { cafe: cafeName });
   }
 
   clear(cafeId: string): void {
     this.store.delete(cafeId);
-    logger.info('RAG', 'cache cleared (config updated)', { cafeId });
+    const cafeName = this.cafeNames.get(cafeId) ?? cafeId;
+    logger.info('RAG', 'cache cleared (config updated)', { cafe: cafeName });
   }
 }
 

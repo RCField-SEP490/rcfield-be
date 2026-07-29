@@ -1,0 +1,673 @@
+import type { Request, Response, NextFunction } from 'express';
+import { In, Not } from 'typeorm';
+import { AppDataSource } from '../config/database';
+import {
+  AppError,
+  AuthRequest,
+  UserRole,
+  SessionStatus,
+  InspectionType,
+  PaymentComponentStatus,
+  PaymentComponentType,
+} from '../types';
+import {
+  CreateBookingSchema,
+  CreateContestRentalBookingSchema,
+  CancelBookingSchema,
+  ListMyBookingsSchema,
+  ListCafeBookingsSchema,
+} from '../validate';
+import * as bookingService from '../services/booking.service';
+import { bookContestRental } from '../services/contest-rental.service';
+import {
+  createCheckoutUrl,
+  mockConfirmPayment,
+  processRefund,
+  createPaymentComponents,
+  createCheckoutAdditionalPaymentUrl,
+} from '../services/payment.service';
+import type { BookingSnapshot } from '../services/payment.service';
+import { env } from '../config/env';
+import { Booking } from '../models/booking.entity';
+import { BookingParticipant } from '../models/booking-participant.entity';
+import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { Vehicle } from '../models/vehicle.entity';
+import { PaymentComponent } from '../models/payment-component.entity';
+import { FnbOrder } from '../models/fnb-order.entity';
+import { FnbOrderItem } from '../models/fnb-order-item.entity';
+import { Cafe } from '../models/cafe.entity';
+import { User } from '../models/user.entity';
+import { MenuItem } from '../models/menu-item.entity';
+import { TrackType } from '../models/track-type.entity';
+import { Session } from '../models/session.entity';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
+import { Inspection } from '../models/inspection.entity';
+import { DamageLineItem } from '../models/damage-line-item.entity';
+import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
+
+function getInitialPaymentReceiptComponents(
+  value: unknown,
+): Array<{ type: string; amount: number }> {
+  const snapshot = value as Partial<BookingSnapshot> | null;
+  if (!snapshot) return [];
+
+  const vehicles = Array.isArray(snapshot.vehicles) ? snapshot.vehicles : [];
+  const rentalFee = vehicles.reduce((sum, vehicle) => sum + Number(vehicle?.rental_fee ?? 0), 0);
+  return [
+    { type: PaymentComponentType.SLOT_FEE, amount: Number(snapshot.slot_fee_total ?? 0) },
+    { type: PaymentComponentType.RENTAL_FEE, amount: rentalFee },
+    { type: PaymentComponentType.FB_PREORDER, amount: Number(snapshot.fnb_total ?? 0) },
+    { type: 'PROMOTION_DISCOUNT', amount: -Number(snapshot.discount_amount ?? 0) },
+  ].filter((component) => Number.isFinite(component.amount) && component.amount !== 0);
+}
+
+export const bookingController = {
+  // POST /api/v1/bookings  [auth CUSTOMER]
+  async createBooking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = CreateBookingSchema.parse(req.body);
+      const result = await bookingService.createBooking(req.user!.userId, body);
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/contest-rental  [auth CUSTOMER]  (WF-A)
+  async createContestRental(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const body = CreateContestRentalBookingSchema.parse(req.body);
+      const result = await bookContestRental(body.contest_id, req.user!.userId, {
+        cafe_id: body.cafe_id,
+        slot_start: body.slot_start,
+        slot_end: body.slot_end,
+        track_config_id: body.track_config_id ?? null,
+        vehicle_catalog_id: body.vehicle_catalog_id ?? null,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/:id/checkout  [auth CUSTOMER]
+  async createCheckout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const bookingId = req.params.id;
+      const forwardedFor = req.headers['x-forwarded-for'];
+      const ipAddr =
+        (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : null) ||
+        req.ip ||
+        req.socket.remoteAddress ||
+        '127.0.0.1';
+
+      // Ownership check: verify booking belongs to this customer
+      const booking = await AppDataSource.getRepository(Booking).findOne({
+        where: { id: bookingId },
+      });
+      if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+      if (booking.customerId !== req.user!.userId) {
+        throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+
+      const result = await createCheckoutUrl(bookingId, ipAddr, req.body?.return_url);
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/:id/checkout-additional-payment  [auth CUSTOMER]
+  async createCheckoutAdditionalPayment(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const bookingId = req.params.id;
+      const forwardedFor = req.headers['x-forwarded-for'];
+      const ipAddr =
+        (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : null) ||
+        req.ip ||
+        req.socket.remoteAddress ||
+        '127.0.0.1';
+
+      const booking = await AppDataSource.getRepository(Booking).findOne({
+        where: { id: bookingId },
+      });
+      if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+      if (booking.customerId !== req.user!.userId) {
+        throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+
+      const result = await createCheckoutAdditionalPaymentUrl(
+        bookingId,
+        ipAddr,
+        req.body?.return_url,
+      );
+      res.status(201).json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings/payment-transactions/:txnRef  [auth]
+  // Resolves a payment-result URL to its booking and receipt data. The transaction
+  // reference is intentionally not parsed on the client because counter-payment
+  // references are abbreviated and cannot safely reconstruct a booking UUID.
+  async getPaymentTransaction(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const transaction = await AppDataSource.getRepository(PaymentTransaction).findOne({
+        where: { txnRef: req.params.txnRef },
+      });
+      if (!transaction || !transaction.bookingId) {
+        throw new AppError(
+          'Không tìm thấy giao dịch đặt lịch',
+          404,
+          'PAYMENT_TRANSACTION_NOT_FOUND',
+        );
+      }
+
+      const booking = await AppDataSource.getRepository(Booking).findOne({
+        where: { id: transaction.bookingId },
+      });
+      if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+      if (req.user!.role === UserRole.CUSTOMER && booking.customerId !== req.user!.userId) {
+        throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+
+      const rawRequest = (transaction.rawRequest ?? {}) as {
+        additionalPayment?: boolean;
+        components?: { id?: string; type?: string; amount?: number }[];
+      };
+      const isAdditionalPayment =
+        rawRequest.additionalPayment === true || transaction.txnRef.startsWith('ctr_');
+      const recordedComponents = Array.isArray(rawRequest.components)
+        ? rawRequest.components
+            .filter((component) => component.type && Number.isFinite(Number(component.amount)))
+            .map((component) => ({
+              id: component.id,
+              type: component.type!,
+              amount: Number(component.amount),
+            }))
+        : [];
+
+      // Older counter transactions did not snapshot their individual fees. Use
+      // current settled components only if they reconcile exactly, otherwise
+      // keep the receipt honest and show one generic counter-service line.
+      const settledCounterComponents =
+        recordedComponents.length === 0 && isAdditionalPayment
+          ? (
+              await AppDataSource.getRepository(PaymentComponent).find({
+                where: {
+                  bookingId: transaction.bookingId,
+                  status: PaymentComponentStatus.DISBURSED,
+                },
+              })
+            )
+              .filter((component) =>
+                [
+                  PaymentComponentType.FB_PREORDER,
+                  PaymentComponentType.FNB_ON_SITE,
+                  PaymentComponentType.EXTENSION_FEE,
+                  PaymentComponentType.DAMAGE_CHARGE,
+                ].includes(component.type),
+              )
+              .map((component) => ({
+                id: component.id,
+                type: component.type,
+                amount: Number(component.amount),
+              }))
+          : [];
+      const settledTotal = settledCounterComponents.reduce(
+        (sum, component) => sum + component.amount,
+        0,
+      );
+      const legacyInitialComponents =
+        recordedComponents.length === 0 && !isAdditionalPayment
+          ? getInitialPaymentReceiptComponents(booking.snapshot)
+          : [];
+      const legacyInitialTotal = legacyInitialComponents.reduce(
+        (sum, component) => sum + component.amount,
+        0,
+      );
+      const components =
+        recordedComponents.length > 0
+          ? recordedComponents
+          : settledCounterComponents.length > 0 && settledTotal === Number(transaction.amount)
+            ? settledCounterComponents
+            : isAdditionalPayment
+              ? [{ type: 'COUNTER_SERVICE', amount: Number(transaction.amount) }]
+              : legacyInitialComponents.length > 0 &&
+                  legacyInitialTotal === Number(transaction.amount)
+                ? legacyInitialComponents
+                : [{ type: 'BOOKING_PAYMENT', amount: Number(transaction.amount) }];
+
+      res.json({
+        success: true,
+        data: {
+          bookingId: transaction.bookingId,
+          amount: Number(transaction.amount),
+          status: transaction.status,
+          gateway: transaction.gateway,
+          type: transaction.type,
+          additionalPayment: isAdditionalPayment,
+          components,
+          createdAt: transaction.createdAt.toISOString(),
+          paidAt: transaction.updatedAt.toISOString(),
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings/:id  [auth]
+  async getBooking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const bookingId = req.params.id;
+      const booking = await AppDataSource.getRepository(Booking).findOne({
+        where: { id: bookingId },
+      });
+      if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+      // Access control: customer sees own bookings; staff/provider sees their cafe's bookings
+      const role = req.user!.role;
+      if (role === UserRole.CUSTOMER && booking.customerId !== req.user!.userId) {
+        throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+
+      // Load related records
+      const [rawParticipants, vehicles, components, fnbOrders, cafe, session, transactions] =
+        await Promise.all([
+          AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
+          AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
+          AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
+          AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
+          AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
+          AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
+          AppDataSource.getRepository(PaymentTransaction).find({
+            where: { bookingId },
+            order: { createdAt: 'ASC' },
+          }),
+        ]);
+
+      // Load damage breakdown from CHECK_OUT inspection (for PROVIDER/STAFF visibility)
+      let damageBreakdown: {
+        lineItems: {
+          id: string;
+          partType: string;
+          customPartName: string | null;
+          partsPrice: number;
+          laborPrice: number;
+          subtotal: number;
+        }[];
+        totalDamageCharge: number;
+        status: string;
+      } | null = null;
+      if (session) {
+        const checkoutInspection = await AppDataSource.getRepository(Inspection).findOne({
+          where: { sessionId: session.id, type: InspectionType.CHECK_OUT, damageNoted: true },
+        });
+        if (checkoutInspection) {
+          const lineItems = await AppDataSource.getRepository(DamageLineItem).find({
+            where: { inspectionId: checkoutInspection.id },
+          });
+          const totalDamageCharge =
+            lineItems.length > 0
+              ? lineItems.reduce(
+                  (sum, item) => sum + Number(item.partsPrice) + Number(item.laborPrice),
+                  0,
+                )
+              : Number(checkoutInspection.damageCostEstimate ?? 0) * 1.5;
+          const damageStatus =
+            booking.status === 'COMPLETED'
+              ? 'SETTLED'
+              : booking.status === 'AWAITING_PAYMENT'
+                ? 'AWAITING_PAYMENT'
+                : 'PENDING';
+          damageBreakdown = {
+            lineItems: lineItems.map((item) => ({
+              id: item.id,
+              partType: item.partType,
+              customPartName: item.customPartName,
+              partsPrice: Number(item.partsPrice),
+              laborPrice: Number(item.laborPrice),
+              subtotal: Number(item.partsPrice) + Number(item.laborPrice),
+            })),
+            totalDamageCharge,
+            status: damageStatus,
+          };
+        }
+      }
+
+      // Enrich participants: resolve name/phone for registered users
+      const userIds = rawParticipants.map((p) => p.userId).filter(Boolean) as string[];
+      const users = userIds.length
+        ? await AppDataSource.getRepository(User).findByIds(userIds)
+        : [];
+      const userMap = new Map(users.map((u) => [u.id, u]));
+      const participants = rawParticipants.map((p) => ({
+        ...p,
+        // A linked account owns its current profile details. guestName/phone is
+        // retained only for walk-in guests without an account.
+        resolvedName: userMap.get(p.userId ?? '')?.full_name ?? p.guestName ?? null,
+        resolvedPhone: userMap.get(p.userId ?? '')?.phone ?? p.guestPhone ?? null,
+      }));
+
+      // Enrich vehicles with catalog info (name, tier, identifier, color, image)
+      const vehicleIds = vehicles.map((v) => v.vehicleId);
+      const enrichedVehicles = await Promise.all(
+        vehicles.map(async (bv) => {
+          const vehicle = await AppDataSource.getRepository(Vehicle).findOne({
+            where: { id: bv.vehicleId },
+            relations: ['catalog'],
+          });
+          return {
+            ...bv,
+            catalogName: vehicle?.catalog?.name ?? null,
+            tier: vehicle?.catalog?.tier ?? null,
+            identifier: vehicle?.identifier ?? null,
+            color: vehicle?.color ?? null,
+            // A unit's own photo represents the assigned rental car more accurately.
+            // Use the catalog cover only when that unit has no photo.
+            coverImageUrl: vehicle?.distinctiveImageUrl ?? vehicle?.catalog?.coverImageUrl ?? null,
+          };
+        }),
+      );
+      void vehicleIds; // suppress unused warning
+
+      // Enrich FnbOrder items with menu item names across all orders (exclude CANCELLED)
+      let fnbItems: (FnbOrderItem & { itemName: string | null })[] = [];
+      let fnbOrdersWithItems: Array<{
+        id: string;
+        bookingId: string;
+        orderType: FnbOrder['orderType'];
+        status: FnbOrder['status'];
+        totalAmount: number;
+        items: (FnbOrderItem & { itemName: string | null })[];
+      }> = [];
+      let mergedFnbOrder = null;
+
+      const activeFnbOrders = fnbOrders.filter((o) => o.status !== 'CANCELLED');
+
+      if (activeFnbOrders.length > 0) {
+        const allRawItems: FnbOrderItem[] = [];
+        const itemsByOrderId = new Map<string, FnbOrderItem[]>();
+        for (const order of activeFnbOrders) {
+          const items = await AppDataSource.getRepository(FnbOrderItem).find({
+            where: { fnbOrderId: order.id },
+          });
+          allRawItems.push(...items);
+          itemsByOrderId.set(order.id, items);
+        }
+
+        const menuItemIds = [
+          ...new Set(
+            allRawItems.map((i) => i.menuItemId).filter((id): id is string => Boolean(id)),
+          ),
+        ];
+        const menuItems = menuItemIds.length
+          ? await AppDataSource.getRepository(MenuItem).findByIds(menuItemIds)
+          : [];
+        const menuMap = new Map(menuItems.map((m) => [m.id, m.name]));
+
+        fnbItems = allRawItems.map((i) => ({
+          ...i,
+          itemName: (i.menuItemId ? menuMap.get(i.menuItemId) : null) ?? i.itemNameSnapshot ?? null,
+        }));
+
+        const enrichedItemsByOrderId = new Map<
+          string,
+          (FnbOrderItem & { itemName: string | null })[]
+        >();
+        for (const [orderId, items] of itemsByOrderId) {
+          enrichedItemsByOrderId.set(
+            orderId,
+            items.map((item) => ({
+              ...item,
+              itemName:
+                (item.menuItemId ? menuMap.get(item.menuItemId) : null) ??
+                item.itemNameSnapshot ??
+                null,
+            })),
+          );
+        }
+
+        // Keep each order separate so clients can distinguish food and drinks
+        // paid at booking from items ordered during the session.
+        fnbOrdersWithItems = activeFnbOrders.map((order) => ({
+          id: order.id,
+          bookingId: order.bookingId,
+          orderType: order.orderType,
+          status: order.status,
+          totalAmount: Number(order.totalAmount),
+          items: enrichedItemsByOrderId.get(order.id) ?? [],
+        }));
+
+        // Retained temporarily for older clients that still expect a merged list.
+        mergedFnbOrder = {
+          id: activeFnbOrders[0].id,
+          bookingId,
+          orderType: 'MERGED',
+          totalAmount: activeFnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
+          status: 'CONFIRMED',
+          items: fnbItems,
+        };
+      }
+
+      // Backfill payment components if booking is confirmed but components are missing
+      if (
+        ['CONFIRMED', 'COMPLETED', 'NO_SHOW'].includes(booking.status) &&
+        components.length === 0 &&
+        booking.snapshot
+      ) {
+        const paymentSnapshot = booking.snapshot as unknown as BookingSnapshot;
+        await createPaymentComponents(booking, paymentSnapshot, vehicles);
+        components.push(
+          ...(await AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } })),
+        );
+      }
+
+      // Resolve track type name: snapshot first, then DB lookup
+      const snapshot = booking.snapshot as Record<string, unknown> | null;
+      let trackTypeName: string | null = (snapshot?.track_type_name as string) ?? null;
+      if (!trackTypeName && booking.trackTypeId) {
+        const tt = await AppDataSource.getRepository(TrackType).findOne({
+          where: { id: booking.trackTypeId },
+        });
+        trackTypeName = tt?.name ?? null;
+      }
+
+      res.json({
+        success: true,
+        data: {
+          ...booking,
+          participants,
+          vehicles: enrichedVehicles,
+          payment_components: components,
+          financial_summary: buildBookingFinancialSummary(
+            components,
+            transactions,
+            Number(booking.discountAmount) || 0,
+          ),
+          payment_transactions: transactions.map((t) => ({
+            id: t.id,
+            type: t.type,
+            gateway: t.gateway,
+            txnRef: t.txnRef,
+            amount: Number(t.amount),
+            status: t.status,
+            createdAt: t.createdAt,
+          })),
+          fnb_orders: fnbOrdersWithItems,
+          fnb_order: mergedFnbOrder,
+          cafe: cafe ? { name: cafe.name, address: cafe.address, city: cafe.city } : null,
+          track_type_name: trackTypeName,
+          session: session
+            ? {
+                id: session.id,
+                status: session.status,
+                plannedEndAt: session.plannedEndAt,
+                actualStartAt: session.actualStartAt,
+                actualEndAt: session.actualEndAt,
+              }
+            : null,
+          damage_breakdown: damageBreakdown,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings  [auth CUSTOMER]
+  async listMyBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const query = ListMyBookingsSchema.parse(req.query);
+      let qb = AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .leftJoin(Cafe, 'c', 'c.id = b.cafeId')
+        .select([
+          'b.id',
+          'b.customerId',
+          'b.cafeId',
+          'b.playMode',
+          'b.status',
+          'b.slotStart',
+          'b.slotEnd',
+          'b.paymentExpiresAt',
+          'b.snapshot',
+          'b.createdAt',
+          'b.updatedAt',
+        ])
+        .addSelect('c.name', 'cafeName')
+        .where('b.customer_id = :customerId', { customerId: req.user!.userId })
+        .orderBy('b.slotStart', 'DESC')
+        .skip((query.page - 1) * query.limit)
+        .take(query.limit);
+
+      if (query.status) {
+        qb = qb.andWhere('b.status = :status', { status: query.status });
+      }
+      if (query.play_mode) {
+        qb = qb.andWhere('b.play_mode = :playMode', { playMode: query.play_mode });
+      }
+
+      // Tạo câu query đếm tổng số lượng phù hợp với filter status
+      let countQb = AppDataSource.getRepository(Booking)
+        .createQueryBuilder('b')
+        .where('b.customer_id = :customerId', { customerId: req.user!.userId });
+      if (query.status) {
+        countQb = countQb.andWhere('b.status = :status', { status: query.status });
+      }
+      if (query.play_mode) {
+        countQb = countQb.andWhere('b.play_mode = :playMode', { playMode: query.play_mode });
+      }
+
+      const [rawAndEntities, total] = await Promise.all([
+        qb.getRawAndEntities(),
+        countQb.getCount(),
+      ]);
+
+      const bookings = rawAndEntities.entities;
+      const rawResults = rawAndEntities.raw;
+
+      // Batch-fetch active sessions for these bookings
+      const bookingIds = bookings.map((b) => b.id);
+      const activeSessions =
+        bookingIds.length > 0
+          ? await AppDataSource.getRepository(Session).find({
+              where: {
+                bookingId: In(bookingIds),
+                status: Not(In([SessionStatus.COMPLETED, SessionStatus.CANCELLED])),
+              },
+              select: ['id', 'bookingId', 'status', 'plannedEndAt', 'actualStartAt'],
+            })
+          : [];
+
+      const sessionByBookingId = new Map(activeSessions.map((s) => [s.bookingId, s]));
+      const data = bookings.map((b, idx) => {
+        const sess = sessionByBookingId.get(b.id);
+        const raw = rawResults[idx];
+        return {
+          ...b,
+          cafe: raw?.cafeName ? { name: raw.cafeName } : null,
+          session: sess
+            ? {
+                id: sess.id,
+                status: sess.status,
+                plannedEndAt: sess.plannedEndAt,
+                actualStartAt: sess.actualStartAt,
+              }
+            : null,
+        };
+      });
+
+      res.json({ success: true, data, total, page: query.page, limit: query.limit });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/:id/cancel  [auth CUSTOMER, PROVIDER]
+  async cancelBooking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const bookingId = req.params.id;
+      const body = CancelBookingSchema.parse(req.body);
+      await bookingService.cancelBooking(bookingId, req.user!.userId, req.user!.role, body.reason);
+      const refund = await processRefund(bookingId, req.user!.role);
+      res.json({ success: true, data: { bookingId, refund } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/bookings/:id/mock-checkout  [auth CUSTOMER] [dev only]
+  async mockCheckout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (env.NODE_ENV === 'production') {
+        throw new AppError('Not available in production', 403, 'FORBIDDEN');
+      }
+      const result = await mockConfirmPayment(req.params.id);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/cafes/:cafeId/bookings  [auth PROVIDER, STAFF]
+  async listCafeBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cafeId = req.params.cafeId;
+      const query = ListCafeBookingsSchema.parse(req.query) as bookingService.ListCafeBookingsQuery;
+      const result = await bookingService.listCafeBookings(cafeId, query);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings/:id/qr  [public]
+  async getBookingQr(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id } = req.params;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(id)) {
+        return next(new AppError('Invalid booking ID format', 400, 'VALIDATION_ERROR'));
+      }
+      const QRCode = await import('qrcode');
+      const buffer = await QRCode.toBuffer(id, {
+        errorCorrectionLevel: 'M',
+        width: 256,
+        margin: 2,
+      });
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.send(buffer);
+    } catch (err) {
+      next(err);
+    }
+  },
+};

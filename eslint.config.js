@@ -40,6 +40,6 @@ module.exports = tseslint.config(
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', 'jest.config.ts', 'src/seeds/**'],
+    ignores: ['dist/**', 'node_modules/**', 'jest.config.ts'],
   },
 );

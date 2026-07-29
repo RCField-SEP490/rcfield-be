@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { AppError } from '../types';
 import { ZodError } from 'zod';
 import { logger } from '../config/logger';
@@ -18,11 +19,24 @@ export function errorMiddleware(
     return;
   }
 
+  if (err instanceof multer.MulterError) {
+    const isFileTooLarge = err.code === 'LIMIT_FILE_SIZE';
+    res.status(isFileTooLarge ? 413 : 400).json({
+      success: false,
+      code: err.code,
+      message: isFileTooLarge
+        ? 'Ảnh vượt quá dung lượng cho phép 5MB. Vui lòng nén ảnh hoặc chụp lại ảnh nhẹ hơn.'
+        : err.message,
+    });
+    return;
+  }
+
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       success: false,
       code: err.code ?? 'APP_ERROR',
       message: err.message,
+      ...(err.details ? { details: err.details } : {}),
     });
     return;
   }

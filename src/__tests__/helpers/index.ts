@@ -55,21 +55,50 @@ interface CreateCafeOptions {
   status?: 'PENDING' | 'ACTIVE' | 'SUSPENDED';
   track_types?: string[];
   byoc_capacity?: number;
+  slot_fee_rate?: number;
+  latitude?: number;
+  longitude?: number;
+  amenity_ids?: string[];
 }
 
 export async function createTestCafe(options: CreateCafeOptions = {}) {
-  const { status = 'ACTIVE', track_types = ['DRIFT', 'CIRCUIT'], byoc_capacity = 5 } = options;
+  const {
+    status = 'ACTIVE',
+    track_types = ['DRIFT', 'OBSTACLE'],
+    byoc_capacity = 5,
+    slot_fee_rate = 150000,
+    latitude = 10.7403,
+    longitude = 106.712,
+    amenity_ids = [],
+  } = options;
 
   const provider_id = options.provider_id ?? (await createTestUser({ role: UserRole.PROVIDER })).id;
 
-  const slug = `test-cafe-${Date.now()}`;
+  const slug = `test-cafe-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+
+  const dbTrackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
+  const trackTypeMap = new Map<string, string>(
+    dbTrackTypes.map((t: { id: string; code: string }) => [t.code, t.id]),
+  );
+  const mappedTrackIds = track_types
+    .map((codeOrUuid) => {
+      if (trackTypeMap.has(codeOrUuid)) {
+        return trackTypeMap.get(codeOrUuid)!;
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(codeOrUuid)) {
+        return codeOrUuid;
+      }
+      return trackTypeMap.get('DRIFT') || dbTrackTypes[0]?.id;
+    })
+    .filter(Boolean);
 
   const [cafe] = await AppDataSource.query(
     `INSERT INTO cafes
        (provider_id, name, slug, address, district, city,
         slot_fee_rate, status, track_types, byoc_capacity,
-        operating_hours)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        operating_hours, latitude, longitude, amenity_ids)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [
       provider_id,
@@ -78,14 +107,49 @@ export async function createTestCafe(options: CreateCafeOptions = {}) {
       '123 Test Street',
       'Quận 7',
       'Hồ Chí Minh',
-      150000,
+      slot_fee_rate,
       status,
-      track_types,
+      mappedTrackIds,
       byoc_capacity,
-      JSON.stringify({ mon: { open: '09:00', close: '22:00', is_closed: false } }),
+      JSON.stringify(
+        ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].reduce<Record<string, unknown>>(
+          (hours, day) => {
+            hours[day] = { open: '00:00', close: '24:00', is_closed: false };
+            return hours;
+          },
+          {},
+        ),
+      ),
+      latitude,
+      longitude,
+      amenity_ids,
     ],
   );
   return cafe;
+}
+
+interface CreateAmenityOptions {
+  title?: string;
+  description?: string | null;
+  icon?: string;
+  sort_order?: number;
+}
+
+export async function createTestAmenity(options: CreateAmenityOptions = {}) {
+  const {
+    title = 'Serious Inspection',
+    description = 'Khu kiểm tra xe',
+    icon = 'shield',
+    sort_order = 0,
+  } = options;
+
+  const [amenity] = await AppDataSource.query(
+    `INSERT INTO amenity_catalog (title, description, icon, sort_order)
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [title, description, icon, sort_order],
+  );
+  return amenity;
 }
 
 // ── Vehicles ─────────────────────────────────────────────────────────────────
@@ -100,13 +164,50 @@ interface CreateVehicleOptions {
 export async function createTestVehicle(options: CreateVehicleOptions) {
   const { cafe_id, tier = 'STANDARD', status = 'AVAILABLE', compatible_track_types = [] } = options;
 
+  const dbTrackTypes = await AppDataSource.query(`SELECT id, code FROM track_types`);
+  const trackTypeMap = new Map<string, string>(
+    dbTrackTypes.map((t: { id: string; code: string }) => [t.code, t.id]),
+  );
+  const mappedCompatTrackIds = compatible_track_types
+    .map((codeOrUuid) => {
+      if (trackTypeMap.has(codeOrUuid)) {
+        return trackTypeMap.get(codeOrUuid)!;
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(codeOrUuid)) {
+        return codeOrUuid;
+      }
+      return trackTypeMap.get('DRIFT') || dbTrackTypes[0]?.id;
+    })
+    .filter(Boolean);
+
+  // Insert catalog first
+  const [catalog] = await AppDataSource.query(
+    `INSERT INTO vehicle_catalogs
+       (cafe_id, name, tier, hourly_rate, security_deposit, damage_multiplier, compatible_track_types)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING *`,
+    [cafe_id, 'Traxxas Slash 4x4', tier, 50000, 500000, 1.0, mappedCompatTrackIds],
+  );
+
+  // Insert vehicle pointing to catalog
   const [vehicle] = await AppDataSource.query(
     `INSERT INTO vehicles
-       (cafe_id, name, tier, status, hourly_rate,
-        security_deposit, damage_multiplier, compatible_track_types)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       (cafe_id, catalog_id, status)
+     VALUES ($1,$2,$3)
      RETURNING *`,
-    [cafe_id, 'Traxxas Slash 4x4', tier, status, 50000, 500000, 1.0, compatible_track_types],
+    [cafe_id, catalog.id, status],
   );
-  return vehicle;
+
+  return {
+    ...vehicle,
+    id: vehicle.id,
+    catalog_id: catalog.id,
+    name: catalog.name,
+    tier: catalog.tier,
+    hourly_rate: catalog.hourly_rate,
+    security_deposit: catalog.security_deposit,
+    damage_multiplier: catalog.damage_multiplier,
+    compatible_track_types: catalog.compatible_track_types,
+  };
 }
