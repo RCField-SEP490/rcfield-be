@@ -16,6 +16,14 @@ import { createOpenApiSpec } from './config/swagger';
 import { errorMiddleware } from './middlewares/error.middleware';
 import { requestLogger } from './middlewares/logger.middleware';
 
+const swaggerDocsCsp: express.RequestHandler = (_req, res, next) => {
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://unpkg.com; font-src 'self' https: data:; connect-src 'self';",
+  );
+  next();
+};
+
 const app = express();
 
 app.set('trust proxy', 1);
@@ -38,9 +46,11 @@ app.post('/api/payments/vnpay/create-payment-url', authenticate, createVnpayPaym
 app.get('/api/payments/vnpay-return', handleVnpayReturn);
 app.get('/api/payments/vnpay-ipn', handleVnpayIpn);
 
+app.use('/api-docs.json', swaggerDocsCsp);
 app.get('/api-docs.json', (_req, res) => {
   res.json(createOpenApiSpec(app));
 });
+app.use('/api-docs', swaggerDocsCsp);
 app.get('/api-docs', (_req, res) => {
   res.type('html').send(`<!doctype html>
 <html lang="en">
