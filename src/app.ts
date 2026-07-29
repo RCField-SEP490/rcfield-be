@@ -3,7 +3,6 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
-import swaggerUi from 'swagger-ui-express';
 import { router } from './routes';
 import { vnpayRouter } from './routes/vnpay.routes';
 import {
@@ -16,6 +15,14 @@ import { authenticate } from './middlewares/auth.middleware';
 import { createOpenApiSpec } from './config/swagger';
 import { errorMiddleware } from './middlewares/error.middleware';
 import { requestLogger } from './middlewares/logger.middleware';
+
+const swaggerDocsCsp: express.RequestHandler = (_req, res, next) => {
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https://unpkg.com; font-src 'self' https: data:; connect-src 'self';",
+  );
+  next();
+};
 
 const app = express();
 
@@ -39,18 +46,44 @@ app.post('/api/payments/vnpay/create-payment-url', authenticate, createVnpayPaym
 app.get('/api/payments/vnpay-return', handleVnpayReturn);
 app.get('/api/payments/vnpay-ipn', handleVnpayIpn);
 
+app.use('/api-docs.json', swaggerDocsCsp);
 app.get('/api-docs.json', (_req, res) => {
   res.json(createOpenApiSpec(app));
 });
-app.use(
-  '/api-docs',
-  swaggerUi.serve,
-  swaggerUi.setup(undefined, {
-    swaggerOptions: {
-      url: '/api-docs.json',
-    },
-  }),
-);
+app.use('/api-docs', swaggerDocsCsp);
+app.get('/api-docs', (_req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RCField API Docs</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
+      crossorigin="anonymous"
+    />
+    <style>
+      body { margin: 0; background: #fafafa; }
+      .topbar { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js" crossorigin="anonymous"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: '/api-docs.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: 'BaseLayout',
+      });
+    </script>
+  </body>
+</html>`);
+});
 
 app.use(errorMiddleware);
 
