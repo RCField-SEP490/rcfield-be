@@ -41,6 +41,7 @@ export const env = {
     host: process.env.REDIS_HOST ?? 'localhost',
     port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
     password: process.env.REDIS_PASSWORD || undefined,
+    required: parseBoolean(process.env.REDIS_REQUIRED, true),
   },
 
   cloudinary: {
@@ -105,5 +106,9 @@ export const env = {
     verifyToken: process.env.FB_VERIFY_TOKEN ?? '',
     redirectUri: process.env.FB_REDIRECT_URI ?? '',
     encryptionKey: Buffer.from(process.env.CHANNEL_ENCRYPTION_KEY ?? '0'.repeat(64), 'hex'),
+  },
+
+  features: {
+    fbChatQueueEnabled: parseBoolean(process.env.FB_CHAT_QUEUE_ENABLED, true),
   },
 } as const;

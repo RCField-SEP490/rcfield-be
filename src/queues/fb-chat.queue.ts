@@ -13,12 +13,20 @@ const connection = {
   ...(env.redis.password && { password: env.redis.password }),
 };
 
-export const fbChatQueue = new Queue<FbChatJobData>('fb-chat', {
-  connection,
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 2000 },
-    removeOnComplete: { count: 100 },
-    removeOnFail: { count: 200 },
-  },
-});
+let fbChatQueue: Queue<FbChatJobData> | null = null;
+
+export function getFbChatQueue(): Queue<FbChatJobData> {
+  if (!fbChatQueue) {
+    fbChatQueue = new Queue<FbChatJobData>('fb-chat', {
+      connection,
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 200 },
+      },
+    });
+  }
+
+  return fbChatQueue;
+}

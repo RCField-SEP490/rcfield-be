@@ -11,10 +11,12 @@ import { startSubscriptionLifecycleJobs } from './jobs/subscription-lifecycle.jo
 import { scheduleBookingTimeout } from './jobs/booking-timeout.job';
 import { startPackageExpiryJob } from './jobs/package-expiry.job';
 import { startContestReminderJob } from './jobs/contest-reminder.job';
-import { fbChatWorker } from './workers/fb-chat.worker';
+import { startFbChatWorker, stopFbChatWorker } from './workers/fb-chat.worker';
 
 async function bootstrap() {
   try {
+    let redisReady = false;
+
     await AppDataSource.initialize();
     const hasPendingMigrations = await AppDataSource.showMigrations();
     if (hasPendingMigrations) {
@@ -32,8 +34,16 @@ async function bootstrap() {
 
     // Note: Database notification type column was migrated to VARCHAR(255), so pg_enum checks are no longer required.
 
-    await redis.connect();
-    logger.info('Redis', `Connected on port ${env.redis.port}`);
+    try {
+      await redis.connect();
+      redisReady = true;
+      logger.info('Redis', `Connected on port ${env.redis.port}`);
+    } catch (err) {
+      if (env.redis.required) {
+        throw err;
+      }
+      logger.warn('Redis', 'Connection failed; continuing in degraded mode', err);
+    }
 
     const httpServer = createServer(app);
     wsService.init(httpServer);
@@ -42,6 +52,13 @@ async function bootstrap() {
     scheduleBookingTimeout();
     startPackageExpiryJob();
     startContestReminderJob();
+    if (redisReady && env.features.fbChatQueueEnabled) {
+      startFbChatWorker();
+    } else if (!redisReady) {
+      logger.warn('FbChatWorker', 'Skipped startup because Redis is unavailable');
+    } else {
+      logger.warn('FbChatWorker', 'Skipped startup because FB_CHAT_QUEUE_ENABLED=false');
+    }
 
     httpServer.listen(env.PORT, () => {
       logger.server(`Running on http://localhost:${env.PORT}`);
@@ -49,7 +66,7 @@ async function bootstrap() {
 
     const shutdown = async () => {
       logger.server('Shutting down...');
-      await fbChatWorker.close();
+      await stopFbChatWorker();
       httpServer.close(() => process.exit(0));
     };
     process.once('SIGTERM', () => void shutdown());

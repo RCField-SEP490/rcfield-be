@@ -17,7 +17,7 @@ import {
 } from '../services/chat.service';
 import { FbMessengerFormatter } from '../services/fb-messenger.formatter';
 import { sendMessage, sendText, markSeen, typingOn } from '../services/fb-messenger.service';
-import { fbChatQueue } from '../queues/fb-chat.queue';
+import { getFbChatQueue } from '../queues/fb-chat.queue';
 
 interface FbWebhookPayload {
   object: string;
@@ -119,11 +119,15 @@ export function handleWebhookEvent(req: Request, res: Response): void {
 
   const payload = req.body as FbWebhookPayload;
   if (payload?.object !== 'page') return;
+  if (!env.features.fbChatQueueEnabled) {
+    logger.warn('Facebook Webhook', 'queue disabled; skipping webhook event processing');
+    return;
+  }
 
   for (const entry of payload.entry ?? []) {
     const pageId = entry.id;
     for (const event of entry.messaging ?? []) {
-      fbChatQueue
+      getFbChatQueue()
         .add('process', { event, pageId })
         .then((job) => {
           logger.info('Facebook Webhook', 'enqueued', {

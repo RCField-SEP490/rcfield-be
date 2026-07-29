@@ -36,24 +36,38 @@ async function withPsidLock<T>(pageId: string, psid: string, fn: () => Promise<T
   throw new Error(`PSID lock timeout: ${pageId}:${psid}`);
 }
 
-export const fbChatWorker = new Worker<FbChatJobData>(
-  'fb-chat',
-  async (job) => {
-    const { event, pageId } = job.data;
-    const psid = event.sender.id;
-    await withPsidLock(pageId, psid, () => processEvent(event, pageId));
-  },
-  {
-    connection,
-    concurrency: 10,
-    limiter: { max: 100, duration: 1000 },
-  },
-);
+let fbChatWorker: Worker<FbChatJobData> | null = null;
 
-fbChatWorker.on('completed', (job) => {
-  logger.info('FbChatWorker', 'job completed', { jobId: job.id });
-});
+export function startFbChatWorker(): Worker<FbChatJobData> {
+  if (fbChatWorker) return fbChatWorker;
 
-fbChatWorker.on('failed', (job, err) => {
-  logger.error('FbChatWorker', 'job failed', { jobId: job?.id, error: err.message });
-});
+  fbChatWorker = new Worker<FbChatJobData>(
+    'fb-chat',
+    async (job) => {
+      const { event, pageId } = job.data;
+      const psid = event.sender.id;
+      await withPsidLock(pageId, psid, () => processEvent(event, pageId));
+    },
+    {
+      connection,
+      concurrency: 10,
+      limiter: { max: 100, duration: 1000 },
+    },
+  );
+
+  fbChatWorker.on('completed', (job) => {
+    logger.info('FbChatWorker', 'job completed', { jobId: job.id });
+  });
+
+  fbChatWorker.on('failed', (job, err) => {
+    logger.error('FbChatWorker', 'job failed', { jobId: job?.id, error: err.message });
+  });
+
+  return fbChatWorker;
+}
+
+export async function stopFbChatWorker(): Promise<void> {
+  if (!fbChatWorker) return;
+  await fbChatWorker.close();
+  fbChatWorker = null;
+}
