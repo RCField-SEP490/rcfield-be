@@ -139,7 +139,95 @@ export async function purchasePackage(
   };
 }
 
-// ── activateCustomerPackage ───────────────────────────────────────────────────
+// ── getRepayUrl ───────────────────────────────────────────────────────────────
+
+/**
+ * Tạo lại VNPay payment URL cho một CustomerPackage đang PENDING_PAYMENT.
+ * - Tái sử dụng txnRef đã có (từ PaymentTransaction đang PENDING).
+ * - Nếu không tìm thấy tx, tạo txnRef mới để tránh trùng lặp.
+ */
+export async function getRepayUrl(
+  customerPackageId: string,
+  customerId: string,
+  ipAddr: string,
+  customReturnUrl?: string,
+): Promise<PurchasePackageResult> {
+  const cpRepo = AppDataSource.getRepository(CustomerPackage);
+  const cp = await cpRepo.findOne({ where: { id: customerPackageId, customerId } });
+
+  if (!cp)
+    throw new AppError(
+      'Gói không tồn tại hoặc không thuộc về bạn',
+      404,
+      'CUSTOMER_PACKAGE_NOT_FOUND',
+    );
+  if (cp.status !== CustomerPackageStatus.PENDING_PAYMENT) {
+    throw new AppError('Gói không ở trạng thái chờ thanh toán', 400, 'PACKAGE_NOT_PENDING');
+  }
+
+  const pkg = await AppDataSource.getRepository(Package).findOne({ where: { id: cp.packageId } });
+  if (!pkg) throw new AppError('Gói sản phẩm không tồn tại', 404, 'PACKAGE_NOT_FOUND');
+
+  // Tìm transaction PENDING đang liên kết
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  const existingTx = await txRepo.findOne({
+    where: { customerPackageId: cp.id, status: PaymentTransactionStatus.PENDING },
+  });
+
+  let txnRef: string;
+  if (existingTx) {
+    txnRef = existingTx.txnRef;
+  } else {
+    // Tạo txnRef mới nếu transaction cũ đã bị hủy hoặc không còn
+    txnRef = `pkg_${cp.id.replace(/-/g, '').substring(0, 20)}_${Date.now().toString().slice(-4)}`;
+    const newTx = txRepo.create({
+      bookingId: null,
+      customerPackageId: cp.id,
+      type: PaymentTransactionType.PAYMENT,
+      gateway: 'VNPAY',
+      txnRef,
+      amount: Number(pkg.price),
+      status: PaymentTransactionStatus.PENDING,
+      rawRequest: { customerId, packageId: pkg.id, repay: true },
+    });
+    await txRepo.save(newTx);
+  }
+
+  let paymentUrl: string;
+
+  if (env.vnpay.mockEnabled) {
+    await activateCustomerPackage(cp.id);
+    await txRepo.update(
+      { txnRef },
+      { status: PaymentTransactionStatus.SUCCESS, rawResponse: { mock: true, txnRef } },
+    );
+    const target = new URL('/payment/result', env.frontendUrl);
+    target.searchParams.set('status', 'success');
+    target.searchParams.set('txn_ref', txnRef);
+    target.searchParams.set('mock', '1');
+    paymentUrl = target.toString();
+    logger.info('CustomerPackageService', `mock repay confirmed customerPackageId=${cp.id}`);
+  } else {
+    paymentUrl = createPaymentUrl({
+      amount: Number(pkg.price),
+      txnRef,
+      orderInfo: `RCField package repay ${cp.id.substring(0, 8)}`,
+      ipAddr,
+      returnUrl: customReturnUrl,
+      bankCode: 'VNBANK',
+    });
+  }
+
+  logger.info('CustomerPackageService', `repay URL generated customerPackageId=${cp.id}`);
+
+  return {
+    customer_package_id: cp.id,
+    payment_url: paymentUrl,
+    txn_ref: txnRef,
+    amount: Number(pkg.price),
+    expires_at: cp.expiresAt.toISOString(),
+  };
+}
 
 /** Called from IPN — sets status=ACTIVE, recalculates expires_at from validDays */
 export async function activateCustomerPackage(
