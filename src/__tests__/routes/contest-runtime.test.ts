@@ -680,11 +680,11 @@ describe('Contest runtime routes', () => {
 
     const [booking] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO bookings
-         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount, contest_id)
        VALUES
-         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0)
+         ($1, $2, $3, 'RENTAL', 'CONTEST', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0, $4)
        RETURNING id`,
-      [customer.id, cafe.id, trackTypeId],
+      [customer.id, cafe.id, trackTypeId, contestId],
     );
 
     await AppDataSource.query(
@@ -732,11 +732,11 @@ describe('Contest runtime routes', () => {
 
     const [booking] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO bookings
-         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount, contest_id)
        VALUES
-         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0)
+         ($1, $2, $3, 'RENTAL', 'CONTEST', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0, $4)
        RETURNING id`,
-      [customer.id, cafe.id, trackTypeId],
+      [customer.id, cafe.id, trackTypeId, contestId],
     );
 
     await AppDataSource.query(

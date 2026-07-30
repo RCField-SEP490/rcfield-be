@@ -597,6 +597,7 @@ export const ContestBanLiftSchema = z.object({
 
 export const ContestCheckInSchema = z.object({
   checked_in_cafe_id: z.string().uuid(),
+  byoc_confirmed: z.boolean().optional(),
 });
 
 const FeaturedPopupBaseSchema = z.object({

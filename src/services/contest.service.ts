@@ -57,6 +57,7 @@ import { createContestRentalBooking, ContestRentalSlotInput } from './contest-re
 import { transition } from './booking.service';
 import { emailService } from './email.service';
 import { getContestPublicRuntimeSummary } from './contest-runtime.service';
+import { uploadImage } from './cloudinary.service';
 
 type ListContestsOptions = {
   page: number;
@@ -1324,6 +1325,17 @@ export async function createContestRegistration(
     if (!bookingVehicle) {
       throw new AppError('Vehicle không thuộc booking này', 400, 'BOOKING_VEHICLE_MISMATCH');
     }
+
+    // For rental-only contests, prefer contest-linked bookings. Plain bookings created
+    // outside the contest flow may violate resource locks or miss the contest window.
+    const vehiclePolicy = String(contest.vehicleRule?.vehicle_policy ?? 'RENTAL_ONLY');
+    if (vehiclePolicy === 'RENTAL_ONLY' && !booking.contestId) {
+      throw new AppError(
+        'Giải đấu bắt buộc thuê xe thông qua luồng contest; vui lòng chọn "Thuê xe tại quầy" hoặc dùng booking contest liên kết',
+        400,
+        'CONTEST_RENTAL_REQUIRES_CONTEST_BOOKING',
+      );
+    }
   } else {
     if (!body.byoc_vehicle_name?.trim()) {
       throw new AppError(
@@ -1846,6 +1858,7 @@ export async function checkInRegistration(
   registrationId: string,
   checkedInCafeId: string,
   viewer: Viewer,
+  byocConfirmed?: boolean,
 ) {
   const repo = AppDataSource.getRepository(ContestRegistration);
   const registration = await repo.findOne({ where: { id: registrationId } });
@@ -1918,6 +1931,32 @@ export async function checkInRegistration(
         'CONTEST_PARTICIPANT_BANNED',
       );
     }
+  }
+
+  // BYOC check-in guard: ensure the declared vehicle is present before allowing entry.
+  if (registration.vehicleSource === VehicleSource.BYOC) {
+    const declaration = registration.metadata?.byoc_declaration as
+      | { vehicle_name?: string | null }
+      | undefined;
+    if (!declaration?.vehicle_name?.trim()) {
+      throw new AppError(
+        'Khai báo xe cá nhân chưa đầy đủ; không thể check-in BYOC',
+        400,
+        'CONTEST_BYOC_DECLARATION_INVALID',
+      );
+    }
+    if (!byocConfirmed) {
+      throw new AppError(
+        'Cần xác nhận xe cá nhân đạt chuẩn trước khi check-in BYOC',
+        400,
+        'CONTEST_BYOC_CONFIRMATION_REQUIRED',
+      );
+    }
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      byoc_checked_in_confirmed_by: viewer.userId,
+      byoc_checked_in_confirmed_at: new Date().toISOString(),
+    };
   }
 
   registration.status = ContestRegistrationStatus.CHECKED_IN;
@@ -2191,4 +2230,36 @@ export async function disqualifyRegistration(
   });
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
+}
+
+export async function uploadContestBanner(
+  contestId: string,
+  viewer: Viewer,
+  file: { buffer: Buffer; mimetype: string },
+) {
+  const contest = await assertContestOperator(contestId, viewer);
+
+  const result = await uploadImage({
+    buffer: file.buffer,
+    folder: `rcfield/contests/${contest.providerId ?? 'unknown'}`,
+    publicIdPrefix: `contest-banner-${contest.id}`,
+  });
+
+  const previousBannerUrl = contest.bannerImageUrl;
+  contest.bannerImageUrl = result.url;
+  await AppDataSource.getRepository(Contest).save(contest);
+
+  await writeContestAudit({
+    contestId,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.banner_uploaded',
+    beforeJson: { banner_image_url: previousBannerUrl },
+    afterJson: { banner_image_url: result.url, public_id: result.publicId },
+  });
+
+  return {
+    banner_image_url: result.url,
+    public_id: result.publicId,
+  };
 }

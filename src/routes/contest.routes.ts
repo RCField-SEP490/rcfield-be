@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { contestController } from '../controllers/contest.controller';
 import {
   authenticate,
@@ -9,6 +10,11 @@ import {
 import { UserRole } from '../types';
 
 export const contestRouter = Router();
+
+const bannerUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 contestRouter.get('/contest-catalog/types', contestController.listContestTypes);
 contestRouter.get('/contest-catalog/formats', contestController.listContestFormats);
@@ -40,6 +46,14 @@ contestRouter.patch(
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.updateContest,
+);
+contestRouter.post(
+  '/contests/:contestId/banner',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  bannerUpload.single('file'),
+  contestController.uploadBanner,
 );
 contestRouter.post(
   '/contests/:contestId/open',

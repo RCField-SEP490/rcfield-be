@@ -312,6 +312,7 @@ export const contestController = {
         req.params.registrationId,
         body.checked_in_cafe_id,
         viewer,
+        body.byoc_confirmed,
       );
       res.json({ success: true, data });
     } catch (error) {
@@ -604,6 +605,25 @@ export const contestController = {
         slot,
       );
       res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async uploadBanner(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const file = req.file;
+      if (!file) throw new AppError('File là bắt buộc.', 400, 'FILE_REQUIRED');
+      const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/jpg']);
+      if (!allowed.has(file.mimetype)) {
+        throw new AppError('Chỉ hỗ trợ ảnh JPG, PNG, WEBP.', 422, 'UNSUPPORTED_FORMAT');
+      }
+      const data = await contestService.uploadContestBanner(req.params.contestId, viewer, {
+        buffer: file.buffer,
+        mimetype: file.mimetype,
+      });
+      res.status(201).json({ success: true, data });
     } catch (error) {
       next(error);
     }
