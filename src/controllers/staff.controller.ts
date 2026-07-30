@@ -529,4 +529,45 @@ export const staffController = {
       next(err);
     }
   },
+
+  // GET /api/v1/staff/packages/lookup [auth]
+  async lookupCustomerPackages(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const query = req.query.query;
+      if (typeof query !== 'string' || !query.trim()) {
+        throw new AppError('Từ khóa tìm kiếm không hợp lệ', 400, 'INVALID_QUERY');
+      }
+      const data = await staffService.lookupCustomerPackages(query, req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/packages/top-customers [auth]
+  async getTopCustomers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.getTopCustomersForCafe(req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/packages/search-customers [auth]
+  async searchCustomers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const query = req.query.query;
+      if (typeof query !== 'string' || !query.trim()) {
+        throw new AppError('Từ khóa tìm kiếm không hợp lệ', 400, 'INVALID_QUERY');
+      }
+      const data = await staffService.searchCustomersForCafe(query, req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
 };
