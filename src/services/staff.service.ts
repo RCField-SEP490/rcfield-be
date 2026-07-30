@@ -4654,17 +4654,30 @@ export async function lookupCustomerPackages(
   // 2. Tìm kiếm khách hàng theo SĐT / email / tên / UUID
   // Khách hàng đó phải từng mua ít nhất một gói (customer_packages) tại chi nhánh của staff
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanQuery);
-  const [customer] = await AppDataSource.query<
-    {
-      customerId: string;
-      fullName: string;
-      email: string;
-      phone: string | null;
-      avatarUrl: string | null;
-      trustScore: string;
-    }[]
-  >(
-    `SELECT 
+  let queryStr: string;
+  let params: any[];
+
+  if (isUuid) {
+    queryStr = `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.email AS "email",
+       u.phone AS "phone",
+       u.avatar_url AS "avatarUrl",
+       u.trust_score AS "trustScore"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND u.id = $1
+       AND EXISTS (
+         SELECT 1 FROM customer_packages cp
+         WHERE cp.customer_id = u.id
+           AND cp.cafe_id = $2
+       )
+     LIMIT 1`;
+    params = [cleanQuery, assignedCafeId];
+  } else {
+    queryStr = `SELECT 
        u.id AS "customerId",
        u.full_name AS "fullName",
        u.email AS "email",
@@ -4675,16 +4688,30 @@ export async function lookupCustomerPackages(
      WHERE u.role = 'CUSTOMER'
        AND u.deleted_at IS NULL
        AND (
-         ${isUuid ? `u.id = $1` : `u.phone = $1 OR u.email ILIKE $1 OR u.full_name ILIKE $1`}
+         u.phone ILIKE $1 
+         OR u.email ILIKE $1 
+         OR u.full_name ILIKE $1 
+         OR u.full_name ILIKE '% ' || $1
        )
        AND EXISTS (
          SELECT 1 FROM customer_packages cp
          WHERE cp.customer_id = u.id
            AND cp.cafe_id = $2
        )
-     LIMIT 1`,
-    [cleanQuery, assignedCafeId],
-  );
+     LIMIT 1`;
+    params = [`${cleanQuery}%`, assignedCafeId];
+  }
+
+  const [customer] = await AppDataSource.query<
+    {
+      customerId: string;
+      fullName: string;
+      email: string;
+      phone: string | null;
+      avatarUrl: string | null;
+      trustScore: string;
+    }[]
+  >(queryStr, params);
 
   if (!customer) {
     throw new AppError(
@@ -4771,9 +4798,7 @@ export async function lookupCustomerPackages(
   };
 }
 
-export async function getTopCustomersForCafe(
-  staffUserId: string,
-): Promise<
+export async function getTopCustomersForCafe(staffUserId: string): Promise<
   {
     customerId: string;
     fullName: string;
@@ -4861,6 +4886,7 @@ export async function searchCustomersForCafe(
          u.phone ILIKE $1 
          OR u.email ILIKE $1 
          OR u.full_name ILIKE $1
+         OR u.full_name ILIKE '% ' || $1
        )
        AND EXISTS (
          SELECT 1 FROM customer_packages cp
@@ -4868,7 +4894,7 @@ export async function searchCustomersForCafe(
            AND cp.cafe_id = $2
        )
      LIMIT 10`,
-    [`%${cleanQuery}%`, assignedCafeId],
+    [`${cleanQuery}%`, assignedCafeId],
   );
 
   return rows.map((row) => ({
