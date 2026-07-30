@@ -4622,3 +4622,286 @@ export async function updateMaintenanceStatus(
 
   return { success: true, logId, status };
 }
+
+export async function lookupCustomerPackages(
+  query: string,
+  staffUserId: string,
+): Promise<{
+  customer: {
+    id: string;
+    fullName: string;
+    phone: string | null;
+    email: string;
+    avatarUrl: string | null;
+    trustScore: number;
+  };
+  activeSubscriptions: any[];
+  purchasedPackages: any[];
+}> {
+  // 1. Lấy cafe_id mà staff được phân công
+  const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffUserId],
+  );
+
+  if (!assignment?.cafe_id) {
+    throw new AppError('Nhân viên chưa được gán vào chi nhánh nào', 403, 'STAFF_CAFE_NOT_ASSIGNED');
+  }
+
+  const assignedCafeId = assignment.cafe_id;
+  const cleanQuery = query.trim();
+
+  // 2. Tìm kiếm khách hàng theo SĐT / email / tên / UUID
+  // Khách hàng đó phải từng mua ít nhất một gói (customer_packages) tại chi nhánh của staff
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanQuery);
+  let queryStr: string;
+  let params: any[];
+
+  if (isUuid) {
+    queryStr = `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.email AS "email",
+       u.phone AS "phone",
+       u.avatar_url AS "avatarUrl",
+       u.trust_score AS "trustScore"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND u.id = $1
+       AND EXISTS (
+         SELECT 1 FROM customer_packages cp
+         WHERE cp.customer_id = u.id
+           AND cp.cafe_id = $2
+       )
+     LIMIT 1`;
+    params = [cleanQuery, assignedCafeId];
+  } else {
+    queryStr = `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.email AS "email",
+       u.phone AS "phone",
+       u.avatar_url AS "avatarUrl",
+       u.trust_score AS "trustScore"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND (
+         u.phone ILIKE $1 
+         OR u.email ILIKE $1 
+         OR u.full_name ILIKE $1 
+         OR u.full_name ILIKE '% ' || $1
+       )
+       AND EXISTS (
+         SELECT 1 FROM customer_packages cp
+         WHERE cp.customer_id = u.id
+           AND cp.cafe_id = $2
+       )
+     LIMIT 1`;
+    params = [`${cleanQuery}%`, assignedCafeId];
+  }
+
+  const [customer] = await AppDataSource.query<
+    {
+      customerId: string;
+      fullName: string;
+      email: string;
+      phone: string | null;
+      avatarUrl: string | null;
+      trustScore: string;
+    }[]
+  >(queryStr, params);
+
+  if (!customer) {
+    throw new AppError(
+      'Không tìm thấy khách hàng hoặc khách hàng không có gói dịch vụ nào tại cơ sở của bạn phụ trách.',
+      404,
+      'CUSTOMER_NOT_FOUND',
+    );
+  }
+
+  // 3. Lấy tất cả các gói customer_packages của khách hàng tại cafe_id này
+  const customerPackages = await AppDataSource.query<
+    {
+      customerPackageId: string;
+      packageName: string;
+      purchasedAt: Date;
+      expiresAt: Date | null;
+      slotsRemaining: number;
+      slotsTotal: number;
+      cafeId: string;
+      cafeName: string;
+      billingPeriod: string;
+      status: string;
+    }[]
+  >(
+    `SELECT 
+       cp.id AS "customerPackageId",
+       cp.package_name_snapshot AS "packageName",
+       cp.created_at AS "purchasedAt",
+       cp.expires_at AS "expiresAt",
+       cp.slots_remaining AS "slotsRemaining",
+       cp.slots_total AS "slotsTotal",
+       cp.cafe_id AS "cafeId",
+       c.name AS "cafeName",
+       p.billing_period AS "billingPeriod",
+       cp.status AS "status"
+     FROM customer_packages cp
+     JOIN packages p ON cp.package_id = p.id
+     LEFT JOIN cafes c ON cp.cafe_id = c.id
+     WHERE cp.customer_id = $1 
+       AND cp.cafe_id = $2`,
+    [customer.customerId, assignedCafeId],
+  );
+
+  // 4. Phân loại gói
+  const activeSubscriptions: any[] = [];
+  const purchasedPackages: any[] = [];
+
+  for (const cp of customerPackages) {
+    const isSubscription = cp.billingPeriod === 'WEEK' || cp.billingPeriod === 'MONTH';
+    const mappedItem = {
+      subscriptionId: cp.customerPackageId,
+      customerPackageId: cp.customerPackageId,
+      packageName: cp.packageName,
+      planName: cp.packageName,
+      expiresAt: cp.expiresAt ? cp.expiresAt.toISOString() : null,
+      purchasedAt: cp.purchasedAt.toISOString(),
+      remainingSessions: cp.slotsRemaining,
+      remainingSlots: cp.slotsRemaining,
+      totalSessions: cp.slotsTotal,
+      totalSlots: cp.slotsTotal,
+      cafeId: cp.cafeId,
+      cafeName: cp.cafeName,
+      status: cp.status,
+    };
+
+    if (isSubscription) {
+      activeSubscriptions.push(mappedItem);
+    } else {
+      purchasedPackages.push(mappedItem);
+    }
+  }
+
+  return {
+    customer: {
+      id: customer.customerId,
+      fullName: customer.fullName,
+      phone: customer.phone,
+      email: customer.email,
+      avatarUrl: customer.avatarUrl,
+      trustScore: Number(customer.trustScore),
+    },
+    activeSubscriptions,
+    purchasedPackages,
+  };
+}
+
+export async function getTopCustomersForCafe(staffUserId: string): Promise<
+  {
+    customerId: string;
+    fullName: string;
+    phone: string | null;
+    email: string;
+    avatarUrl: string | null;
+    playCount: number;
+  }[]
+> {
+  const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffUserId],
+  );
+
+  if (!assignment?.cafe_id) {
+    throw new AppError('Nhân viên chưa được gán vào chi nhánh nào', 403, 'STAFF_CAFE_NOT_ASSIGNED');
+  }
+
+  const assignedCafeId = assignment.cafe_id;
+
+  const rows = await AppDataSource.query<any[]>(
+    `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.phone AS "phone",
+       u.email AS "email",
+       u.avatar_url AS "avatarUrl",
+       COUNT(b.id) AS "playCount"
+     FROM bookings b
+     JOIN users u ON b.customer_id = u.id
+     WHERE b.cafe_id = $1
+       AND b.status = 'COMPLETED'
+       AND u.deleted_at IS NULL
+     GROUP BY u.id, u.full_name, u.phone, u.email, u.avatar_url
+     ORDER BY "playCount" DESC
+     LIMIT 5`,
+    [assignedCafeId],
+  );
+
+  return rows.map((row) => ({
+    customerId: row.customerId,
+    fullName: row.fullName,
+    phone: row.phone,
+    email: row.email,
+    avatarUrl: row.avatarUrl,
+    playCount: Number(row.playCount),
+  }));
+}
+
+export async function searchCustomersForCafe(
+  query: string,
+  staffUserId: string,
+): Promise<
+  {
+    customerId: string;
+    fullName: string;
+    phone: string | null;
+    email: string;
+    avatarUrl: string | null;
+  }[]
+> {
+  const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffUserId],
+  );
+
+  if (!assignment?.cafe_id) {
+    throw new AppError('Nhân viên chưa được gán vào chi nhánh nào', 403, 'STAFF_CAFE_NOT_ASSIGNED');
+  }
+
+  const assignedCafeId = assignment.cafe_id;
+  const cleanQuery = query.trim();
+
+  const rows = await AppDataSource.query<any[]>(
+    `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.phone AS "phone",
+       u.email AS "email",
+       u.avatar_url AS "avatarUrl"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND (
+         u.phone ILIKE $1 
+         OR u.email ILIKE $1 
+         OR u.full_name ILIKE $1
+         OR u.full_name ILIKE '% ' || $1
+       )
+       AND EXISTS (
+         SELECT 1 FROM customer_packages cp
+         WHERE cp.customer_id = u.id
+           AND cp.cafe_id = $2
+       )
+     LIMIT 10`,
+    [`${cleanQuery}%`, assignedCafeId],
+  );
+
+  return rows.map((row) => ({
+    customerId: row.customerId,
+    fullName: row.fullName,
+    phone: row.phone,
+    email: row.email,
+    avatarUrl: row.avatarUrl,
+  }));
+}

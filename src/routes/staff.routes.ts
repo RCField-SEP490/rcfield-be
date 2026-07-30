@@ -8,6 +8,9 @@ export const staffRouter = Router();
 staffRouter.use(authenticate, authorize(UserRole.STAFF));
 
 staffRouter.get('/today-bookings', staffController.todayBookings);
+staffRouter.get('/packages/lookup', staffController.lookupCustomerPackages);
+staffRouter.get('/packages/top-customers', staffController.getTopCustomers);
+staffRouter.get('/packages/search-customers', staffController.searchCustomers);
 staffRouter.get('/bookings', staffController.bookings);
 staffRouter.post('/bookings', staffController.createWalkInBooking);
 staffRouter.get('/fnb-orders', staffController.getFnbOrders);
