@@ -18,6 +18,7 @@ import {
   BookingStatus,
   ContestRegistrationStatus,
   ContestStatus,
+  ContestEntryFeePaymentStatus,
   VehicleStatus,
 } from '../types';
 import { createBooking, CreateBookingBody } from './booking.service';
@@ -450,6 +451,45 @@ export async function syncContestRegistrationOnVehicleCheckIn(
       status: previousStatus,
     });
     return { registrationId: registration.id, synced: false, previousStatus };
+  }
+
+  // Mirror the checkInRegistration guards (contest/registrations.ts): only sync
+  // when the contest is check-in ready and the entry fee is settled. Failures
+  // skip the mirror without blocking the vehicle check-in.
+  const guardFail = (reason: string): ContestCheckinSyncResult => {
+    logger.warn('ContestRental', 'syncContestRegistrationOnVehicleCheckIn: guard failed', {
+      bookingId: booking.id,
+      registrationId: registration.id,
+      reason,
+    });
+    return { registrationId: registration.id, synced: false, previousStatus };
+  };
+
+  const contest = await AppDataSource.getRepository(Contest).findOne({
+    where: { id: booking.contestId },
+  });
+  if (!contest) {
+    return guardFail('contest_not_found');
+  }
+  if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
+    return guardFail('contest_not_checkin_ready');
+  }
+  const now = new Date();
+  if (contest.startsAt && now < contest.startsAt) {
+    return guardFail('contest_checkin_not_started');
+  }
+  if (contest.endsAt && now > contest.endsAt) {
+    return guardFail('contest_checkin_ended');
+  }
+  if (
+    Number(contest.entryFee ?? 0) > 0 &&
+    ![
+      ContestEntryFeePaymentStatus.MARKED_PAID,
+      ContestEntryFeePaymentStatus.WAIVED,
+      ContestEntryFeePaymentStatus.PENDING_REVIEW,
+    ].includes(registration.paymentStatus)
+  ) {
+    return guardFail('entry_fee_pending');
   }
 
   registration.status = ContestRegistrationStatus.CHECKED_IN;

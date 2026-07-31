@@ -1,4 +1,4 @@
-import { ContestRegistrationStatus } from '../../types';
+import { ContestRegistrationStatus, ContestStatus } from '../../types';
 
 const mockRegistrationRepo = {
   findOne: jest.fn(),
@@ -8,6 +8,9 @@ const mockAuditRepo = {
   create: jest.fn((payload: unknown) => payload),
   save: jest.fn(),
 };
+const mockContestRepo = {
+  findOne: jest.fn(),
+};
 
 jest.mock('../../config/database', () => ({
   AppDataSource: {
@@ -15,6 +18,7 @@ jest.mock('../../config/database', () => ({
       const name = entity?.name ?? '';
       if (name === 'ContestRegistration') return mockRegistrationRepo;
       if (name === 'ContestAuditLog') return mockAuditRepo;
+      if (name === 'Contest') return mockContestRepo;
       throw new Error(`Unexpected repository: ${name}`);
     }),
   },
@@ -37,6 +41,14 @@ const contestBooking = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Default: a check-in ready contest (RUNNING, inside the time window, no entry fee).
+  mockContestRepo.findOne.mockResolvedValue({
+    id: 'contest-1',
+    status: ContestStatus.RUNNING,
+    startsAt: new Date(Date.now() - 60 * 60 * 1000),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000),
+    entryFee: 0,
+  });
 });
 
 describe('syncContestRegistrationOnVehicleCheckIn', () => {
@@ -127,6 +139,64 @@ describe('syncContestRegistrationOnVehicleCheckIn', () => {
       synced: false,
       previousStatus: ContestRegistrationStatus.PENDING,
     });
+    expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps registration CONFIRMED when the entry fee is unpaid', async () => {
+    mockContestRepo.findOne.mockResolvedValue({
+      id: 'contest-1',
+      status: ContestStatus.RUNNING,
+      startsAt: new Date(Date.now() - 60 * 60 * 1000),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      entryFee: 100000,
+    });
+    const registration = {
+      id: 'reg-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'PENDING_PAYMENT',
+    };
+    mockRegistrationRepo.findOne.mockResolvedValue(registration);
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(registration.status).toBe(ContestRegistrationStatus.CONFIRMED);
+    expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps registration CONFIRMED when the contest is not check-in ready', async () => {
+    mockContestRepo.findOne.mockResolvedValue({
+      id: 'contest-1',
+      status: ContestStatus.OPEN,
+      startsAt: new Date(Date.now() - 60 * 60 * 1000),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      entryFee: 0,
+    });
+    const registration = {
+      id: 'reg-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'NOT_REQUIRED',
+    };
+    mockRegistrationRepo.findOne.mockResolvedValue(registration);
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(registration.status).toBe(ContestRegistrationStatus.CONFIRMED);
     expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
     expect(mockAuditRepo.save).not.toHaveBeenCalled();
   });
