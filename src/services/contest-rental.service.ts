@@ -492,11 +492,26 @@ export async function syncContestRegistrationOnVehicleCheckIn(
     return guardFail('entry_fee_pending');
   }
 
-  registration.status = ContestRegistrationStatus.CHECKED_IN;
-  registration.checkedInCafeId = booking.cafeId;
-  registration.checkedInBy = staffContext.staffUserId;
-  registration.checkedInAt = new Date();
-  await contestRegistrationRepo(em).save(registration);
+  // Atomic CONFIRMED → CHECKED_IN transition: if a concurrent check-in (e.g.
+  // staff check-in via contest service) already moved the row, 0 rows are
+  // affected and we skip with a warn instead of overwriting.
+  const updateResult = await contestRegistrationRepo(em).update(
+    { id: registration.id, status: ContestRegistrationStatus.CONFIRMED },
+    {
+      status: ContestRegistrationStatus.CHECKED_IN,
+      checkedInCafeId: booking.cafeId,
+      checkedInBy: staffContext.staffUserId,
+      checkedInAt: () => 'NOW()',
+    },
+  );
+  if (!updateResult.affected) {
+    logger.warn('ContestRental', 'syncContestRegistrationOnVehicleCheckIn: concurrent check-in', {
+      bookingId: booking.id,
+      registrationId: registration.id,
+      status: previousStatus,
+    });
+    return { registrationId: registration.id, synced: false, previousStatus };
+  }
 
   const auditRepo = contestAuditLogRepo(em);
   await auditRepo.save(
@@ -507,7 +522,7 @@ export async function syncContestRegistrationOnVehicleCheckIn(
       actorRole: 'STAFF',
       eventType: 'registration.checked_in',
       beforeJson: { status: previousStatus },
-      afterJson: { status: registration.status, checkedInCafeId: booking.cafeId },
+      afterJson: { status: ContestRegistrationStatus.CHECKED_IN, checkedInCafeId: booking.cafeId },
       metadata: { booking_id: booking.id, trigger: 'vehicle_check_in' },
     }),
   );

@@ -571,6 +571,13 @@ export const CreateContestRegistrationSchema = z.object({
   byoc_vehicle_notes: z.string().trim().max(1000).optional(),
 });
 
+export const UpdateByocDeclarationSchema = z.object({
+  vehicle_name: z.string().trim().min(2).max(120),
+  vehicle_brand: z.string().trim().min(1).max(120).nullable().optional(),
+  vehicle_class: z.string().trim().min(1).max(120).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
 export const ContestRegistrationActionSchema = z.object({
   reason: z.string().trim().max(1000).optional(),
 });

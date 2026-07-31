@@ -607,6 +607,65 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
   return mapped;
 }
 
+export interface UpdateByocDeclarationBody {
+  vehicle_name: string;
+  vehicle_brand?: string | null;
+  vehicle_class?: string | null;
+  notes?: string | null;
+}
+
+export async function updateByocDeclaration(
+  registrationId: string,
+  viewer: Viewer,
+  body: UpdateByocDeclarationBody,
+) {
+  if (viewer.role !== UserRole.CUSTOMER) {
+    throw new AppError('Chỉ customer mới được cập nhật khai báo xe', 403, 'FORBIDDEN');
+  }
+  const repo = AppDataSource.getRepository(ContestRegistration);
+  const registration = await repo.findOne({ where: { id: registrationId } });
+  if (!registration)
+    throw new AppError('Registration không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
+  if (registration.userId !== viewer.userId) {
+    throw new AppError('Forbidden', 403, 'FORBIDDEN');
+  }
+  if (registration.vehicleSource !== VehicleSource.BYOC) {
+    throw new AppError('Registration không phải xe cá nhân (BYOC)', 400, 'INVALID_VEHICLE_SOURCE');
+  }
+  if (registration.status !== ContestRegistrationStatus.PENDING) {
+    throw new AppError(
+      'Chỉ được cập nhật khai báo xe khi registration đang PENDING',
+      400,
+      'INVALID_REGISTRATION_STATE',
+    );
+  }
+
+  const beforeDeclaration =
+    (registration.metadata?.byoc_declaration as Record<string, unknown> | undefined) ?? null;
+  const declaration = {
+    vehicle_name: body.vehicle_name,
+    vehicle_brand: body.vehicle_brand ?? null,
+    vehicle_class: body.vehicle_class ?? null,
+    notes: body.notes ?? null,
+  };
+  registration.metadata = {
+    ...(registration.metadata ?? {}),
+    byoc_declaration: declaration,
+  };
+  await repo.save(registration);
+  await writeContestAudit({
+    contestId: registration.contestId,
+    registrationId: registration.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'registration.byoc_declaration_updated',
+    beforeJson: { byoc_declaration: beforeDeclaration },
+    afterJson: { byoc_declaration: declaration },
+  });
+  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
+  return mapped;
+}
+
 export async function cancelRegistration(registrationId: string, viewer: Viewer, reason?: string) {
   const repo = AppDataSource.getRepository(ContestRegistration);
   const registration = await repo.findOne({ where: { id: registrationId } });
@@ -802,38 +861,72 @@ export async function checkInRegistration(
         'CONTEST_BYOC_INSPECTION_REQUIRED',
       );
     }
-    registration.metadata = {
-      ...(registration.metadata ?? {}),
+  }
+
+  // Build the merged metadata first so the BYOC inspection payload is persisted
+  // in the same atomic UPDATE as the status transition.
+  let mergedMetadata = registration.metadata ?? {};
+  if (registration.vehicleSource === VehicleSource.BYOC) {
+    mergedMetadata = {
+      ...mergedMetadata,
       byoc_checked_in_confirmed_by: viewer.userId,
       byoc_checked_in_confirmed_at: new Date().toISOString(),
       byoc_inspection: {
-        photos: byocPhotos,
-        checklist: byocChecklist,
+        photos: byocInspection?.photos ?? [],
+        checklist: byocInspection?.checklist ?? [],
         checked_at: new Date().toISOString(),
       },
     };
   }
 
-  registration.status = ContestRegistrationStatus.CHECKED_IN;
-  registration.checkedInCafeId = checkedInCafeId;
-  registration.checkedInBy = viewer.userId;
-  registration.checkedInAt = new Date();
-  await repo.save(registration);
+  // Atomic CONFIRMED → CHECKED_IN transition: guards against concurrent
+  // check-ins (e.g. staff check-in racing the vehicle check-in sync). If no row
+  // is returned, someone else transitioned the registration first.
+  const updateRaw = await AppDataSource.query(
+    `UPDATE contest_registrations
+     SET status = $2, checked_in_cafe_id = $3, checked_in_by = $4, checked_in_at = NOW(),
+         metadata = $5::jsonb, updated_at = NOW()
+     WHERE id = $1 AND status = $6
+     RETURNING id`,
+    [
+      registration.id,
+      ContestRegistrationStatus.CHECKED_IN,
+      checkedInCafeId,
+      viewer.userId,
+      JSON.stringify(mergedMetadata),
+      ContestRegistrationStatus.CONFIRMED,
+    ],
+  );
+  const updatedRows: { id: string }[] = Array.isArray(updateRaw[0]) ? updateRaw[0] : updateRaw;
+  if (!updatedRows.length) {
+    throw new AppError(
+      'Registration phải ở trạng thái CONFIRMED',
+      400,
+      'REGISTRATION_NOT_CONFIRMED',
+    );
+  }
+
+  const savedRegistration = await repo.findOne({ where: { id: registration.id } });
+  if (!savedRegistration)
+    throw new AppError('Registration không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
+
   await writeContestAudit({
     contestId: contest.id,
-    registrationId: registration.id,
+    registrationId: savedRegistration.id,
     actorId: viewer.userId,
     actorRole: viewer.role,
     eventType: 'registration.checked_in',
-    afterJson: { status: registration.status, checkedInCafeId },
+    afterJson: { status: savedRegistration.status, checkedInCafeId },
   });
   await sendContestRegistrationStatusNotification(
-    registration,
+    savedRegistration,
     NotificationType.CONTEST_CHECKIN_CONFIRMED,
     'Check-in giai dau thanh cong',
     'Ban da check-in thanh cong. He thong se cap nhat bracket va luot thi tiep theo cho ban.',
   );
-  const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: true });
+  const [mapped] = await mapContestRegistrationsPayload([savedRegistration], {
+    includeContest: true,
+  });
   return mapped;
 }
 export async function createContestEntryPaymentUrl(

@@ -18,6 +18,7 @@ export {
   cleanupContestRentalBookingOnRegistrationCancel,
   rejectRegistration,
   cancelRegistration,
+  updateByocDeclaration,
   lookupRegistrationByCode,
   checkInRegistration,
   createContestEntryPaymentUrl,

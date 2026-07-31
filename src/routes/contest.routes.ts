@@ -253,6 +253,12 @@ contestRouter.post(
   authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
   contestController.cancelRegistration,
 );
+contestRouter.patch(
+  '/contest-registrations/:registrationId/byoc-declaration',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  contestController.updateByocDeclaration,
+);
 contestRouter.post(
   '/contest-registrations/:registrationId/check-in',
   authenticate,

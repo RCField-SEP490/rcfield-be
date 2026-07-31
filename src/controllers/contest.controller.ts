@@ -20,6 +20,7 @@ import {
   CreateContestRegistrationSchema,
   CreateContestSchema,
   MyContestRegistrationsQuerySchema,
+  UpdateByocDeclarationSchema,
   UpdateContestSchema,
 } from '../validate';
 import * as contestService from '../services/contest.service';
@@ -281,6 +282,21 @@ export const contestController = {
         req.params.registrationId,
         viewer,
         body.reason,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateByocDeclaration(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = UpdateByocDeclarationSchema.parse(req.body);
+      const data = await contestService.updateByocDeclaration(
+        req.params.registrationId,
+        viewer,
+        body,
       );
       res.json({ success: true, data });
     } catch (error) {
