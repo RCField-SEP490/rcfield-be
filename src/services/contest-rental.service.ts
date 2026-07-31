@@ -1,6 +1,8 @@
 import { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
+import { redis } from '../config/redis';
+import { env } from '../config/env';
 import { Booking } from '../models/booking.entity';
 import { Cafe } from '../models/cafe.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
@@ -48,6 +50,39 @@ export interface ContestPricingAdjustments {
 }
 
 const DEPOSIT_MODES: readonly ContestDepositMode[] = ['FULL', 'REDUCED', 'WAIVED'];
+
+function getSlotStarts(slotStart: Date, slotEnd: Date, slotDurationMinutes: number): Date[] {
+  const slotStarts: Date[] = [];
+  const slotDurationMs = slotDurationMinutes * 60 * 1000;
+  for (let cursor = slotStart.getTime(); cursor < slotEnd.getTime(); cursor += slotDurationMs) {
+    slotStarts.push(new Date(cursor));
+  }
+  return slotStarts;
+}
+
+function contestRentalVehicleLockKey(vehicleId: string, slotStart: Date): string {
+  return `contest:rental:vehicle:${vehicleId}:${slotStart.getTime()}`;
+}
+
+async function acquireContestRentalVehicleLock(
+  vehicleId: string,
+  slotStart: Date,
+  ttlSeconds = env.platform.slotLockTtlSeconds,
+): Promise<boolean> {
+  const key = contestRentalVehicleLockKey(vehicleId, slotStart);
+  const result = await redis.set(key, '1', 'EX', ttlSeconds, 'NX');
+  return result === 'OK';
+}
+
+async function releaseContestRentalVehicleLocks(
+  vehicleId: string,
+  slotStarts: Date[],
+): Promise<void> {
+  const keys = slotStarts.map((s) => contestRentalVehicleLockKey(vehicleId, s));
+  if (keys.length > 0) {
+    await redis.del(keys);
+  }
+}
 
 function toNonNegativeInt(value: unknown, fallback: number): number {
   const num = Number(value);
@@ -242,6 +277,40 @@ export async function createContestRentalBooking(
     );
   }
 
+  // Prevent booking a rental slot that spans far longer than the actual race window.
+  // The slot should be for contest use, not a disguised all-day rental.
+  const raceDurationMs = contest.endsAt.getTime() - contest.startsAt.getTime();
+  const maxSlotDurationMs =
+    raceDurationMs + (policy.slot_window.before_min + policy.slot_window.after_min) * 60_000;
+  if (slotEnd.getTime() - slotStart.getTime() > maxSlotDurationMs) {
+    throw new AppError(
+      'Khung giờ thuê xe quá dài so với thời gian thi đấu',
+      400,
+      'CONTEST_SLOT_TOO_LONG',
+    );
+  }
+
+  // Hold a short-lived lock on the chosen vehicle so concurrent contest-rental
+  // requests do not pick the same unit before createBooking acquires the slot locks.
+  const slotDurationMinutes =
+    Number.isInteger(cafe.slotDurationMinutes) && cafe.slotDurationMinutes > 0
+      ? cafe.slotDurationMinutes
+      : Math.max(1, Math.ceil((slotEnd.getTime() - slotStart.getTime()) / 60000));
+  const rentalSlotStarts = getSlotStarts(slotStart, slotEnd, slotDurationMinutes);
+  const lockedRentalSlotStarts: Date[] = [];
+  for (const rentalSlotStart of rentalSlotStarts) {
+    const locked = await acquireContestRentalVehicleLock(vehicle.id, rentalSlotStart);
+    if (!locked) {
+      await releaseContestRentalVehicleLocks(vehicle.id, lockedRentalSlotStarts);
+      throw new AppError(
+        'Xe vừa được chọn bởi người khác, vui lòng chọn xe khác',
+        409,
+        'VEHICLE_UNAVAILABLE',
+      );
+    }
+    lockedRentalSlotStarts.push(rentalSlotStart);
+  }
+
   const bookingBody: CreateBookingBody = {
     cafe_id: slot.cafe_id,
     play_mode: BookingMode.RENTAL,
@@ -257,20 +326,24 @@ export async function createContestRentalBooking(
     source: BookingSource.CONTEST,
   };
 
-  const bookingResult = await createBooking(customerId, bookingBody);
+  try {
+    const bookingResult = await createBooking(customerId, bookingBody);
 
-  return {
-    booking_id: bookingResult.booking_id,
-    vehicle_id: vehicle.id,
-    status: bookingResult.status,
-    payment_expires_at: bookingResult.payment_expires_at,
-    total_amount: bookingResult.total_amount,
-    breakdown: {
-      slot_fee: bookingResult.breakdown.slot_fee,
-      rental_fee: bookingResult.breakdown.rental_fee,
-      total: bookingResult.breakdown.total,
-    },
-  };
+    return {
+      booking_id: bookingResult.booking_id,
+      vehicle_id: vehicle.id,
+      status: bookingResult.status,
+      payment_expires_at: bookingResult.payment_expires_at,
+      total_amount: bookingResult.total_amount,
+      breakdown: {
+        slot_fee: bookingResult.breakdown.slot_fee,
+        rental_fee: bookingResult.breakdown.rental_fee,
+        total: bookingResult.breakdown.total,
+      },
+    };
+  } finally {
+    await releaseContestRentalVehicleLocks(vehicle.id, lockedRentalSlotStarts);
+  }
 }
 
 async function resolveContestRentalVehicle(

@@ -598,6 +598,29 @@ export const ContestBanLiftSchema = z.object({
 export const ContestCheckInSchema = z.object({
   checked_in_cafe_id: z.string().uuid(),
   byoc_confirmed: z.boolean().optional(),
+  byoc_inspection: z
+    .object({
+      photos: z
+        .array(
+          z.object({
+            url: z.string().url(),
+            angle: z.string().trim().max(50).optional(),
+            notes: z.string().trim().max(500).optional(),
+          }),
+        )
+        .optional(),
+      checklist: z
+        .array(
+          z.object({
+            itemKey: z.string().trim().min(1).max(50),
+            itemLabel: z.string().trim().min(1).max(120),
+            status: z.enum(['OK', 'NOT_OK', 'NA']).optional(),
+            note: z.string().trim().max(500).optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 const FeaturedPopupBaseSchema = z.object({

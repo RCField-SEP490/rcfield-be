@@ -153,7 +153,7 @@ describe('Contest registration validation', () => {
       .expect(400);
   });
 
-  it('allows check-in when BYOC declaration is complete', async () => {
+  it('allows check-in when BYOC declaration and inspection are complete', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
@@ -185,11 +185,66 @@ describe('Contest registration validation', () => {
     const res = await request(app)
       .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ checked_in_cafe_id: cafe.id, byoc_confirmed: true })
+      .send({
+        checked_in_cafe_id: cafe.id,
+        byoc_confirmed: true,
+        byoc_inspection: {
+          photos: [
+            { url: 'https://example.com/byoc-body.jpg', angle: 'body' },
+            { url: 'https://example.com/byoc-power.jpg', angle: 'power_system' },
+          ],
+          checklist: [
+            { itemKey: 'body', itemLabel: 'Thân xe', status: 'OK' },
+            { itemKey: 'power_system', itemLabel: 'Hệ thống nguồn', status: 'OK' },
+            { itemKey: 'wheels', itemLabel: 'Bánh xe', status: 'OK' },
+          ],
+        },
+      })
       .expect(200);
 
     expect(res.body.success).toBe(true);
     expect(res.body.data.status).toBe('CHECKED_IN');
+  });
+
+  it('rejects check-in when BYOC inspection is incomplete', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const token = generateToken(provider);
+
+    const now = new Date();
+    const startsAt = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+    const endsAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
+    const { contestId } = await createContestFixture(provider.id, cafe.id, {
+      status: 'RUNNING',
+      vehiclePolicy: 'BYOC_ONLY',
+      startsAt,
+      endsAt,
+    });
+
+    const registration = await createRegistrationFixture(contestId, customer.id, {
+      status: 'CONFIRMED',
+      vehicleSource: 'BYOC',
+      metadata: {
+        byoc_declaration: {
+          vehicle_name: 'Yokomo MD 2.0',
+        },
+      },
+    });
+
+    await request(app)
+      .post(`/api/v1/contest-registrations/${registration.id}/check-in`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        checked_in_cafe_id: cafe.id,
+        byoc_confirmed: true,
+        byoc_inspection: {
+          photos: [{ url: 'https://example.com/byoc-body.jpg', angle: 'body' }],
+          checklist: [{ itemKey: 'body', itemLabel: 'Thân xe', status: 'OK' }],
+        },
+      })
+      .expect(400);
   });
 
   it('rejects plain booking for RENTAL_ONLY contest', async () => {

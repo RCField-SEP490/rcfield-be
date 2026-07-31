@@ -1485,9 +1485,6 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
           (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
           0,
         );
-      } else {
-        // Fallback for legacy records without line items
-        totalDamageCharge = (Number(insp.damageCostEstimate) || 0) * 1.5;
       }
     }
 
@@ -1838,80 +1835,108 @@ export async function submitInspection(
   }
 
   if (inspection.type === InspectionType.CHECK_IN) {
-    // Auto-confirm CHECK_IN — staff and customer are co-located, no async confirmation needed
-    inspection.customerConfirmed = true;
-    inspection.customerConfirmedAt = new Date();
-    await AppDataSource.getRepository(Inspection).save(inspection);
+    // Auto-confirm BYOC only — the customer is responsible for their own vehicle.
+    // For rental vehicles, the customer must review the handover photos before the
+    // inspection is marked as confirmed (customerConfirmInspection). The session and
+    // vehicle must stay in the pre-handover state until then.
+    if (isByoc) {
+      inspection.customerConfirmed = true;
+      inspection.customerConfirmedAt = new Date();
+      await AppDataSource.getRepository(Inspection).save(inspection);
 
-    session.status = SessionStatus.ACTIVE;
-    session.actualStartAt = new Date();
-    await AppDataSource.getRepository(Session).save(session);
+      session.status = SessionStatus.ACTIVE;
+      session.actualStartAt = new Date();
+      await AppDataSource.getRepository(Session).save(session);
 
-    for (const sv of activeSVs) {
-      sv.status = SessionVehicleStatus.IN_USE;
-      await svRepo.save(sv);
-      if (sv.vehicleId) {
-        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-          status: VehicleStatus.IN_USE,
-        });
-        // Emit realtime cập nhật trạng thái xe cho provider
-        try {
-          const [vehMeta] = await AppDataSource.query<
-            { cafe_id: string; identifier: string; provider_id: string }[]
-          >(
-            `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
-            [sv.vehicleId],
-          );
-          if (vehMeta) {
-            wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
-              vehicleId: sv.vehicleId,
-              cafeId: vehMeta.cafe_id,
-              identifier: vehMeta.identifier,
-              status: 'IN_USE',
-            });
+      for (const sv of activeSVs) {
+        sv.status = SessionVehicleStatus.IN_USE;
+        await svRepo.save(sv);
+        if (sv.vehicleId) {
+          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+            status: VehicleStatus.IN_USE,
+          });
+          // Emit realtime cập nhật trạng thái xe cho provider
+          try {
+            const [vehMeta] = await AppDataSource.query<
+              { cafe_id: string; identifier: string; provider_id: string }[]
+            >(
+              `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
+              [sv.vehicleId],
+            );
+            if (vehMeta) {
+              wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
+                vehicleId: sv.vehicleId,
+                cafeId: vehMeta.cafe_id,
+                identifier: vehMeta.identifier,
+                status: 'IN_USE',
+              });
+            }
+          } catch {
+            /* non-critical */
           }
-        } catch {
-          /* non-critical */
         }
       }
     }
 
-    if (session.checkedInBy) {
+    // Notify the customer to review the handover inspection. For rentals this is
+    // required before customerConfirmed is set; for BYOC it is informational.
+    if (booking?.customerId) {
       try {
         await createNotification(
-          session.checkedInBy,
-          NotificationType.CUSTOMER_CHECKIN_CONFIRMED,
-          'Xe đã được bàn giao',
-          `Biên bản bàn giao xe phiên chơi ${session.id.substring(0, 8)} đã được xác nhận.`,
-          { sessionId, inspectionId: inspection.id, sessionStatus: session.status },
+          booking.customerId,
+          isByoc
+            ? NotificationType.CUSTOMER_CHECKIN_CONFIRMED
+            : ('SESSION_CHECKIN_INSPECTION' as NotificationType),
+          isByoc ? 'Xe đã được bàn giao' : 'Biên bản bàn giao xe',
+          isByoc
+            ? `Biên bản bàn giao xe phiên chơi ${session.id.substring(0, 8)} đã được xác nhận.`
+            : 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
+          {
+            sessionId,
+            inspectionId: inspection.id,
+            sessionStatus: session.status,
+            inspectionType: inspection.type,
+            route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+          },
         );
-        wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKIN_CONFIRMED', {
+        wsService.pushToUser(
+          booking.customerId,
+          isByoc ? 'CUSTOMER_CHECKIN_CONFIRMED' : 'SESSION_CHECKIN_INSPECTION',
+          {
+            sessionId,
+            inspectionId: inspection.id,
+            sessionStatus: session.status,
+            inspectionType: inspection.type,
+            route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+          },
+        );
+      } catch (err) {
+        logger.error(
+          'InspectionNotification',
+          'Failed to notify customer check-in inspection',
+          err,
+        );
+      }
+    }
+
+    // Thông báo realtime cho Provider (owner của cafe)
+    try {
+      const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
+        `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
+        [session.cafeId],
+      );
+      if (cafeRow) {
+        wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
           sessionId,
-          inspectionId: inspection.id,
           sessionStatus: session.status,
         });
-        // Thông báo realtime cho Provider (owner của cafe)
-        try {
-          const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-            `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-            [session.cafeId],
-          );
-          if (cafeRow) {
-            wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-              sessionId,
-              sessionStatus: session.status,
-            });
-          }
-        } catch (notifyErr) {
-          logger.error(
-            'InspectionNotification',
-            'Failed to push SESSION_STATUS_CHANGED to provider',
-            notifyErr,
-          );
-        }
-      } catch (err) {
-        logger.error('InspectionNotification', 'Failed to notify staff check-in confirmation', err);
       }
+    } catch (notifyErr) {
+      logger.error(
+        'InspectionNotification',
+        'Failed to push SESSION_STATUS_CHANGED to provider',
+        notifyErr,
+      );
     }
   } else {
     // CHECK_OUT — set CHECKING_OUT or COMPLETED (for BYOC)
@@ -2036,25 +2061,6 @@ export async function submitInspection(
     (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
     0,
   );
-
-  // Create DAMAGE_CHARGE PENDING component immediately so the customer can pay via VNPAY
-  // while session is still CHECKING_OUT. settleSessionCheckoutBilling will skip re-creation
-  // via its !exists guard when the session is eventually confirmed/completed.
-  if (inspection.type === InspectionType.CHECK_OUT && totalDamageCharge > 0 && booking) {
-    const compRepo = AppDataSource.getRepository(PaymentComponent);
-    const existing = await compRepo.findOne({
-      where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
-    });
-    if (!existing) {
-      const damageComp = compRepo.create({
-        bookingId: booking.id,
-        type: PaymentComponentType.DAMAGE_CHARGE,
-        amount: totalDamageCharge,
-        status: PaymentComponentStatus.PENDING,
-      });
-      await compRepo.save(damageComp);
-    }
-  }
 
   logger.info('Staff', 'submitInspection', {
     sessionId,
@@ -3052,13 +3058,9 @@ export async function customerConfirmInspection(
   if (!inspection)
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
 
-  // CHECK_IN is auto-confirmed by staff submission — customer action not needed
-  if (inspection.type === InspectionType.CHECK_IN) {
-    throw new AppError(
-      'Biên bản bàn giao xe đã được xác nhận tự động khi nhân viên gửi',
-      400,
-      'ALREADY_CONFIRMED',
-    );
+  // Reject duplicate confirmations.
+  if (inspection.customerConfirmed) {
+    throw new AppError('Biên bản đã được xác nhận', 400, 'ALREADY_CONFIRMED');
   }
 
   inspection.customerConfirmed = agreed;
@@ -3068,6 +3070,110 @@ export async function customerConfirmInspection(
       (inspection.damageDescription || '') + ` [KH phản hồi: ${disagreementNote}]`;
   }
   await inspRepo.save(inspection);
+
+  if (inspection.type === InspectionType.CHECK_IN) {
+    const isByoc = booking.playMode === BookingMode.BYOC;
+
+    // For rental vehicles, the session and vehicle were kept in the pre-handover state
+    // until the customer reviews the handover inspection. Now we either release the
+    // vehicle (agreed) or revert it (disputed).
+    if (!isByoc) {
+      const svRepo = AppDataSource.getRepository(SessionVehicle);
+      const activeSVs = await svRepo.find({ where: { sessionId } });
+
+      if (agreed) {
+        session.status = SessionStatus.ACTIVE;
+        session.actualStartAt = new Date();
+        await AppDataSource.getRepository(Session).save(session);
+
+        for (const sv of activeSVs) {
+          sv.status = SessionVehicleStatus.IN_USE;
+          await svRepo.save(sv);
+          if (sv.vehicleId) {
+            await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+              status: VehicleStatus.IN_USE,
+            });
+            try {
+              const [vehMeta] = await AppDataSource.query<
+                { cafe_id: string; identifier: string; provider_id: string }[]
+              >(
+                `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
+                [sv.vehicleId],
+              );
+              if (vehMeta) {
+                wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
+                  vehicleId: sv.vehicleId,
+                  cafeId: vehMeta.cafe_id,
+                  identifier: vehMeta.identifier,
+                  status: 'IN_USE',
+                });
+              }
+            } catch {
+              /* non-critical */
+            }
+          }
+        }
+      } else {
+        // Customer disputed the handover. Revert the vehicle so staff can resolve before
+        // releasing it to the customer.
+        for (const sv of activeSVs) {
+          sv.status = SessionVehicleStatus.ASSIGNED;
+          await svRepo.save(sv);
+          if (sv.vehicleId) {
+            await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+              status: VehicleStatus.AVAILABLE,
+            });
+          }
+        }
+      }
+    }
+
+    // For BYOC we only record the customer's agreement/dispute. The session is
+    // already ACTIVE so the customer can drive, but the confirmation timestamp is now
+    // audit evidence for any later damage dispute.
+    if (session.checkedInBy) {
+      const title = agreed
+        ? 'Khách hàng đã xác nhận bàn giao xe'
+        : 'Khách hàng phản hồi bàn giao xe';
+      const body = agreed
+        ? `Khách hàng vừa xác nhận biên bản bàn giao xe của phiên chơi ${session.id.substring(0, 8)}.`
+        : `Khách hàng vừa phản hồi biên bản bàn giao xe của phiên chơi ${session.id.substring(0, 8)}.`;
+      try {
+        await createNotification(
+          session.checkedInBy,
+          agreed
+            ? NotificationType.CUSTOMER_CHECKIN_CONFIRMED
+            : NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
+          title,
+          body,
+          { sessionId, inspectionId, sessionStatus: session.status },
+        );
+        wsService.pushToUser(
+          session.checkedInBy,
+          agreed ? 'CUSTOMER_CHECKIN_CONFIRMED' : 'CUSTOMER_CHECKOUT_CONFIRMED',
+          {
+            sessionId,
+            inspectionId,
+            sessionStatus: session.status,
+          },
+        );
+      } catch (err) {
+        logger.error(
+          'InspectionNotification',
+          'Failed to notify staff about customer check-in confirmation',
+          err,
+        );
+      }
+    }
+
+    return {
+      sessionId,
+      inspectionId,
+      type: inspection.type,
+      customerConfirmed: inspection.customerConfirmed,
+      sessionStatus: session.status,
+    };
+  }
 
   if (agreed) {
     session.status = SessionStatus.COMPLETED;
@@ -3764,10 +3870,6 @@ export async function settleSessionCheckoutBilling(
         (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
         0,
       );
-    } else {
-      // Fallback for legacy records without line items
-      const estimatedCost = Number(inspection.damageCostEstimate) || 0;
-      damageCharge = estimatedCost * 1.5;
     }
   }
 

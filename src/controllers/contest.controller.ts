@@ -313,6 +313,7 @@ export const contestController = {
         body.checked_in_cafe_id,
         viewer,
         body.byoc_confirmed,
+        body.byoc_inspection,
       );
       res.json({ success: true, data });
     } catch (error) {
