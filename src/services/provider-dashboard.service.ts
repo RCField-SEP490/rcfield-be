@@ -685,9 +685,15 @@ export async function getProviderBranchOperations(
 
 export async function getProviderRecentBookings(
   providerId: string,
-  limit: number = 8,
+  limit?: number,
+  from?: string,
+  to?: string,
+  cafeId?: string,
 ): Promise<RecentBookingItem[]> {
-  const query = `
+  const fromDate = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const toDate = to || new Date().toISOString();
+
+  let query = `
     SELECT
       b.id AS "bookingId",
       c.name AS "cafeName",
@@ -705,9 +711,18 @@ export async function getProviderRecentBookings(
     JOIN cafes c ON c.id = b.cafe_id
     JOIN users u ON u.id = b.customer_id
     WHERE c.provider_id = $1
+      AND b.slot_start >= $2::timestamptz
+      AND b.slot_start <= $3::timestamptz
+      AND ($4::uuid IS NULL OR b.cafe_id = $4)
     ORDER BY b.created_at DESC
-    LIMIT $2
   `;
+
+  const params: (string | number | null)[] = [providerId, fromDate, toDate, cafeId || null];
+
+  if (limit) {
+    query += ` LIMIT $5`;
+    params.push(limit);
+  }
 
   const rows = await AppDataSource.query<
     {
@@ -719,7 +734,7 @@ export async function getProviderRecentBookings(
       status: string;
       totalCharged: number;
     }[]
-  >(query, [providerId, limit]);
+  >(query, params);
 
   return rows.map((row) => ({
     bookingId: row.bookingId,
