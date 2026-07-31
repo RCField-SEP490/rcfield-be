@@ -4799,9 +4799,9 @@ export async function lookupCustomerPackages(
        AND u.deleted_at IS NULL
        AND u.id = $1
        AND EXISTS (
-         SELECT 1 FROM customer_packages cp
-         WHERE cp.customer_id = u.id
-           AND cp.cafe_id = $2
+         SELECT 1 FROM bookings b
+         WHERE b.customer_id = u.id
+           AND b.cafe_id = $2
        )
      LIMIT 1`;
     params = [cleanQuery, assignedCafeId];
@@ -4823,9 +4823,9 @@ export async function lookupCustomerPackages(
          OR u.full_name ILIKE '% ' || $1
        )
        AND EXISTS (
-         SELECT 1 FROM customer_packages cp
-         WHERE cp.customer_id = u.id
-           AND cp.cafe_id = $2
+         SELECT 1 FROM bookings b
+         WHERE b.customer_id = u.id
+           AND b.cafe_id = $2
        )
      LIMIT 1`;
     params = [`${cleanQuery}%`, assignedCafeId];
@@ -5018,9 +5018,9 @@ export async function searchCustomersForCafe(
          OR u.full_name ILIKE '% ' || $1
        )
        AND EXISTS (
-         SELECT 1 FROM customer_packages cp
-         WHERE cp.customer_id = u.id
-           AND cp.cafe_id = $2
+         SELECT 1 FROM bookings b
+         WHERE b.customer_id = u.id
+           AND b.cafe_id = $2
        )
      LIMIT 10`,
     [`${cleanQuery}%`, assignedCafeId],
