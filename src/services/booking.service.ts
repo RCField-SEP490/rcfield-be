@@ -505,6 +505,12 @@ export interface CreateBookingBody {
   customer_package_id?: string;
   contest_id?: string;
   source?: BookingSource;
+  /**
+   * Internal only (not part of the API schema): skip the duplicate PENDING
+   * booking shortcut. Used by the contest rental flow, which must always create
+   * its own contest-linked booking instead of reusing a plain PENDING one.
+   */
+  skipPendingReuse?: boolean;
 }
 
 export interface BookingBreakdown {
@@ -564,14 +570,16 @@ export async function createBooking(
   // This prevents a legacy pending booking outside a newly tightened window from
   // being resumed through the duplicate-request shortcut.
   const bookingRepo = AppDataSource.getRepository(Booking);
-  const existingBooking = await bookingRepo.findOne({
-    where: {
-      customerId,
-      cafeId: body.cafe_id,
-      slotStart,
-      status: BookingStatus.PENDING,
-    },
-  });
+  const existingBooking = body.skipPendingReuse
+    ? null
+    : await bookingRepo.findOne({
+        where: {
+          customerId,
+          cafeId: body.cafe_id,
+          slotStart,
+          status: BookingStatus.PENDING,
+        },
+      });
   if (existingBooking) {
     if (existingBooking.paymentExpiresAt > new Date()) {
       return {
@@ -1183,10 +1191,10 @@ export async function cancelBooking(
  * registration (PENDING/CONFIRMED → CANCELLED) with an audit log entry and a
  * customer notification. Mirrors cancelRegistration in contest/registrations.
  */
-async function cancelContestRegistrationOnBookingCancel(
+export async function cancelContestRegistrationOnBookingCancel(
   booking: Booking,
   cancelledBy: string,
-  role: UserRole,
+  role: UserRole | 'SYSTEM',
 ): Promise<void> {
   const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
     where: {

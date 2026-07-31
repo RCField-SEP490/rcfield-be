@@ -1,4 +1,6 @@
+import { In } from 'typeorm';
 import { AppDataSource } from '../../config/database';
+import { CafeTrackConfig } from '../../models/cafe-track-config.entity';
 import { ContestCafe } from '../../models/contest-cafe.entity';
 import { ContestFormat } from '../../models/contest-format.entity';
 import { ContestRegistration } from '../../models/contest-registration.entity';
@@ -32,6 +34,23 @@ import {
 } from './guards';
 import { cleanUpContestOnCancel } from './registration-side-effects';
 import { CreateContestBody, ListContestsOptions, UpdateContestBody } from './types';
+
+/** Participating cafes must actually operate a track of the contest's track type. */
+async function assertParticipatingCafesSupportTrackType(
+  cafeIds: string[],
+  trackTypeId: string,
+): Promise<void> {
+  const trackConfigs = await AppDataSource.getRepository(CafeTrackConfig).find({
+    where: { cafeId: In(cafeIds), isActive: true },
+  });
+  if (!trackConfigs.some((config) => config.trackTypeId === trackTypeId)) {
+    throw new AppError(
+      'Các chi nhánh tham gia không có đường đua loại này',
+      400,
+      'CONTEST_TRACK_TYPE_UNAVAILABLE',
+    );
+  }
+}
 
 export async function listContests(options: ListContestsOptions) {
   const repo = AppDataSource.getRepository(Contest);
@@ -163,6 +182,10 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
     resolveCatalogOrThrow(body.contest_type_id, body.contest_format_id, body.contest_template_id),
   ]);
   if (!trackType) throw new AppError('Track type không hợp lệ', 400, 'TRACK_TYPE_INVALID');
+  await assertParticipatingCafesSupportTrackType(
+    branches.map((branch) => branch.id),
+    trackType.id,
+  );
   const resourceLocks = await resolveContestResourceLocks(body.participating_cafe_ids, body.config);
   await assertNoContestBookingConflicts({
     startsAt: body.starts_at,
@@ -321,6 +344,7 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   if (!nextTrackTypeId) {
     throw new AppError('Contest chưa có track type hợp lệ', 400, 'TRACK_TYPE_INVALID');
   }
+  await assertParticipatingCafesSupportTrackType(nextParticipatingCafeIds, nextTrackTypeId);
   const nextRuntimeFormat = getRuntimeFormatFromCatalog(
     catalog?.contestFormat.code ??
       (

@@ -22,6 +22,7 @@ import {
   VehicleStatus,
 } from '../types';
 import { createBooking, CreateBookingBody } from './booking.service';
+import { getActiveContestBan } from './contest.helpers';
 import { ContestCafe } from '../models/contest-cafe.entity';
 
 // ── Contest rental pricing policy (bridge Contest ↔ Booking) ────────────────
@@ -325,6 +326,7 @@ export async function createContestRentalBooking(
     track_type_id: trackTypeId ?? contest.trackTypeId ?? undefined,
     contest_id: contest.id,
     source: BookingSource.CONTEST,
+    skipPendingReuse: true,
   };
 
   try {
@@ -490,6 +492,16 @@ export async function syncContestRegistrationOnVehicleCheckIn(
     ].includes(registration.paymentStatus)
   ) {
     return guardFail('entry_fee_pending');
+  }
+  if (contest.providerId) {
+    const activeBan = await getActiveContestBan(
+      registration.userId,
+      contest.providerId,
+      contest.id,
+    );
+    if (activeBan) {
+      return guardFail('participant_banned');
+    }
   }
 
   // Atomic CONFIRMED → CHECKED_IN transition: if a concurrent check-in (e.g.

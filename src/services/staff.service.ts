@@ -1765,11 +1765,17 @@ export async function submitInspection(
     where: { sessionId, type: inspectionType },
     order: { createdAt: 'DESC' },
   });
-  if (
-    existingInspection &&
-    (inspectionType === InspectionType.CHECK_IN || !existingInspection.customerConfirmedAt)
-  ) {
-    return existingInspection;
+  if (existingInspection) {
+    if (inspectionType === InspectionType.CHECK_IN) {
+      // Allow a fresh CHECK_IN inspection only after the customer disputed the
+      // previous one (mirrors the CHECK_OUT re-inspection-after-dispute flow).
+      const wasDisputed =
+        existingInspection.customerConfirmedAt != null &&
+        existingInspection.customerConfirmed === false;
+      if (!wasDisputed) return existingInspection;
+    } else if (!existingInspection.customerConfirmedAt) {
+      return existingInspection;
+    }
   }
 
   let sessionVehicleId = null;
@@ -3057,6 +3063,27 @@ export async function customerConfirmInspection(
   const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
   if (!inspection)
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
+
+  // The inspection can only be confirmed while the session is in the matching
+  // lifecycle state: CHECK_IN during handover (session CHECKED_IN), CHECK_OUT
+  // during return (session CHECKING_OUT).
+  if (inspection.type === InspectionType.CHECK_IN && session.status !== SessionStatus.CHECKED_IN) {
+    throw new AppError(
+      'Phiên chạy không ở trạng thái chờ xác nhận bàn giao xe',
+      400,
+      'INVALID_SESSION_STATE',
+    );
+  }
+  if (
+    inspection.type === InspectionType.CHECK_OUT &&
+    session.status !== SessionStatus.CHECKING_OUT
+  ) {
+    throw new AppError(
+      'Phiên chạy không ở trạng thái chờ xác nhận trả xe',
+      400,
+      'INVALID_SESSION_STATE',
+    );
+  }
 
   // Reject duplicate confirmations.
   if (inspection.customerConfirmed) {

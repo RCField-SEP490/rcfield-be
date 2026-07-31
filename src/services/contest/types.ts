@@ -35,8 +35,6 @@ export type CreateContestBody = {
 export type UpdateContestBody = Partial<CreateContestBody>;
 
 export type CreateRegistrationBody = {
-  booking_id?: string;
-  vehicle_id?: string;
   vehicle_source: VehicleSource;
   rental_slot?: {
     cafe_id: string;

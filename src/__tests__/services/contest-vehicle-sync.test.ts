@@ -12,6 +12,9 @@ const mockAuditRepo = {
 const mockContestRepo = {
   findOne: jest.fn(),
 };
+const mockBanRepo = {
+  find: jest.fn(),
+};
 
 jest.mock('../../config/database', () => ({
   AppDataSource: {
@@ -20,6 +23,7 @@ jest.mock('../../config/database', () => ({
       if (name === 'ContestRegistration') return mockRegistrationRepo;
       if (name === 'ContestAuditLog') return mockAuditRepo;
       if (name === 'Contest') return mockContestRepo;
+      if (name === 'ContestBan') return mockBanRepo;
       throw new Error(`Unexpected repository: ${name}`);
     }),
   },
@@ -44,6 +48,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   // Default: the atomic CONFIRMED → CHECKED_IN conditional update hits one row.
   mockRegistrationRepo.update.mockResolvedValue({ affected: 1 });
+  // Default: no active contest bans.
+  mockBanRepo.find.mockResolvedValue([]);
   // Default: a check-in ready contest (RUNNING, inside the time window, no entry fee).
   mockContestRepo.findOne.mockResolvedValue({
     id: 'contest-1',
@@ -196,6 +202,45 @@ describe('syncContestRegistrationOnVehicleCheckIn', () => {
     });
     expect(registration.status).toBe(ContestRegistrationStatus.CONFIRMED);
     expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('skips the sync when the participant is banned from the contest', async () => {
+    mockContestRepo.findOne.mockResolvedValue({
+      id: 'contest-1',
+      providerId: 'provider-1',
+      status: ContestStatus.RUNNING,
+      startsAt: new Date(Date.now() - 60 * 60 * 1000),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      entryFee: 0,
+    });
+    mockRegistrationRepo.findOne.mockResolvedValue({
+      id: 'reg-1',
+      userId: 'customer-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'NOT_REQUIRED',
+    });
+    mockBanRepo.find.mockResolvedValue([
+      {
+        userId: 'customer-1',
+        providerId: 'provider-1',
+        contestId: 'contest-1',
+        scopeType: 'CONTEST',
+        liftedAt: null,
+        expiresAt: null,
+      },
+    ]);
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(mockRegistrationRepo.update).not.toHaveBeenCalled();
     expect(mockAuditRepo.save).not.toHaveBeenCalled();
   });
 

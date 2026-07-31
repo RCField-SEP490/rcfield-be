@@ -552,8 +552,6 @@ export const UpdateContestSchema = ContestUpsertBaseSchema.partial()
   );
 
 export const CreateContestRegistrationSchema = z.object({
-  booking_id: z.string().uuid().optional(),
-  vehicle_id: z.string().uuid().optional(),
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
   rental_slot: z
     .object({

@@ -2,9 +2,9 @@ import { Not } from 'typeorm';
 import { AppDataSource } from '../../config/database';
 import { logger } from '../../config/logger';
 import { Booking } from '../../models/booking.entity';
-import { BookingVehicle } from '../../models/booking-vehicle.entity';
 import { ContestCafe } from '../../models/contest-cafe.entity';
 import { ContestRegistration } from '../../models/contest-registration.entity';
+import { PaymentComponent } from '../../models/payment-component.entity';
 import { PaymentTransaction } from '../../models/payment-transaction.entity';
 import {
   AppError,
@@ -13,6 +13,8 @@ import {
   ContestRegistrationStatus,
   ContestStatus,
   NotificationType,
+  PaymentComponentStatus,
+  PaymentComponentType,
   PaymentTransactionStatus,
   PaymentTransactionSubjectType,
   PaymentTransactionType,
@@ -95,76 +97,31 @@ export async function createContestRegistration(
     );
   }
 
-  let resolvedBookingId: string | undefined = body.booking_id;
-  let resolvedVehicleId: string | undefined = body.vehicle_id;
+  let resolvedBookingId: string | undefined;
+  let resolvedVehicleId: string | undefined;
   // Booking created inline from rental_slot (WF-B). If the registration transaction
   // below fails, this booking is cancelled as a compensating action so a failed
   // registration never leaves an orphaned PENDING booking behind.
   let inlineRentalBookingId: string | null = null;
+  let inlineRentalTotal = 0;
 
   if (body.vehicle_source === VehicleSource.RENTAL) {
-    if (body.rental_slot && !body.booking_id) {
-      const rentalResult = await createContestRentalBooking(
-        contest,
-        viewer.userId,
-        body.rental_slot as ContestRentalSlotInput,
-      );
-      resolvedBookingId = rentalResult.booking_id;
-      resolvedVehicleId = rentalResult.vehicle_id;
-      inlineRentalBookingId = rentalResult.booking_id;
-    }
-
-    if (!resolvedBookingId || !resolvedVehicleId) {
+    if (!body.rental_slot) {
       throw new AppError(
-        'Đăng ký RENTAL yêu cầu booking_id và vehicle_id',
+        'Đăng ký RENTAL yêu cầu chọn khung giờ thuê xe (rental_slot)',
         400,
         'CONTEST_RENTAL_BOOKING_REQUIRED',
       );
     }
-    const booking = await AppDataSource.getRepository(Booking).findOne({
-      where: { id: resolvedBookingId, customerId: viewer.userId },
-    });
-    if (!booking) throw new AppError('Booking không tồn tại', 404, 'BOOKING_NOT_FOUND');
-    if (contest.trackTypeId && booking.trackTypeId !== contest.trackTypeId) {
-      throw new AppError(
-        'Booking không khớp loại track của contest',
-        400,
-        'BOOKING_TRACK_TYPE_MISMATCH',
-      );
-    }
-
-    const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
-      where: { contestId, cafeId: booking.cafeId },
-    });
-    if (!contestCafe) {
-      throw new AppError(
-        'Booking không thuộc chi nhánh tham gia contest',
-        400,
-        'BOOKING_CAFE_MISMATCH',
-      );
-    }
-
-    if (booking.slotStart > contest.endsAt || booking.slotEnd < contest.startsAt) {
-      throw new AppError('Khung giờ booking không giao với contest', 400, 'BOOKING_TIME_MISMATCH');
-    }
-
-    const bookingVehicle = await AppDataSource.getRepository(BookingVehicle).findOne({
-      where: { bookingId: booking.id, vehicleId: resolvedVehicleId },
-    });
-    if (!bookingVehicle) {
-      throw new AppError('Vehicle không thuộc booking này', 400, 'BOOKING_VEHICLE_MISMATCH');
-    }
-
-    // For rental-only contests, prefer contest-linked bookings. Plain bookings created
-    // outside the contest flow may violate resource locks or miss the contest window.
-    const vehiclePolicy = String(contest.vehicleRule?.vehicle_policy ?? 'RENTAL_ONLY');
-    if (vehiclePolicy === 'RENTAL_ONLY' && !booking.contestId) {
-      throw new AppError(
-        'Giải đấu bắt buộc thuê xe thông qua luồng contest; vui lòng chọn "Thuê xe tại quầy" hoặc dùng booking contest liên kết',
-        400,
-        'CONTEST_RENTAL_REQUIRES_CONTEST_BOOKING',
-      );
-    }
+    const rentalResult = await createContestRentalBooking(
+      contest,
+      viewer.userId,
+      body.rental_slot as ContestRentalSlotInput,
+    );
+    resolvedBookingId = rentalResult.booking_id;
+    resolvedVehicleId = rentalResult.vehicle_id;
+    inlineRentalBookingId = rentalResult.booking_id;
+    inlineRentalTotal = rentalResult.total_amount;
   } else {
     if (!body.byoc_vehicle_name?.trim()) {
       throw new AppError(
@@ -203,6 +160,36 @@ export async function createContestRegistration(
         const activeCount = lockedRegistrations.length;
         if (activeCount >= contest.capacity) {
           throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
+        }
+      }
+
+      // WF-B combined payment: when the inline rental booking is created and the
+      // contest charges an entry fee, fold the fee into the booking so the customer
+      // pays booking + entry fee in a single VNPay transaction. The component stays
+      // HELD until the booking payment succeeds; the registration paymentStatus is
+      // PENDING_PAYMENT and flips to MARKED_PAID from the payment confirm handler.
+      const entryFee = Number(contest.entryFee ?? 0);
+      if (inlineRentalBookingId && entryFee > 0) {
+        const bookingRepo = manager.getRepository(Booking);
+        const inlineBooking = await bookingRepo.findOne({ where: { id: inlineRentalBookingId } });
+        if (inlineBooking) {
+          const snapshot = (inlineBooking.snapshot ?? {}) as Record<string, unknown>;
+          inlineBooking.snapshot = {
+            ...snapshot,
+            total_charged: Number(snapshot.total_charged ?? inlineRentalTotal) + entryFee,
+            contest_entry_fee: entryFee,
+          };
+          await bookingRepo.save(inlineBooking);
+          const componentRepo = manager.getRepository(PaymentComponent);
+          await componentRepo.save(
+            componentRepo.create({
+              bookingId: inlineBooking.id,
+              bookingVehicleId: null,
+              type: PaymentComponentType.CONTEST_ENTRY_FEE,
+              amount: entryFee,
+              status: PaymentComponentStatus.HELD,
+            }),
+          );
         }
       }
 
@@ -859,6 +846,13 @@ export async function checkInRegistration(
         `Check-in BYOC cần ít nhất 2 ảnh và kiểm tra đầy đủ các hạng mục: ${Array.from(requiredChecklistKeys).join(', ')}`,
         400,
         'CONTEST_BYOC_INSPECTION_REQUIRED',
+      );
+    }
+    if (byocChecklist.some((item) => item.status === 'NOT_OK')) {
+      throw new AppError(
+        'Xe không đạt hạng mục kiểm tra, không thể check-in',
+        400,
+        'CONTEST_BYOC_INSPECTION_FAILED',
       );
     }
   }
