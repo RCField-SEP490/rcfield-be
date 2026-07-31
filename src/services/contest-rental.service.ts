@@ -1,6 +1,8 @@
 import { EntityManager } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
+import { redis } from '../config/redis';
+import { env } from '../config/env';
 import { Booking } from '../models/booking.entity';
 import { Cafe } from '../models/cafe.entity';
 import { CafeTrackConfig } from '../models/cafe-track-config.entity';
@@ -16,9 +18,11 @@ import {
   BookingStatus,
   ContestRegistrationStatus,
   ContestStatus,
+  ContestEntryFeePaymentStatus,
   VehicleStatus,
 } from '../types';
 import { createBooking, CreateBookingBody } from './booking.service';
+import { getActiveContestBan } from './contest.helpers';
 import { ContestCafe } from '../models/contest-cafe.entity';
 
 // ── Contest rental pricing policy (bridge Contest ↔ Booking) ────────────────
@@ -48,6 +52,39 @@ export interface ContestPricingAdjustments {
 }
 
 const DEPOSIT_MODES: readonly ContestDepositMode[] = ['FULL', 'REDUCED', 'WAIVED'];
+
+function getSlotStarts(slotStart: Date, slotEnd: Date, slotDurationMinutes: number): Date[] {
+  const slotStarts: Date[] = [];
+  const slotDurationMs = slotDurationMinutes * 60 * 1000;
+  for (let cursor = slotStart.getTime(); cursor < slotEnd.getTime(); cursor += slotDurationMs) {
+    slotStarts.push(new Date(cursor));
+  }
+  return slotStarts;
+}
+
+function contestRentalVehicleLockKey(vehicleId: string, slotStart: Date): string {
+  return `contest:rental:vehicle:${vehicleId}:${slotStart.getTime()}`;
+}
+
+async function acquireContestRentalVehicleLock(
+  vehicleId: string,
+  slotStart: Date,
+  ttlSeconds = env.platform.slotLockTtlSeconds,
+): Promise<boolean> {
+  const key = contestRentalVehicleLockKey(vehicleId, slotStart);
+  const result = await redis.set(key, '1', 'EX', ttlSeconds, 'NX');
+  return result === 'OK';
+}
+
+async function releaseContestRentalVehicleLocks(
+  vehicleId: string,
+  slotStarts: Date[],
+): Promise<void> {
+  const keys = slotStarts.map((s) => contestRentalVehicleLockKey(vehicleId, s));
+  if (keys.length > 0) {
+    await redis.del(keys);
+  }
+}
 
 function toNonNegativeInt(value: unknown, fallback: number): number {
   const num = Number(value);
@@ -242,6 +279,40 @@ export async function createContestRentalBooking(
     );
   }
 
+  // Prevent booking a rental slot that spans far longer than the actual race window.
+  // The slot should be for contest use, not a disguised all-day rental.
+  const raceDurationMs = contest.endsAt.getTime() - contest.startsAt.getTime();
+  const maxSlotDurationMs =
+    raceDurationMs + (policy.slot_window.before_min + policy.slot_window.after_min) * 60_000;
+  if (slotEnd.getTime() - slotStart.getTime() > maxSlotDurationMs) {
+    throw new AppError(
+      'Khung giờ thuê xe quá dài so với thời gian thi đấu',
+      400,
+      'CONTEST_SLOT_TOO_LONG',
+    );
+  }
+
+  // Hold a short-lived lock on the chosen vehicle so concurrent contest-rental
+  // requests do not pick the same unit before createBooking acquires the slot locks.
+  const slotDurationMinutes =
+    Number.isInteger(cafe.slotDurationMinutes) && cafe.slotDurationMinutes > 0
+      ? cafe.slotDurationMinutes
+      : Math.max(1, Math.ceil((slotEnd.getTime() - slotStart.getTime()) / 60000));
+  const rentalSlotStarts = getSlotStarts(slotStart, slotEnd, slotDurationMinutes);
+  const lockedRentalSlotStarts: Date[] = [];
+  for (const rentalSlotStart of rentalSlotStarts) {
+    const locked = await acquireContestRentalVehicleLock(vehicle.id, rentalSlotStart);
+    if (!locked) {
+      await releaseContestRentalVehicleLocks(vehicle.id, lockedRentalSlotStarts);
+      throw new AppError(
+        'Xe vừa được chọn bởi người khác, vui lòng chọn xe khác',
+        409,
+        'VEHICLE_UNAVAILABLE',
+      );
+    }
+    lockedRentalSlotStarts.push(rentalSlotStart);
+  }
+
   const bookingBody: CreateBookingBody = {
     cafe_id: slot.cafe_id,
     play_mode: BookingMode.RENTAL,
@@ -255,22 +326,27 @@ export async function createContestRentalBooking(
     track_type_id: trackTypeId ?? contest.trackTypeId ?? undefined,
     contest_id: contest.id,
     source: BookingSource.CONTEST,
+    skipPendingReuse: true,
   };
 
-  const bookingResult = await createBooking(customerId, bookingBody);
+  try {
+    const bookingResult = await createBooking(customerId, bookingBody);
 
-  return {
-    booking_id: bookingResult.booking_id,
-    vehicle_id: vehicle.id,
-    status: bookingResult.status,
-    payment_expires_at: bookingResult.payment_expires_at,
-    total_amount: bookingResult.total_amount,
-    breakdown: {
-      slot_fee: bookingResult.breakdown.slot_fee,
-      rental_fee: bookingResult.breakdown.rental_fee,
-      total: bookingResult.breakdown.total,
-    },
-  };
+    return {
+      booking_id: bookingResult.booking_id,
+      vehicle_id: vehicle.id,
+      status: bookingResult.status,
+      payment_expires_at: bookingResult.payment_expires_at,
+      total_amount: bookingResult.total_amount,
+      breakdown: {
+        slot_fee: bookingResult.breakdown.slot_fee,
+        rental_fee: bookingResult.breakdown.rental_fee,
+        total: bookingResult.breakdown.total,
+      },
+    };
+  } finally {
+    await releaseContestRentalVehicleLocks(vehicle.id, lockedRentalSlotStarts);
+  }
 }
 
 async function resolveContestRentalVehicle(
@@ -379,11 +455,75 @@ export async function syncContestRegistrationOnVehicleCheckIn(
     return { registrationId: registration.id, synced: false, previousStatus };
   }
 
-  registration.status = ContestRegistrationStatus.CHECKED_IN;
-  registration.checkedInCafeId = booking.cafeId;
-  registration.checkedInBy = staffContext.staffUserId;
-  registration.checkedInAt = new Date();
-  await contestRegistrationRepo(em).save(registration);
+  // Mirror the checkInRegistration guards (contest/registrations.ts): only sync
+  // when the contest is check-in ready and the entry fee is settled. Failures
+  // skip the mirror without blocking the vehicle check-in.
+  const guardFail = (reason: string): ContestCheckinSyncResult => {
+    logger.warn('ContestRental', 'syncContestRegistrationOnVehicleCheckIn: guard failed', {
+      bookingId: booking.id,
+      registrationId: registration.id,
+      reason,
+    });
+    return { registrationId: registration.id, synced: false, previousStatus };
+  };
+
+  const contest = await AppDataSource.getRepository(Contest).findOne({
+    where: { id: booking.contestId },
+  });
+  if (!contest) {
+    return guardFail('contest_not_found');
+  }
+  if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
+    return guardFail('contest_not_checkin_ready');
+  }
+  const now = new Date();
+  if (contest.startsAt && now < contest.startsAt) {
+    return guardFail('contest_checkin_not_started');
+  }
+  if (contest.endsAt && now > contest.endsAt) {
+    return guardFail('contest_checkin_ended');
+  }
+  if (
+    Number(contest.entryFee ?? 0) > 0 &&
+    ![
+      ContestEntryFeePaymentStatus.MARKED_PAID,
+      ContestEntryFeePaymentStatus.WAIVED,
+      ContestEntryFeePaymentStatus.PENDING_REVIEW,
+    ].includes(registration.paymentStatus)
+  ) {
+    return guardFail('entry_fee_pending');
+  }
+  if (contest.providerId) {
+    const activeBan = await getActiveContestBan(
+      registration.userId,
+      contest.providerId,
+      contest.id,
+    );
+    if (activeBan) {
+      return guardFail('participant_banned');
+    }
+  }
+
+  // Atomic CONFIRMED → CHECKED_IN transition: if a concurrent check-in (e.g.
+  // staff check-in via contest service) already moved the row, 0 rows are
+  // affected and we skip with a warn instead of overwriting.
+  const updateResult = await contestRegistrationRepo(em).update(
+    { id: registration.id, status: ContestRegistrationStatus.CONFIRMED },
+    {
+      status: ContestRegistrationStatus.CHECKED_IN,
+      checkedInCafeId: booking.cafeId,
+      checkedInBy: staffContext.staffUserId,
+      checkedInAt: () => 'NOW()',
+    },
+  );
+  if (!updateResult.affected) {
+    logger.warn('ContestRental', 'syncContestRegistrationOnVehicleCheckIn: concurrent check-in', {
+      bookingId: booking.id,
+      registrationId: registration.id,
+      status: previousStatus,
+    });
+    return { registrationId: registration.id, synced: false, previousStatus };
+  }
 
   const auditRepo = contestAuditLogRepo(em);
   await auditRepo.save(
@@ -394,7 +534,7 @@ export async function syncContestRegistrationOnVehicleCheckIn(
       actorRole: 'STAFF',
       eventType: 'registration.checked_in',
       beforeJson: { status: previousStatus },
-      afterJson: { status: registration.status, checkedInCafeId: booking.cafeId },
+      afterJson: { status: ContestRegistrationStatus.CHECKED_IN, checkedInCafeId: booking.cafeId },
       metadata: { booking_id: booking.id, trigger: 'vehicle_check_in' },
     }),
   );

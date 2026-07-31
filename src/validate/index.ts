@@ -552,8 +552,6 @@ export const UpdateContestSchema = ContestUpsertBaseSchema.partial()
   );
 
 export const CreateContestRegistrationSchema = z.object({
-  booking_id: z.string().uuid().optional(),
-  vehicle_id: z.string().uuid().optional(),
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
   rental_slot: z
     .object({
@@ -569,6 +567,13 @@ export const CreateContestRegistrationSchema = z.object({
   byoc_vehicle_brand: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_class: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_notes: z.string().trim().max(1000).optional(),
+});
+
+export const UpdateByocDeclarationSchema = z.object({
+  vehicle_name: z.string().trim().min(2).max(120),
+  vehicle_brand: z.string().trim().min(1).max(120).nullable().optional(),
+  vehicle_class: z.string().trim().min(1).max(120).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
 });
 
 export const ContestRegistrationActionSchema = z.object({
@@ -597,6 +602,30 @@ export const ContestBanLiftSchema = z.object({
 
 export const ContestCheckInSchema = z.object({
   checked_in_cafe_id: z.string().uuid(),
+  byoc_confirmed: z.boolean().optional(),
+  byoc_inspection: z
+    .object({
+      photos: z
+        .array(
+          z.object({
+            url: z.string().url(),
+            angle: z.string().trim().max(50).optional(),
+            notes: z.string().trim().max(500).optional(),
+          }),
+        )
+        .optional(),
+      checklist: z
+        .array(
+          z.object({
+            itemKey: z.string().trim().min(1).max(50),
+            itemLabel: z.string().trim().min(1).max(120),
+            status: z.enum(['OK', 'NOT_OK', 'NA']).optional(),
+            note: z.string().trim().max(500).optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 const FeaturedPopupBaseSchema = z.object({

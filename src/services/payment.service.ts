@@ -31,6 +31,7 @@ import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { writeContestAudit } from './contest.helpers';
+import { sendContestRegistrationStatusNotification } from './contest/registration-side-effects';
 import {
   applyContestRentalPricing,
   getContestRentalPolicy,
@@ -73,6 +74,8 @@ export interface RefundSnapshot {
 export interface BookingSnapshot extends RefundSnapshot {
   platform_fee_pct: number;
   captured_at: string;
+  /** Contest entry fee folded into the booking payment (WF-B combined payment). */
+  contest_entry_fee?: number;
   contest_pricing?: {
     contest_id: string;
     waive_slot_fee: boolean;
@@ -118,6 +121,10 @@ function buildInitialPaymentReceiptComponents(
     { type: PaymentComponentType.RENTAL_FEE, amount: rentalFee },
     { type: PaymentComponentType.SECURITY_DEPOSIT, amount: securityDeposit },
     { type: PaymentComponentType.FB_PREORDER, amount: Number(snapshot.fnb_total ?? 0) },
+    {
+      type: PaymentComponentType.CONTEST_ENTRY_FEE,
+      amount: Number(snapshot.contest_entry_fee ?? 0),
+    },
     { type: 'PROMOTION_DISCOUNT', amount: -Number(snapshot.discount_amount ?? 0) },
   ].filter((component) => component.amount !== 0);
 }
@@ -315,9 +322,13 @@ export async function createCheckoutUrl(
     0,
   );
 
+  // Contest entry fee folded into this booking's payment by the contest
+  // registration flow (WF-B combined payment) — frozen at registration time.
+  const contestEntryFee = Number(creationSnapshot?.contest_entry_fee ?? 0);
+
   const grossTotal = finalSlotFee + rentalFeeTotal + adjustedDepositTotal + fnbTotal;
   const discountAmount = Number(booking.discountAmount) || 0;
-  const totalCharged = Math.max(0, grossTotal - discountAmount);
+  const totalCharged = Math.max(0, grossTotal - discountAmount) + contestEntryFee;
 
   logger.info('PaymentService', 'checkout totals', {
     bookingId,
@@ -360,6 +371,7 @@ export async function createCheckoutUrl(
     total_charged: totalCharged,
     platform_fee_pct: 0,
     captured_at: new Date().toISOString(),
+    ...(contestEntryFee > 0 ? { contest_entry_fee: contestEntryFee } : {}),
     ...(contestAdj.contestId
       ? {
           contest_pricing: {
@@ -596,6 +608,60 @@ export async function createPaymentComponents(
 
 // ── processConfirmation ───────────────────────────────────────────────────────
 
+/**
+ * WF-B combined payment: when a contest rental booking is paid, the contest
+ * entry fee was charged in the same transaction, so mark the linked
+ * registration's entry fee as paid. Idempotent (conditional UPDATE) and
+ * best-effort — a failure here must never break the payment flow.
+ */
+async function markContestEntryFeePaidOnBookingSuccess(booking: Booking): Promise<void> {
+  if (!booking.contestId) return;
+  try {
+    const updateRaw = await AppDataSource.query(
+      `UPDATE contest_registrations
+       SET payment_status = $2, updated_at = NOW()
+       WHERE booking_id = $1 AND payment_status = $3
+       RETURNING id`,
+      [
+        booking.id,
+        ContestEntryFeePaymentStatus.MARKED_PAID,
+        ContestEntryFeePaymentStatus.PENDING_PAYMENT,
+      ],
+    );
+    const updatedRows: { id: string }[] = Array.isArray(updateRaw[0]) ? updateRaw[0] : updateRaw;
+    if (!updatedRows.length) return;
+
+    const registrationId = updatedRows[0].id;
+    await writeContestAudit({
+      contestId: booking.contestId,
+      registrationId,
+      actorId: null,
+      actorRole: 'SYSTEM',
+      eventType: 'registration.entry_fee_marked_paid',
+      afterJson: { paymentStatus: ContestEntryFeePaymentStatus.MARKED_PAID },
+      reason: 'Entry fee paid with booking payment',
+      metadata: { booking_id: booking.id },
+    });
+
+    const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+      where: { id: registrationId },
+    });
+    if (registration) {
+      await sendContestRegistrationStatusNotification(
+        registration,
+        NotificationType.CONTEST_REGISTRATION_APPROVED,
+        'Phi tham gia giai dau da duoc thanh toan',
+        'Phi tham gia giai dau cua ban da duoc thanh toan cung voi booking thue xe.',
+      );
+    }
+  } catch (err) {
+    logger.error(
+      'PaymentService',
+      `contest entry fee sync failed bookingId=${booking.id}: ${(err as Error).message}`,
+    );
+  }
+}
+
 /** Idempotent IPN/return handler for VNPay — kept for backward compatibility. */
 export async function processConfirmation(
   vnpParams: Record<string, unknown>,
@@ -795,6 +861,7 @@ export async function processConfirmationResult(
   // Transition booking to CONFIRMED
   const booking = await transition(confirmedBookingId, 'PAYMENT_CONFIRMED');
   await incrementPromoUsesCount(confirmedBookingId).catch(() => {}); // best-effort
+  await markContestEntryFeePaidOnBookingSuccess(booking);
 
   // Create payment components
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
@@ -987,6 +1054,7 @@ export async function processMockConfirmation(
 
   const booking = await transition(mockBookingId, 'PAYMENT_CONFIRMED');
   await incrementPromoUsesCount(mockBookingId).catch(() => {}); // best-effort
+  await markContestEntryFeePaidOnBookingSuccess(booking);
   const bvRepo = AppDataSource.getRepository(BookingVehicle);
   const bookingVehicles = await bvRepo.find({ where: { bookingId: mockBookingId } });
   const snapshot = booking.snapshot as unknown as BookingSnapshot | null;

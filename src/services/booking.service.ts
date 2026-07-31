@@ -1,3 +1,4 @@
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
@@ -19,12 +20,14 @@ import { PaymentComponent } from '../models/payment-component.entity';
 import { PaymentTransaction } from '../models/payment-transaction.entity';
 import { Session } from '../models/session.entity';
 import { Inspection } from '../models/inspection.entity';
+import { ContestRegistration } from '../models/contest-registration.entity';
 import {
   AppError,
   BookingMode,
   BookingParticipantType,
   BookingSource,
   BookingStatus,
+  ContestRegistrationStatus,
   CustomerPackageStatus,
   FnbOrderStatus,
   FnbOrderType,
@@ -37,12 +40,15 @@ import {
   AuthProvider,
   SessionStatus,
   InspectionType,
+  NotificationType,
 } from '../types';
 import { CustomerPackage } from '../models/customer-package.entity';
 import { refundSlots } from './customer-package.service';
 import { getEffectiveMultiplier } from './pricing.service';
 import { validatePromoCode } from './promotion.service';
 import { assertBookingNotBlockedByContest } from './contest-lock.service';
+import { writeContestAudit } from './contest.helpers';
+import { sendContestRegistrationStatusNotification } from './contest/registration-side-effects';
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import type { Promotion } from '../models/promotion.entity';
 import type { CafeOperatingHours } from '../types';
@@ -499,6 +505,12 @@ export interface CreateBookingBody {
   customer_package_id?: string;
   contest_id?: string;
   source?: BookingSource;
+  /**
+   * Internal only (not part of the API schema): skip the duplicate PENDING
+   * booking shortcut. Used by the contest rental flow, which must always create
+   * its own contest-linked booking instead of reusing a plain PENDING one.
+   */
+  skipPendingReuse?: boolean;
 }
 
 export interface BookingBreakdown {
@@ -525,6 +537,16 @@ export async function createBooking(
   customerId: string,
   body: CreateBookingBody,
 ): Promise<CreateBookingResult> {
+  // contest_id is reserved for the contest rental flow; attaching it to a
+  // regular booking would let customers claim contest pricing policies.
+  if (body.contest_id && body.source !== BookingSource.CONTEST) {
+    throw new AppError(
+      'contest_id chỉ được sử dụng qua luồng contest rental',
+      400,
+      'CONTEST_ID_NOT_ALLOWED',
+    );
+  }
+
   const slotStart = new Date(body.slot_start);
   const slotEnd = new Date(body.slot_end);
 
@@ -548,14 +570,16 @@ export async function createBooking(
   // This prevents a legacy pending booking outside a newly tightened window from
   // being resumed through the duplicate-request shortcut.
   const bookingRepo = AppDataSource.getRepository(Booking);
-  const existingBooking = await bookingRepo.findOne({
-    where: {
-      customerId,
-      cafeId: body.cafe_id,
-      slotStart,
-      status: BookingStatus.PENDING,
-    },
-  });
+  const existingBooking = body.skipPendingReuse
+    ? null
+    : await bookingRepo.findOne({
+        where: {
+          customerId,
+          cafeId: body.cafe_id,
+          slotStart,
+          status: BookingStatus.PENDING,
+        },
+      });
   if (existingBooking) {
     if (existingBooking.paymentExpiresAt > new Date()) {
       return {
@@ -1118,6 +1142,19 @@ export async function cancelBooking(
   await cancelPendingFnbOrders(bookingId);
   logger.info('BookingService', `cancelled bookingId=${bookingId} by ${role}`);
 
+  // Mirror the cancellation to the linked contest registration (contest rental
+  // bookings). Never blocks the booking cancel: failures are logged only.
+  if (booking.contestId) {
+    try {
+      await cancelContestRegistrationOnBookingCancel(booking, cancelledBy, role);
+    } catch (err) {
+      logger.warn(
+        'BookingService',
+        `contest registration sync failed bookingId=${bookingId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
   // Slot refund: only if package was used AND cancellation is before slot_start (D5 from research.md)
   const snapshotData = booking.snapshot as {
     package_used?: { customer_package_id: string; slots_used: number };
@@ -1149,8 +1186,52 @@ export async function cancelBooking(
   return { refund_amount: 0 };
 }
 
-// ── listCafeBookings ──────────────────────────────────────────────────────────
+/**
+ * When a booking linked to a contest is cancelled, cancel the linked contest
+ * registration (PENDING/CONFIRMED → CANCELLED) with an audit log entry and a
+ * customer notification. Mirrors cancelRegistration in contest/registrations.
+ */
+export async function cancelContestRegistrationOnBookingCancel(
+  booking: Booking,
+  cancelledBy: string,
+  role: UserRole | 'SYSTEM',
+): Promise<void> {
+  const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+    where: {
+      bookingId: booking.id,
+      status: In([ContestRegistrationStatus.PENDING, ContestRegistrationStatus.CONFIRMED]),
+    },
+  });
+  if (!registration) return;
 
+  const previousStatus = registration.status;
+  registration.status = ContestRegistrationStatus.CANCELLED;
+  registration.cancelledBy = cancelledBy;
+  registration.cancelledAt = new Date();
+  registration.cancellationReason = 'Booking cancelled';
+  await AppDataSource.getRepository(ContestRegistration).save(registration);
+
+  await writeContestAudit({
+    contestId: booking.contestId!,
+    registrationId: registration.id,
+    actorId: cancelledBy,
+    actorRole: role,
+    eventType: 'registration.cancelled_via_booking_cancel',
+    beforeJson: { status: previousStatus },
+    afterJson: { status: registration.status },
+    reason: registration.cancellationReason,
+    metadata: { booking_id: booking.id },
+  });
+
+  await sendContestRegistrationStatusNotification(
+    registration,
+    NotificationType.CONTEST_REGISTRATION_CANCELLED,
+    'Dang ky giai dau da duoc huy',
+    'Dang ky cua ban da duoc huy do booking da bi huy.',
+  );
+}
+
+// ── listCafeBookings ──────────────────────────────────────────────────────────
 export interface ListCafeBookingsQuery {
   date: string;
   status?: BookingStatus;

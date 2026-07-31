@@ -108,6 +108,7 @@ export enum PaymentComponentType {
   FB_PREORDER = 'FNB_PREORDER',
   FNB_ON_SITE = 'FNB_ON_SITE',
   PACKAGE_PURCHASE = 'PACKAGE_PURCHASE',
+  CONTEST_ENTRY_FEE = 'CONTEST_ENTRY_FEE',
 }
 
 export enum CustomerPackageStatus {

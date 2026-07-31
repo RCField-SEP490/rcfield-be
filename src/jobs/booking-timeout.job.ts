@@ -1,15 +1,51 @@
 import cron from 'node-cron';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
-import { transition } from '../services/booking.service';
+import { cancelContestRegistrationOnBookingCancel, transition } from '../services/booking.service';
 import { processRefund } from '../services/payment.service';
 import { Session } from '../models/session.entity';
+import { Booking } from '../models/booking.entity';
 import { ExtensionProposal } from '../models/extension-proposal.entity';
 import { Notification } from '../models/notification.entity';
 import { createNotification } from '../services/notification.service';
 import { wsService } from '../services/websocket.service';
 import { ExtensionProposalStatus, NotificationType, SessionStatus, UserRole } from '../types';
 import { SESSION_OVERDUE_ALERT_MINUTES } from '../lib/session-operational-timing';
+
+/** Mirrors a booking cancellation to the linked contest registration (contest
+ * rental bookings). Never blocks the job: failures are logged only. */
+async function cascadeContestRegistrationCancel(booking: Booking): Promise<void> {
+  if (!booking.contestId) return;
+  try {
+    await cancelContestRegistrationOnBookingCancel(booking, booking.customerId, 'SYSTEM');
+  } catch (err) {
+    logger.warn(
+      'BookingTimeout',
+      `contest registration sync failed bookingId=${booking.id}: ${(err as Error).message}`,
+    );
+  }
+}
+
+/** Expires PENDING bookings whose payment window has elapsed. Exported for tests. */
+export async function processExpiredBookings(): Promise<void> {
+  const expired: { id: string }[] = await AppDataSource.query(
+    `SELECT id FROM bookings
+     WHERE status = 'PENDING'
+       AND payment_expires_at < NOW()
+       AND deleted_at IS NULL`,
+  );
+
+  if (expired.length > 0) {
+    logger.info('BookingTimeout', `expiring ${expired.length} booking(s)`);
+    for (const row of expired) {
+      await transition(row.id, 'PAYMENT_TIMEOUT')
+        .then((booking) => cascadeContestRegistrationCancel(booking))
+        .catch((err) => {
+          logger.error('BookingTimeout', `failed to expire bookingId=${row.id}`, err);
+        });
+    }
+  }
+}
 
 async function notifyOverdueSessions(): Promise<void> {
   const overdueSessions = await AppDataSource.query<
@@ -131,21 +167,7 @@ async function expireStaleExtensionProposals(): Promise<void> {
 export function scheduleBookingTimeout(): void {
   cron.schedule('* * * * *', async () => {
     try {
-      const expired: { id: string }[] = await AppDataSource.query(
-        `SELECT id FROM bookings
-         WHERE status = 'PENDING'
-           AND payment_expires_at < NOW()
-           AND deleted_at IS NULL`,
-      );
-
-      if (expired.length > 0) {
-        logger.info('BookingTimeout', `expiring ${expired.length} booking(s)`);
-        for (const row of expired) {
-          await transition(row.id, 'PAYMENT_TIMEOUT').catch((err) => {
-            logger.error('BookingTimeout', `failed to expire bookingId=${row.id}`, err);
-          });
-        }
-      }
+      await processExpiredBookings();
 
       // NO_SHOW: a CHECKED_IN session only represents a handover in progress.
       // If the handover is not completed within 30 minutes, it must not keep the
@@ -167,7 +189,7 @@ export function scheduleBookingTimeout(): void {
         logger.info('BookingTimeout', `marking ${noShows.length} booking(s) as NO_SHOW`);
         for (const row of noShows) {
           await transition(row.id, 'NO_SHOW')
-            .then(async () => {
+            .then(async (booking) => {
               await AppDataSource.getRepository(Session)
                 .createQueryBuilder()
                 .update()
@@ -176,6 +198,7 @@ export function scheduleBookingTimeout(): void {
                 .andWhere('status = :status', { status: SessionStatus.CHECKED_IN })
                 .execute();
               await processRefund(row.id, UserRole.PROVIDER, true);
+              await cascadeContestRegistrationCancel(booking);
             })
             .catch((err) => {
               logger.error('BookingTimeout', `failed to NO_SHOW bookingId=${row.id}`, err);

@@ -2,6 +2,7 @@ import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import { processContestReminders } from '../../jobs/contest-reminder.job';
+import { createCheckoutUrl, processMockConfirmation } from '../../services/payment.service';
 import {
   NotificationType,
   ProviderStatus,
@@ -119,6 +120,13 @@ async function createContestPayload(
 
   const startsAt = overrides?.starts_at ?? new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
   const endsAt = overrides?.ends_at ?? new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString();
+
+  // createContest requires participating cafes to operate the contest's track type.
+  await AppDataSource.query(
+    `INSERT INTO cafe_track_configs (cafe_id, track_type_id, max_concurrent, byoc_capacity, is_active)
+     VALUES ($1, $2, 2, 5, true)`,
+    [cafeId, trackType.id],
+  );
 
   return {
     name: `Contest ${formatCode}`,
@@ -425,6 +433,27 @@ describe('Contest runtime routes', () => {
     expect(res.body.code).toBe('CONTEST_BOOKING_CONFLICT');
   });
 
+  it('chặn tạo contest khi chi nhánh tham gia không có loại đường đua đó', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const token = generateToken(provider);
+    const payload = await createContestPayload(cafe.id, 'KNOCKOUT');
+
+    const [otherTrackType] = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM track_types WHERE id <> $1 LIMIT 1`,
+      [payload.track_type_id],
+    );
+
+    const res = await request(app)
+      .post('/api/v1/contests')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...payload, track_type_id: otherTrackType.id })
+      .expect(400);
+
+    expect(res.body.code).toBe('CONTEST_TRACK_TYPE_UNAVAILABLE');
+  });
+
   it('availability báo hết chỗ khi khung giờ đã bị contest giữ', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
@@ -618,8 +647,11 @@ describe('Contest runtime routes', () => {
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        booking_id: '00000000-0000-0000-0000-000000000000',
-        vehicle_id: '00000000-0000-0000-0000-000000000000',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
+          slot_end: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
+        },
       })
       .expect(400);
 
@@ -678,29 +710,17 @@ describe('Contest runtime routes', () => {
       compatible_track_types: [trackTypeId],
     });
 
-    const [booking] = await AppDataSource.query<{ id: string }[]>(
-      `INSERT INTO bookings
-         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
-       VALUES
-         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0)
-       RETURNING id`,
-      [customer.id, cafe.id, trackTypeId],
-    );
-
-    await AppDataSource.query(
-      `INSERT INTO booking_vehicles
-         (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
-       VALUES ($1, $2, 50000, 0, 1.0)`,
-      [booking.id, vehicle.id],
-    );
-
     const registerRes = await request(app)
       .post(`/api/v1/contests/${contestId}/register`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
-        booking_id: booking.id,
-        vehicle_id: vehicle.id,
         vehicle_source: 'RENTAL',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
+          slot_end: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
+          vehicle_catalog_id: vehicle.catalog_id,
+        },
       })
       .expect(201);
 
@@ -730,29 +750,17 @@ describe('Contest runtime routes', () => {
       compatible_track_types: [trackTypeId],
     });
 
-    const [booking] = await AppDataSource.query<{ id: string }[]>(
-      `INSERT INTO bookings
-         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
-       VALUES
-         ($1, $2, $3, 'RENTAL', 'APP', 'CONFIRMED', NOW() + INTERVAL '25 hours', NOW() + INTERVAL '26 hours', 1, NOW() + INTERVAL '30 minutes', 0)
-       RETURNING id`,
-      [customer.id, cafe.id, trackTypeId],
-    );
-
-    await AppDataSource.query(
-      `INSERT INTO booking_vehicles
-         (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
-       VALUES ($1, $2, 50000, 0, 1.0)`,
-      [booking.id, vehicle.id],
-    );
-
     const registerRes = await request(app)
       .post(`/api/v1/contests/${contestId}/register`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
-        booking_id: booking.id,
-        vehicle_id: vehicle.id,
         vehicle_source: 'RENTAL',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
+          slot_end: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
+          vehicle_catalog_id: vehicle.catalog_id,
+        },
       })
       .expect(201);
 
@@ -832,6 +840,139 @@ describe('Contest runtime routes', () => {
       .expect(200);
 
     expect(approveAfterPayRes.body.data.status).toBe('CONFIRMED');
+  });
+
+  it('dang ky rental_slot voi entry fee duoc gop chung vao mot giao dich thanh toan booking', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const { contestId, trackTypeId } = await createContestFixture(
+      provider.id,
+      cafe.id,
+      'TIME_TRIAL',
+      {
+        entryFee: 150000,
+      },
+    );
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [trackTypeId],
+    });
+
+    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
+    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: slotStart,
+          slot_end: slotEnd,
+          vehicle_catalog_id: vehicle.catalog_id,
+        },
+      })
+      .expect(201);
+
+    // Combined case: entry fee stays PENDING_PAYMENT until the booking is paid.
+    expect(registerRes.body.data.payment_status).toBe('PENDING_PAYMENT');
+    const bookingId = registerRes.body.data.booking_id;
+
+    const components = await AppDataSource.query<
+      { type: string; status: string; amount: string }[]
+    >(`SELECT type, status, amount FROM payment_components WHERE booking_id = $1`, [bookingId]);
+    const entryFeeComponent = components.find(
+      (component) => component.type === 'CONTEST_ENTRY_FEE',
+    );
+    expect(entryFeeComponent).toBeTruthy();
+    expect(entryFeeComponent!.status).toBe('HELD');
+    expect(Number(entryFeeComponent!.amount)).toBe(150000);
+
+    const [bookingRow] = await AppDataSource.query<
+      { snapshot: { total_charged: number; contest_entry_fee: number } }[]
+    >(`SELECT snapshot FROM bookings WHERE id = $1`, [bookingId]);
+    expect(Number(bookingRow.snapshot.contest_entry_fee)).toBe(150000);
+    const combinedTotal = Number(bookingRow.snapshot.total_charged);
+
+    // Checkout freezes booking + entry fee into a single VNPay transaction.
+    const checkout = await createCheckoutUrl(bookingId, '127.0.0.1');
+    expect(checkout.total_amount).toBe(combinedTotal);
+
+    const confirm = await processMockConfirmation(checkout.txn_ref!);
+    expect(confirm.rspCode).toBe('00');
+
+    const [bookingAfter] = await AppDataSource.query<{ status: string }[]>(
+      `SELECT status FROM bookings WHERE id = $1`,
+      [bookingId],
+    );
+    expect(bookingAfter.status).toBe('CONFIRMED');
+
+    const [registrationAfter] = await AppDataSource.query<{ payment_status: string }[]>(
+      `SELECT payment_status FROM contest_registrations WHERE booking_id = $1`,
+      [bookingId],
+    );
+    expect(registrationAfter.payment_status).toBe('MARKED_PAID');
+  });
+
+  it('contest rental tao booking rieng ngay ca khi customer co booking PENDING thuong cung khung gio', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const customerToken = generateToken(customer);
+    const { contestId, trackTypeId } = await createContestFixture(
+      provider.id,
+      cafe.id,
+      'TIME_TRIAL',
+      {
+        vehiclePolicy: 'RENTAL_ONLY',
+      },
+    );
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [],
+    });
+
+    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000);
+    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000);
+
+    // Plain PENDING booking at the same cafe/slot, created outside the contest flow.
+    const [plainBooking] = await AppDataSource.query<{ id: string }[]>(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
+       VALUES
+         ($1, $2, $3, 'RENTAL', 'APP', 'PENDING', $4, $5, 1, NOW() + INTERVAL '30 minutes', 0)
+       RETURNING id`,
+      [customer.id, cafe.id, trackTypeId, slotStart.toISOString(), slotEnd.toISOString()],
+    );
+
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental_slot: {
+          cafe_id: cafe.id,
+          slot_start: slotStart.toISOString(),
+          slot_end: slotEnd.toISOString(),
+          vehicle_catalog_id: vehicle.catalog_id,
+        },
+      })
+      .expect(201);
+
+    const contestBookingId = registerRes.body.data.booking_id;
+    expect(contestBookingId).toBeTruthy();
+    expect(contestBookingId).not.toBe(plainBooking.id);
+
+    const [contestBooking] = await AppDataSource.query<{ contest_id: string | null }[]>(
+      `SELECT contest_id FROM bookings WHERE id = $1`,
+      [contestBookingId],
+    );
+    expect(contestBooking.contest_id).toBe(contestId);
   });
 
   it('provider co the xem rental options va available vehicles cua contest', async () => {

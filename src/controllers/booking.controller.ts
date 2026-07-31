@@ -593,6 +593,7 @@ export const bookingController = {
           'b.slotEnd',
           'b.paymentExpiresAt',
           'b.snapshot',
+          'b.contestId',
           'b.createdAt',
           'b.updatedAt',
         ])
