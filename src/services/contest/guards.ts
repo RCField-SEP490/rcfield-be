@@ -74,8 +74,23 @@ export async function resolveProviderBranchesOrThrow(providerId: string, cafeIds
   return cafes;
 }
 
-export function getRuntimeFormatFromCatalog(contestFormatCode: string) {
-  return contestFormatCode === 'TIME_TRIAL' ? 'TIME_TRIAL' : 'KNOCKOUT';
+export type ContestRuntimeFormat = 'KNOCKOUT' | 'TIME_TRIAL' | 'QUALIFYING_FINAL';
+
+/**
+ * Ánh xạ mã format trong catalog sang engine vận hành.
+ *
+ * Trước đây hàm này chỉ nhận ra TIME_TRIAL, mọi mã khác đều rơi về KNOCKOUT —
+ * kể cả QUALIFYING_FINAL. Hệ quả dây chuyền: `mergeContestConfig` ghi
+ * `config.runtime_format = 'KNOCKOUT'`, `getContestFormatEngine` trả về
+ * KnockoutEngine, và `generateContestFinalBracket` luôn ném
+ * `CONTEST_FORMAT_NOT_QUALIFYING_FINAL`. Nghĩa là QualifyingFinalEngine cùng
+ * endpoint sinh nhánh chung kết không có đường nào chạm tới, dù catalog, spec
+ * và form đều đã có.
+ */
+export function getRuntimeFormatFromCatalog(contestFormatCode: string): ContestRuntimeFormat {
+  if (contestFormatCode === 'TIME_TRIAL') return 'TIME_TRIAL';
+  if (contestFormatCode === 'QUALIFYING_FINAL') return 'QUALIFYING_FINAL';
+  return 'KNOCKOUT';
 }
 
 export function stripRuntimeManagedConfig(config: Record<string, unknown> | null | undefined) {

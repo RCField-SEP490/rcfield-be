@@ -1,5 +1,6 @@
 import { In } from 'typeorm';
 import { AppDataSource } from '../../config/database';
+import { Cafe } from '../../models/cafe.entity';
 import { CafeTrackConfig } from '../../models/cafe-track-config.entity';
 import { ContestCafe } from '../../models/contest-cafe.entity';
 import { ContestFormat } from '../../models/contest-format.entity';
@@ -35,7 +36,16 @@ import {
 import { cleanUpContestOnCancel } from './registration-side-effects';
 import { CreateContestBody, ListContestsOptions, UpdateContestBody } from './types';
 
-/** Participating cafes must actually operate a track of the contest's track type. */
+/**
+ * MỌI chi nhánh tham gia phải thật sự có một sân đang hoạt động đúng loại đường
+ * đua của giải.
+ *
+ * Trước đây chỉ cần một chi nhánh có là qua (`.some`). Điều đó cho phép tạo giải
+ * ở ba chi nhánh nhưng chỉ một nơi có sân Drift — VĐV check-in ở hai chi nhánh
+ * còn lại không có chỗ thi đấu, và lock tài nguyên ở đó chặn booking thường mà
+ * chẳng phục vụ giải. Lỗi trả về nêu đích danh chi nhánh thiếu để provider sửa
+ * ngay thay vì phải đoán.
+ */
 async function assertParticipatingCafesSupportTrackType(
   cafeIds: string[],
   trackTypeId: string,
@@ -43,13 +53,22 @@ async function assertParticipatingCafesSupportTrackType(
   const trackConfigs = await AppDataSource.getRepository(CafeTrackConfig).find({
     where: { cafeId: In(cafeIds), isActive: true },
   });
-  if (!trackConfigs.some((config) => config.trackTypeId === trackTypeId)) {
-    throw new AppError(
-      'Các chi nhánh tham gia không có đường đua loại này',
-      400,
-      'CONTEST_TRACK_TYPE_UNAVAILABLE',
-    );
-  }
+  const cafeIdsWithTrackType = new Set(
+    trackConfigs
+      .filter((config) => config.trackTypeId === trackTypeId)
+      .map((config) => config.cafeId),
+  );
+  const missingCafeIds = cafeIds.filter((cafeId) => !cafeIdsWithTrackType.has(cafeId));
+  if (missingCafeIds.length === 0) return;
+
+  const missingCafes = await AppDataSource.getRepository(Cafe).findBy({ id: In(missingCafeIds) });
+  const names = missingCafes.map((cafe) => cafe.name).join(', ');
+  throw new AppError(
+    `Chi nhánh chưa có đường đua loại này: ${names || missingCafeIds.join(', ')}`,
+    400,
+    'CONTEST_TRACK_TYPE_UNAVAILABLE',
+    { missing_cafe_ids: missingCafeIds },
+  );
 }
 
 export async function listContests(options: ListContestsOptions) {
@@ -186,7 +205,11 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
     branches.map((branch) => branch.id),
     trackType.id,
   );
-  const resourceLocks = await resolveContestResourceLocks(body.participating_cafe_ids, body.config);
+  const resourceLocks = await resolveContestResourceLocks(
+    body.participating_cafe_ids,
+    body.config,
+    trackType.id,
+  );
   await assertNoContestBookingConflicts({
     startsAt: body.starts_at,
     endsAt: body.ends_at,
@@ -363,13 +386,17 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
       : {
           ...stripRuntimeManagedConfig(contest.config),
         };
-  const resourceLocks = await resolveContestResourceLocks(nextParticipatingCafeIds, {
-    ...baseConfig,
-    resource_locks:
-      body.config && typeof body.config === 'object'
-        ? (body.config.resource_locks as unknown)
-        : contest.config?.resource_locks,
-  });
+  const resourceLocks = await resolveContestResourceLocks(
+    nextParticipatingCafeIds,
+    {
+      ...baseConfig,
+      resource_locks:
+        body.config && typeof body.config === 'object'
+          ? (body.config.resource_locks as unknown)
+          : contest.config?.resource_locks,
+    },
+    nextTrackTypeId,
+  );
   await assertNoContestBookingConflicts({
     startsAt: contest.startsAt,
     endsAt: contest.endsAt,

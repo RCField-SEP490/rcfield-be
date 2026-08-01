@@ -5,6 +5,7 @@ import { CafeTrackConfig } from '../models/cafe-track-config.entity';
 import { ContestCafe } from '../models/contest-cafe.entity';
 import { Contest } from '../models/contest.entity';
 import { AppError, BookingStatus, ContestResourceScope, ContestStatus } from '../types';
+import type { ContestRuntimeFormat } from './contest/guards';
 
 export type ContestResourceLock = {
   cafe_id: string;
@@ -67,9 +68,20 @@ export function getContestResourceLocks(config: Record<string, unknown> | null |
   return parseResourceLocks(config?.resource_locks);
 }
 
+/**
+ * Suy ra lock thực tế từ cấu hình provider gửi lên.
+ *
+ * `contestTrackTypeId` là bắt buộc về mặt nghiệp vụ dù chữ ký cho phép bỏ trống:
+ * sân đúng loại đường đua của giải LUÔN bị đưa vào danh sách khoá, kể cả khi
+ * provider chọn `SELECTED_TRACKS` mà quên tick nó. Không làm vậy thì hai lớp kiểm
+ * tra nói hai chuyện khác nhau — `contestLockBlocksTrack` vẫn chặn booking trùng
+ * loại đường đua (xem fallback ở cuối hàm đó), trong khi `findContestBookingConflicts`
+ * lúc tạo giải lại bỏ qua chính những sân ấy.
+ */
 export async function resolveContestResourceLocks(
   participatingCafeIds: string[],
   config: Record<string, unknown> | null | undefined,
+  contestTrackTypeId?: string | null,
 ): Promise<ContestResourceLock[]> {
   const trackConfigs = participatingCafeIds.length
     ? await AppDataSource.getRepository(CafeTrackConfig).find({
@@ -105,8 +117,17 @@ export async function resolveContestResourceLocks(
     }
 
     if (requested?.scope === ContestResourceScope.SELECTED_TRACKS) {
-      const selectedTrackIds = requested.track_config_ids.filter((trackId) =>
-        activeTrackIds.includes(trackId),
+      // Sân thi đấu của giải bắt buộc nằm trong danh sách khoá.
+      const competitionTrackIds = contestTrackTypeId
+        ? activeTrackConfigs
+            .filter((item) => item.trackTypeId === contestTrackTypeId)
+            .map((item) => item.id)
+        : [];
+      const selectedTrackIds = Array.from(
+        new Set([
+          ...competitionTrackIds,
+          ...requested.track_config_ids.filter((trackId) => activeTrackIds.includes(trackId)),
+        ]),
       );
       if (selectedTrackIds.length > 0) {
         return {
@@ -125,9 +146,14 @@ export async function resolveContestResourceLocks(
   });
 }
 
+/** Số VĐV vào chung kết mặc định của QUALIFYING_FINAL, khớp `QualifyingFinalEngine`. */
+const DEFAULT_FINALISTS = 4;
+const MIN_FINALISTS = 2;
+const MAX_FINALISTS = 16;
+
 export function mergeContestConfig(
   baseConfig: Record<string, unknown> | null | undefined,
-  runtimeFormat: 'KNOCKOUT' | 'TIME_TRIAL',
+  runtimeFormat: ContestRuntimeFormat,
   resourceLocks: ContestResourceLock[],
 ) {
   const nextConfig = {
@@ -137,14 +163,27 @@ export function mergeContestConfig(
     resource_locks: resourceLocks,
   } as Record<string, unknown>;
 
-  if (runtimeFormat === 'KNOCKOUT') {
-    nextConfig.leaderboard_mode = 'KNOCKOUT_WINS';
-    if (typeof nextConfig.drivers_per_match !== 'number') nextConfig.drivers_per_match = 2;
-  } else {
+  if (runtimeFormat === 'TIME_TRIAL') {
     if (nextConfig.leaderboard_mode === 'KNOCKOUT_WINS') {
       nextConfig.leaderboard_mode = 'BEST_LAP';
     }
     if (typeof nextConfig.drivers_per_match !== 'number') nextConfig.drivers_per_match = 1;
+    return nextConfig;
+  }
+
+  // KNOCKOUT và QUALIFYING_FINAL cùng kết thúc bằng nhánh loại trực tiếp nên
+  // xếp hạng theo số trận thắng và mặc định 2 tay đua mỗi trận.
+  nextConfig.leaderboard_mode = 'KNOCKOUT_WINS';
+  if (typeof nextConfig.drivers_per_match !== 'number') nextConfig.drivers_per_match = 2;
+
+  if (runtimeFormat === 'QUALIFYING_FINAL') {
+    const requested = Number(nextConfig.finalists);
+    nextConfig.finalists = Number.isFinite(requested)
+      ? Math.min(MAX_FINALISTS, Math.max(MIN_FINALISTS, Math.floor(requested)))
+      : DEFAULT_FINALISTS;
+  } else {
+    // Format khác không dùng tới, giữ lại chỉ gây hiểu nhầm khi đọc config.
+    delete nextConfig.finalists;
   }
 
   return nextConfig;
