@@ -328,8 +328,22 @@ export const contestController = {
         req.params.registrationId,
         body.checked_in_cafe_id,
         viewer,
+        body.rental_vehicle_id ?? null,
         body.byoc_confirmed,
         body.byoc_inspection,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listHandoverUnits(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.listRegistrationHandoverUnits(
+        req.params.registrationId,
+        viewer,
       );
       res.json({ success: true, data });
     } catch (error) {
@@ -609,17 +623,13 @@ export const contestController = {
   async getAvailableRentalVehicles(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       requireViewer(req);
-      const { cafe_id, slot_start, slot_end, track_config_id, vehicle_catalog_id } = req.query;
-      const slot: contestRentalService.ContestRentalSlotInput = {
-        cafe_id: String(cafe_id),
-        slot_start: String(slot_start),
-        slot_end: String(slot_end),
-        track_config_id: track_config_id ? String(track_config_id) : null,
-        vehicle_catalog_id: vehicle_catalog_id ? String(vehicle_catalog_id) : null,
-      };
+      // Chỉ cần chi nhánh: khung giờ do lịch thi đấu quyết định nên không còn
+      // tham số slot, và khách chọn dòng xe chứ không chọn từng chiếc.
+      const cafeId = String(req.query.cafe_id ?? '').trim();
+      if (!cafeId) throw new AppError('Thiếu cafe_id', 400, 'CAFE_ID_REQUIRED');
       const data = await contestRentalService.getContestAvailableRentalVehicles(
         req.params.contestId,
-        slot,
+        cafeId,
       );
       res.json({ success: true, data });
     } catch (error) {

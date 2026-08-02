@@ -36,12 +36,13 @@ export type UpdateContestBody = Partial<CreateContestBody>;
 
 export type CreateRegistrationBody = {
   vehicle_source: VehicleSource;
-  rental_slot?: {
+  /**
+   * Thuê xe của quán: khách chọn chi nhánh và DÒNG xe. Không có khung giờ vì
+   * lịch thi đấu quyết định, không có giá vì lệ phí giải là khoản duy nhất.
+   */
+  rental?: {
     cafe_id: string;
-    slot_start: string | Date;
-    slot_end: string | Date;
-    track_config_id?: string | null;
-    vehicle_catalog_id?: string | null;
+    vehicle_catalog_id: string;
   } | null;
   byoc_vehicle_name?: string;
   byoc_vehicle_brand?: string;

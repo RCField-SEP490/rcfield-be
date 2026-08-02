@@ -11,11 +11,22 @@ import { ContestAuditLog } from '../models/contest-audit-log.entity';
 import { ContestRegistration } from '../models/contest-registration.entity';
 import { VehicleCatalog } from '../models/vehicle-catalog.entity';
 import { Vehicle } from '../models/vehicle.entity';
+import { BookingParticipant } from '../models/booking-participant.entity';
+import { BookingVehicle } from '../models/booking-vehicle.entity';
+import { Session } from '../models/session.entity';
+import { SessionParticipant } from '../models/session-participant.entity';
+import { SessionVehicle } from '../models/session-vehicle.entity';
+import { User } from '../models/user.entity';
 import {
   AppError,
   BookingMode,
+  BookingParticipantType,
   BookingSource,
   BookingStatus,
+  ParticipantRole,
+  SessionStatus,
+  SessionVehicleStatus,
+  VehicleSource,
   ContestRegistrationStatus,
   ContestStatus,
   ContestEntryFeePaymentStatus,
@@ -400,6 +411,129 @@ async function resolveContestRentalVehicle(
   return vehicle;
 }
 
+// ── Chọn dòng xe lúc đăng ký (không còn chọn khung giờ, không còn tính tiền) ─
+
+export type ContestRentalChoice = {
+  cafe_id: string;
+  vehicle_catalog_id: string;
+};
+
+/**
+ * Xác thực dòng xe VĐV chọn khi đăng ký thuê xe của quán.
+ *
+ * Khách chọn DÒNG xe (loại/màu), không chọn chiếc cụ thể và không chọn khung
+ * giờ: khung giờ do lịch thi đấu quyết định, còn chiếc xe cụ thể do nhân viên
+ * gán lúc giao xe. Trả về số xe có thật của dòng đó để bên gọi kiểm tra suất.
+ */
+export async function resolveContestRentalChoice(
+  contest: Contest,
+  choice: ContestRentalChoice,
+): Promise<{ catalog: VehicleCatalog; unitCount: number }> {
+  const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
+    where: { contestId: contest.id, cafeId: choice.cafe_id },
+  });
+  if (!contestCafe) {
+    throw new AppError('Chi nhánh không tham gia giải đấu này', 400, 'CONTEST_CAFE_INVALID');
+  }
+
+  const catalog = await AppDataSource.getRepository(VehicleCatalog).findOne({
+    where: { id: choice.vehicle_catalog_id, cafeId: choice.cafe_id },
+  });
+  if (!catalog) {
+    throw new AppError('Dòng xe không tồn tại ở chi nhánh này', 404, 'VEHICLE_CATALOG_NOT_FOUND');
+  }
+
+  if (
+    contest.trackTypeId &&
+    catalog.compatibleTrackTypes.length > 0 &&
+    !catalog.compatibleTrackTypes.includes(contest.trackTypeId)
+  ) {
+    throw new AppError(
+      'Dòng xe này không chạy được trên loại đường đua của giải',
+      400,
+      'VEHICLE_TRACK_INCOMPATIBLE',
+    );
+  }
+
+  const unitCount = await AppDataSource.getRepository(Vehicle).count({
+    where: {
+      catalogId: catalog.id,
+      cafeId: choice.cafe_id,
+      status: VehicleStatus.AVAILABLE,
+    },
+  });
+  if (unitCount === 0) {
+    throw new AppError('Dòng xe này hiện không có xe khả dụng', 400, 'VEHICLE_UNAVAILABLE');
+  }
+
+  return { catalog, unitCount };
+}
+
+/**
+ * Giữ chỗ dòng xe theo số xe có thật.
+ *
+ * Quán có 3 chiếc thuộc dòng nào thì chỉ 3 VĐV đăng ký được dòng đó. Phải gọi
+ * bên trong transaction đã khoá registrations của giải, nếu không hai người đăng
+ * ký đồng thời cùng đọc ra số cũ và cùng lọt qua.
+ */
+export async function assertContestRentalCatalogHasSlot(
+  manager: EntityManager,
+  params: {
+    contestId: string;
+    catalogId: string;
+    unitCount: number;
+    excludeRegistrationId?: string | null;
+  },
+): Promise<void> {
+  const rows = await manager.query<{ id: string }[]>(
+    `SELECT id
+       FROM contest_registrations
+      WHERE contest_id = $1
+        AND rental_catalog_id = $2
+        AND status != $3
+        AND ($4::uuid IS NULL OR id != $4::uuid)`,
+    [
+      params.contestId,
+      params.catalogId,
+      ContestRegistrationStatus.CANCELLED,
+      params.excludeRegistrationId ?? null,
+    ],
+  );
+
+  if (rows.length >= params.unitCount) {
+    throw new AppError(
+      `Dòng xe này đã hết suất (quán chỉ có ${params.unitCount} xe)`,
+      409,
+      'CONTEST_RENTAL_CATALOG_FULL',
+    );
+  }
+}
+
+/**
+ * Khung giờ của phiếu mượn xe, suy ra từ lịch thi đấu chứ không do khách chọn.
+ *
+ * Bo tròn lên theo lưới slot của quán vì `createBooking` bắt độ dài booking phải
+ * chia hết cho `slot_duration_minutes`; giải 9:00-13:30 với lưới 60 phút sẽ thành
+ * 9:00-14:00. Phiếu là 0đ nên kéo dài thêm không phát sinh chi phí nào.
+ */
+export function resolveContestRentalWindow(
+  contest: Pick<Contest, 'startsAt' | 'endsAt' | 'config'>,
+  slotDurationMinutes: number,
+): { slotStart: Date; slotEnd: Date } {
+  const policy = getContestRentalPolicy(contest as Pick<Contest, 'config'>);
+  const slotStart = new Date(contest.startsAt.getTime() - policy.slot_window.before_min * 60_000);
+  const rawEnd = new Date(contest.endsAt.getTime() + policy.slot_window.after_min * 60_000);
+
+  const duration = Math.max(1, slotDurationMinutes);
+  const rawMinutes = Math.max(duration, (rawEnd.getTime() - slotStart.getTime()) / 60_000);
+  const alignedMinutes = Math.ceil(rawMinutes / duration) * duration;
+
+  return {
+    slotStart,
+    slotEnd: new Date(slotStart.getTime() + alignedMinutes * 60_000),
+  };
+}
+
 // ── Contest ↔ Session lifecycle sync (vehicle check-in / checkout bridge) ───
 
 export interface ContestCheckinSyncResult {
@@ -617,71 +751,294 @@ export async function getContestRentalOptions(contestId: string): Promise<Contes
   };
 }
 
+/**
+ * Danh sách dòng xe VĐV chọn được khi đăng ký thuê xe của giải.
+ *
+ * Trả về số suất còn lại của từng dòng chứ không liệt kê từng chiếc: khách chọn
+ * DÒNG xe, chiếc cụ thể do nhân viên gán lúc giao xe. Cũng không còn `hourly_rate`
+ * vì thuê xe trong giải là miễn phí — lệ phí giải là khoản duy nhất.
+ */
 export async function getContestAvailableRentalVehicles(
   contestId: string,
-  slot: ContestRentalSlotInput,
+  cafeId: string,
 ): Promise<
   Array<{
     catalog_id: string;
     catalog_name: string;
     tier: string;
-    hourly_rate: number;
     cover_image_url: string | null;
-    available_units: Array<{ id: string; identifier: string | null; color: string | null }>;
+    total_units: number;
+    remaining_slots: number;
   }>
 > {
+  const contest = await AppDataSource.getRepository(Contest).findOne({ where: { id: contestId } });
+  if (!contest) {
+    throw new AppError('Contest không tồn tại', 404, 'CONTEST_NOT_FOUND');
+  }
+
   const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({
-    where: { contestId, cafeId: slot.cafe_id },
+    where: { contestId, cafeId },
   });
   if (!contestCafe) {
     throw new AppError('Chi nhánh không tham gia contest', 400, 'CONTEST_CAFE_INVALID');
   }
 
-  const slotStart = new Date(slot.slot_start);
-  const slotEnd = new Date(slot.slot_end);
-
-  const catalogs = await AppDataSource.getRepository(VehicleCatalog).find({
-    where: { cafeId: slot.cafe_id },
-  });
+  const catalogs = await AppDataSource.getRepository(VehicleCatalog).find({ where: { cafeId } });
   const vehicles = await AppDataSource.getRepository(Vehicle).find({
-    where: { cafeId: slot.cafe_id, status: VehicleStatus.AVAILABLE },
+    where: { cafeId, status: VehicleStatus.AVAILABLE },
   });
 
-  const bookedVehicleIds = new Set(
-    (
-      await AppDataSource.query<{ vehicle_id: string }[]>(
-        `SELECT DISTINCT bv.vehicle_id
-         FROM booking_vehicles bv
-         JOIN bookings b ON b.id = bv.booking_id
-         WHERE b.cafe_id = $1
-           AND b.play_mode = $2
-           AND b.status IN ($3, $4)
-           AND b.slot_start < $5
-           AND b.slot_end > $6`,
-        [
-          slot.cafe_id,
-          BookingMode.RENTAL,
-          BookingStatus.PENDING,
-          BookingStatus.CONFIRMED,
-          slotEnd,
-          slotStart,
-        ],
-      )
-    ).map((row) => row.vehicle_id),
+  const claimedRows = await AppDataSource.query<{ rental_catalog_id: string; taken: string }[]>(
+    `SELECT rental_catalog_id, COUNT(*)::text AS taken
+       FROM contest_registrations
+      WHERE contest_id = $1
+        AND rental_catalog_id IS NOT NULL
+        AND status != $2
+      GROUP BY rental_catalog_id`,
+    [contestId, ContestRegistrationStatus.CANCELLED],
+  );
+  const claimedByCatalog = new Map(
+    claimedRows.map((row) => [row.rental_catalog_id, Number(row.taken)]),
   );
 
-  return catalogs.map((catalog) => ({
-    catalog_id: catalog.id,
-    catalog_name: catalog.name,
-    tier: catalog.tier,
-    hourly_rate: Number(catalog.hourlyRate),
-    cover_image_url: catalog.coverImageUrl ?? null,
-    available_units: vehicles
-      .filter((vehicle) => vehicle.catalogId === catalog.id && !bookedVehicleIds.has(vehicle.id))
-      .map((vehicle) => ({
-        id: vehicle.id,
-        identifier: vehicle.identifier,
-        color: vehicle.color,
-      })),
-  }));
+  return catalogs
+    .filter(
+      (catalog) =>
+        !contest.trackTypeId ||
+        catalog.compatibleTrackTypes.length === 0 ||
+        catalog.compatibleTrackTypes.includes(contest.trackTypeId),
+    )
+    .map((catalog) => {
+      const totalUnits = vehicles.filter((vehicle) => vehicle.catalogId === catalog.id).length;
+      const claimed = claimedByCatalog.get(catalog.id) ?? 0;
+      return {
+        catalog_id: catalog.id,
+        catalog_name: catalog.name,
+        tier: catalog.tier,
+        cover_image_url: catalog.coverImageUrl ?? null,
+        total_units: totalUnits,
+        remaining_slots: Math.max(0, totalUnits - claimed),
+      };
+    });
+}
+
+// ── Phiếu mượn xe ngày thi đấu ──────────────────────────────────────────────
+
+/**
+ * Khung giờ của phiếu mượn xe: đúng bằng khung giờ thi đấu.
+ *
+ * Bo tròn lên theo lưới slot của quán vì các bảng phía sau vẫn tính theo slot;
+ * giải 09:00-13:30 với lưới 60 phút thành 09:00-14:00. Phiếu là 0đ nên kéo dài
+ * thêm không phát sinh chi phí nào.
+ */
+export function resolveContestHandoverWindow(
+  contest: Pick<Contest, 'startsAt' | 'endsAt'>,
+  slotDurationMinutes: number,
+): { slotStart: Date; slotEnd: Date; slotCount: number } {
+  const duration = Math.max(1, slotDurationMinutes);
+  const rawMinutes = Math.max(
+    duration,
+    (contest.endsAt.getTime() - contest.startsAt.getTime()) / 60_000,
+  );
+  const slotCount = Math.ceil(rawMinutes / duration);
+
+  return {
+    slotStart: contest.startsAt,
+    slotEnd: new Date(contest.startsAt.getTime() + slotCount * duration * 60_000),
+    slotCount,
+  };
+}
+
+/** Xe còn rảnh thuộc đúng dòng VĐV đã đặt, để nhân viên chọn lúc giao xe. */
+export async function listContestHandoverUnits(
+  registration: ContestRegistration,
+): Promise<Array<{ id: string; identifier: string | null; color: string | null }>> {
+  if (registration.vehicleSource !== VehicleSource.RENTAL) return [];
+  if (!registration.rentalCatalogId || !registration.rentalCafeId) return [];
+
+  const units = await AppDataSource.getRepository(Vehicle).find({
+    where: {
+      catalogId: registration.rentalCatalogId,
+      cafeId: registration.rentalCafeId,
+      status: VehicleStatus.AVAILABLE,
+    },
+    order: { identifier: 'ASC' },
+  });
+
+  // Xe đã giao cho VĐV khác trong cùng giải thì không hiện nữa.
+  const takenRows = await AppDataSource.query<{ vehicle_id: string }[]>(
+    `SELECT bv.vehicle_id
+       FROM booking_vehicles bv
+       JOIN bookings b ON b.id = bv.booking_id
+      WHERE b.contest_id = $1
+        AND b.status != $2`,
+    [registration.contestId, BookingStatus.CANCELLED],
+  );
+  const taken = new Set(takenRows.map((row) => row.vehicle_id));
+
+  return units
+    .filter((unit) => !taken.has(unit.id))
+    .map((unit) => ({ id: unit.id, identifier: unit.identifier, color: unit.color }));
+}
+
+/**
+ * Dựng phiếu mượn xe 0đ và mở phiên chơi cho VĐV thuê xe, ngay lúc nhân viên
+ * giao xe tại quầy.
+ *
+ * KHÔNG dùng `createBooking`/`startCheckIn` của luồng đặt sân thường: những hàm
+ * đó áp các luật sinh ra cho khách lẻ — báo trước bao lâu, tối đa mấy slot, và
+ * nhất là "quá 30 phút kể từ giờ bắt đầu là hết hạn check-in". Giải chạy cả buổi
+ * mà VĐV tới muộn 40 phút thì luật đó chặn không cho nhận xe.
+ *
+ * Phiếu này không phải giao dịch thương mại: không giá, không thanh toán, không
+ * giữ chỗ (giải đã khoá sân từ trước). Nó tồn tại để chạy tiếp inspection và cơ
+ * chế tính hư hỏng, nên vẫn dựng đủ `booking_vehicles` + `session_vehicles`.
+ */
+export async function createContestVehicleHandover(params: {
+  contest: Contest;
+  registration: ContestRegistration;
+  vehicleId: string;
+  staffUserId: string;
+}): Promise<{ bookingId: string; sessionId: string; vehicleId: string }> {
+  const { contest, registration, vehicleId, staffUserId } = params;
+
+  if (!registration.rentalCafeId || !registration.rentalCatalogId) {
+    throw new AppError(
+      'Đăng ký này không có dòng xe đã đặt để giao',
+      400,
+      'CONTEST_RENTAL_CHOICE_MISSING',
+    );
+  }
+
+  const vehicle = await AppDataSource.getRepository(Vehicle).findOne({
+    where: { id: vehicleId, cafeId: registration.rentalCafeId },
+  });
+  if (!vehicle) {
+    throw new AppError('Xe không tồn tại ở chi nhánh này', 404, 'VEHICLE_NOT_FOUND');
+  }
+  if (vehicle.catalogId !== registration.rentalCatalogId) {
+    throw new AppError(
+      'Xe không thuộc dòng xe VĐV đã đặt',
+      400,
+      'CONTEST_HANDOVER_VEHICLE_MISMATCH',
+    );
+  }
+  if (vehicle.status !== VehicleStatus.AVAILABLE) {
+    throw new AppError('Xe này hiện không sẵn sàng để giao', 400, 'VEHICLE_UNAVAILABLE');
+  }
+
+  const cafe = await AppDataSource.getRepository(Cafe).findOne({
+    where: { id: registration.rentalCafeId },
+  });
+  if (!cafe) throw new AppError('Chi nhánh không tồn tại', 404, 'CAFE_NOT_FOUND');
+
+  const catalog = await AppDataSource.getRepository(VehicleCatalog).findOne({
+    where: { id: vehicle.catalogId },
+  });
+
+  const window = resolveContestHandoverWindow(contest, cafe.slotDurationMinutes);
+
+  return AppDataSource.transaction(async (manager) => {
+    // Một VĐV chỉ nhận một phiếu; giao lại lần nữa là lỗi thao tác.
+    const existing = await manager.getRepository(Booking).findOne({
+      where: { contestId: contest.id, customerId: registration.userId },
+    });
+    if (existing) {
+      throw new AppError(
+        'VĐV này đã được giao xe trong giải',
+        409,
+        'CONTEST_HANDOVER_ALREADY_EXISTS',
+      );
+    }
+
+    const booking = await manager.getRepository(Booking).save(
+      manager.getRepository(Booking).create({
+        customerId: registration.userId,
+        cafeId: registration.rentalCafeId!,
+        trackTypeId: contest.trackTypeId ?? cafe.trackTypes?.[0],
+        trackConfigId: null,
+        playMode: BookingMode.RENTAL,
+        source: BookingSource.CONTEST,
+        status: BookingStatus.CONFIRMED,
+        slotStart: window.slotStart,
+        slotEnd: window.slotEnd,
+        slotCount: window.slotCount,
+        paymentExpiresAt: window.slotStart,
+        contestId: contest.id,
+        discountAmount: 0,
+        snapshot: {
+          contest_id: contest.id,
+          contest_registration_id: registration.id,
+          contest_handover: true,
+          slot_fee_total: 0,
+          fnb_total: 0,
+          discount_amount: 0,
+          total_charged: 0,
+          vehicles: [{ rental_fee: 0, security_deposit: 0 }],
+          captured_at: new Date().toISOString(),
+        },
+      }),
+    );
+
+    const participant = await manager.getRepository(BookingParticipant).save(
+      manager.getRepository(BookingParticipant).create({
+        bookingId: booking.id,
+        userId: registration.userId,
+        participantType: BookingParticipantType.BOOKER,
+        isPrimaryResponsible: true,
+      }),
+    );
+
+    // Snapshot 0đ: thuê xe trong giải miễn phí và không thu cọc, nhưng vẫn giữ
+    // damage_multiplier để tính tiền hư hỏng lúc trả xe.
+    const bookingVehicle = await manager.getRepository(BookingVehicle).save(
+      manager.getRepository(BookingVehicle).create({
+        bookingId: booking.id,
+        vehicleId: vehicle.id,
+        hourlyRateSnapshot: 0,
+        rentalFeeSnapshot: 0,
+        securityDepositSnapshot: 0,
+        damageMultiplierSnapshot: Number(catalog?.damageMultiplier ?? 1),
+      }),
+    );
+
+    const session = await manager.getRepository(Session).save(
+      manager.getRepository(Session).create({
+        bookingId: booking.id,
+        cafeId: booking.cafeId,
+        status: SessionStatus.CHECKED_IN,
+        checkedInBy: staffUserId,
+        actualStartAt: new Date(),
+        plannedEndAt: booking.slotEnd,
+        actualTotalAmount: 0,
+      }),
+    );
+
+    const user = await manager.getRepository(User).findOne({ where: { id: registration.userId } });
+    const sessionParticipant = await manager.getRepository(SessionParticipant).save(
+      manager.getRepository(SessionParticipant).create({
+        sessionId: session.id,
+        bookingParticipantId: participant.id,
+        userId: registration.userId,
+        displayName: user?.full_name ?? 'VĐV',
+        phone: user?.phone ?? null,
+        role: ParticipantRole.DRIVER,
+        isPrimaryResponsible: true,
+        checkedInAt: new Date(),
+      }),
+    );
+
+    await manager.getRepository(SessionVehicle).save(
+      manager.getRepository(SessionVehicle).create({
+        sessionId: session.id,
+        bookingVehicleId: bookingVehicle.id,
+        vehicleSource: VehicleSource.RENTAL,
+        vehicleId: vehicle.id,
+        status: SessionVehicleStatus.ASSIGNED,
+        assignedToParticipantId: sessionParticipant.id,
+      }),
+    );
+
+    return { bookingId: booking.id, sessionId: session.id, vehicleId: vehicle.id };
+  });
 }

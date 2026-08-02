@@ -502,6 +502,9 @@ async function persistGeneratedMatches(
   const createdMatches: ContestMatch[] = [];
 
   for (const generated of generatedMatches) {
+    // Trận đã ngã ngũ ngay lúc bốc thăm (gặp ô trống, hoặc cả hai ghế đều trống)
+    // được đóng luôn để không nằm chờ staff thao tác.
+    const decidedAtDraw = generated.status === ContestMatchStatus.COMPLETED;
     const match = await matchRepo.save(
       matchRepo.create({
         contestId,
@@ -513,6 +516,10 @@ async function persistGeneratedMatches(
         matchType: generated.matchType,
         status: generated.status,
         scheduledAt: generated.scheduledAt,
+        startedAt: null,
+        endedAt: decidedAtDraw ? new Date() : null,
+        decidedAt: decidedAtDraw ? new Date() : null,
+        decidedBy: decidedAtDraw ? options.createdBy : null,
         advancementRule: generated.advancementRule,
         metadata: generated.metadata,
         createdBy: options.createdBy,
@@ -550,6 +557,7 @@ async function persistGeneratedMatches(
           gridPosition: participant.gridPosition ?? null,
           seedNo: participant.seedNo ?? null,
           status: participant.status,
+          isWinner: participant.isWinner ?? false,
           metadata: participant.metadata ?? {},
         }),
       );
@@ -623,12 +631,8 @@ export async function generateContestMatches(
     createdBy: viewer.userId,
   });
 
-  // Auto-advance bye winners so staff does not need to create fake results.
-  for (const [index, generated] of generatedMatches.entries()) {
-    if (generated.isBye && generated.byeWinnerRegistrationId) {
-      await advanceByeWinner(createdMatches[index], generated.byeWinnerRegistrationId, viewer);
-    }
-  }
+  // Người thắng do gặp ô trống đã được engine đẩy sang vòng sau ngay lúc sinh sơ
+  // đồ, nên ở đây không cần advance thêm lần nữa.
 
   if (contest.status === ContestStatus.OPEN) {
     contest.status = ContestStatus.CLOSED;
@@ -737,12 +741,8 @@ export async function generateContestFinalBracket(contestId: string, viewer: Vie
     createdBy: viewer.userId,
   });
 
-  // Auto-advance bye winners so staff does not need to create fake results.
-  for (const [index, generated] of generatedMatches.entries()) {
-    if (generated.isBye && generated.byeWinnerRegistrationId) {
-      await advanceByeWinner(createdMatches[index], generated.byeWinnerRegistrationId, viewer);
-    }
-  }
+  // Người thắng do gặp ô trống đã được engine đẩy sang vòng sau ngay lúc sinh sơ
+  // đồ, nên ở đây không cần advance thêm lần nữa.
 
   await writeContestAudit({
     contestId,
@@ -1066,68 +1066,6 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
   });
 
   return mapMatchesPayload(match.contestId, viewer);
-}
-
-async function advanceByeWinner(match: ContestMatch, winnerRegistrationId: string, viewer: Viewer) {
-  if (!match.nextMatchId) return;
-
-  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
-  const matchRepo = AppDataSource.getRepository(ContestMatch);
-
-  const winnerParticipant = await participantRepo.findOne({
-    where: { matchId: match.id, registrationId: winnerRegistrationId },
-  });
-  if (!winnerParticipant) return;
-
-  const nextMatch = await matchRepo.findOne({ where: { id: match.nextMatchId } });
-  if (!nextMatch) return;
-
-  const nextParticipants = await participantRepo.find({
-    where: { matchId: nextMatch.id },
-    order: { slotNo: 'ASC' },
-  });
-  const existing = nextParticipants.find(
-    (item) =>
-      item.metadata?.source_match_id === match.id &&
-      item.registrationId === winnerParticipant.registrationId,
-  );
-  if (existing) return;
-
-  const usedSlots = new Set(nextParticipants.map((item) => item.slotNo));
-  let slotNo = 1;
-  while (usedSlots.has(slotNo)) slotNo += 1;
-
-  const advancedParticipant = participantRepo.create({
-    matchId: nextMatch.id,
-    registrationId: winnerParticipant.registrationId,
-    slotNo,
-    lane: `L${slotNo}`,
-    seedNo: winnerParticipant.seedNo,
-    status: ContestParticipantStatus.READY,
-    metadata: {
-      source_match_id: match.id,
-      source_match_no: match.matchNo,
-      source_round_no: match.roundNo,
-      bye_advance: true,
-    },
-  });
-  await participantRepo.save(advancedParticipant);
-
-  nextMatch.status = ContestMatchStatus.READY;
-  await matchRepo.save(nextMatch);
-
-  await writeContestAudit({
-    contestId: match.contestId,
-    matchId: match.id,
-    actorId: viewer.userId,
-    actorRole: viewer.role,
-    eventType: 'match.advanced',
-    afterJson: {
-      next_match_id: nextMatch.id,
-      winners: [winnerParticipant.registrationId],
-      bye: true,
-    },
-  });
 }
 
 type LeaderboardEntry = {

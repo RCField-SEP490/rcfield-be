@@ -31,7 +31,10 @@ import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { writeContestAudit } from './contest.helpers';
-import { sendContestRegistrationStatusNotification } from './contest/registration-side-effects';
+import {
+  autoConfirmRentalRegistration,
+  sendContestRegistrationStatusNotification,
+} from './contest/registration-side-effects';
 import {
   applyContestRentalPricing,
   getContestRentalPolicy,
@@ -750,6 +753,8 @@ export async function processConfirmationResult(
       afterJson: { paymentStatus: registration.paymentStatus, payment_source: paymentSource },
       reason: `${paymentSource} confirmation`,
     });
+    // Thuê xe của quán: trả tiền xong là có suất, không phải chờ ai bấm duyệt.
+    await autoConfirmRentalRegistration(registration.id);
     logger.info(
       'PaymentService',
       `contest entry confirmed registrationId=${registration.id} txnRef=${result.txnRef}`,

@@ -122,7 +122,13 @@ export async function listContests(options: ListContestsOptions) {
     qb.andWhere('contest_cafe.cafe_id = :cafeId', { cafeId: options.cafe_id });
   }
 
-  qb.orderBy('contest.starts_at', 'DESC');
+  // Phải là TÊN THUỘC TÍNH entity, không phải tên cột DB. Khi query có join và
+  // dùng skip/take, TypeORM chuyển sang đường DISTINCT-subquery và tra cột sắp
+  // xếp trong metadata entity; đưa 'starts_at' vào thì tra không ra và nổ
+  // `Cannot read properties of undefined (reading 'databaseName')`.
+  // Provider không dính vì nhánh của họ không join, còn staff thì luôn join
+  // contest_staff_assignments nên mọi lần mở danh sách giải đều 500.
+  qb.orderBy('contest.startsAt', 'DESC');
 
   const [rows, total] = await qb
     .skip((options.page - 1) * options.limit)

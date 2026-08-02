@@ -4,7 +4,6 @@ import { logger } from '../../config/logger';
 import { Booking } from '../../models/booking.entity';
 import { ContestCafe } from '../../models/contest-cafe.entity';
 import { ContestRegistration } from '../../models/contest-registration.entity';
-import { PaymentComponent } from '../../models/payment-component.entity';
 import { PaymentTransaction } from '../../models/payment-transaction.entity';
 import {
   AppError,
@@ -13,8 +12,6 @@ import {
   ContestRegistrationStatus,
   ContestStatus,
   NotificationType,
-  PaymentComponentStatus,
-  PaymentComponentType,
   PaymentTransactionStatus,
   PaymentTransactionSubjectType,
   PaymentTransactionType,
@@ -32,7 +29,12 @@ import { Viewer } from '../cafe.service';
 import { createPaymentUrl } from '../vnpay.service';
 import { env } from '../../config/env';
 import { processMockConfirmation } from '../payment.service';
-import { createContestRentalBooking, ContestRentalSlotInput } from '../contest-rental.service';
+import {
+  assertContestRentalCatalogHasSlot,
+  createContestVehicleHandover,
+  listContestHandoverUnits,
+  resolveContestRentalChoice,
+} from '../contest-rental.service';
 import { transition } from '../booking.service';
 import { mapContestRegistrationsPayload } from './payload';
 import {
@@ -42,6 +44,8 @@ import {
   removeRegistrationFromActiveMatches,
 } from './guards';
 import {
+  autoConfirmRentalRegistration,
+  sendContestRegistrationApprovedEmail,
   sendContestRegistrationCreatedSideEffects,
   sendContestRegistrationStatusNotification,
 } from './registration-side-effects';
@@ -97,31 +101,29 @@ export async function createContestRegistration(
     );
   }
 
-  let resolvedBookingId: string | undefined;
-  let resolvedVehicleId: string | undefined;
-  // Booking created inline from rental_slot (WF-B). If the registration transaction
-  // below fails, this booking is cancelled as a compensating action so a failed
-  // registration never leaves an orphaned PENDING booking behind.
-  let inlineRentalBookingId: string | null = null;
-  let inlineRentalTotal = 0;
+  // Thuê xe của quán: khách chỉ chọn DÒNG xe (loại/màu hợp với đường đua của
+  // giải). Không chọn khung giờ vì lịch thi đấu đã quyết định, và không có tiền
+  // thuê — lệ phí giải là khoản duy nhất. Chiếc xe cụ thể cùng phiếu mượn xe 0đ
+  // được tạo lúc check-in khi nhân viên giao xe.
+  let rentalCatalogId: string | null = null;
+  let rentalCafeId: string | null = null;
+  let rentalUnitCount = 0;
 
   if (body.vehicle_source === VehicleSource.RENTAL) {
-    if (!body.rental_slot) {
+    if (!body.rental?.cafe_id || !body.rental?.vehicle_catalog_id) {
       throw new AppError(
-        'Đăng ký RENTAL yêu cầu chọn khung giờ thuê xe (rental_slot)',
+        'Đăng ký thuê xe cần chọn chi nhánh và dòng xe',
         400,
-        'CONTEST_RENTAL_BOOKING_REQUIRED',
+        'CONTEST_RENTAL_CHOICE_REQUIRED',
       );
     }
-    const rentalResult = await createContestRentalBooking(
-      contest,
-      viewer.userId,
-      body.rental_slot as ContestRentalSlotInput,
-    );
-    resolvedBookingId = rentalResult.booking_id;
-    resolvedVehicleId = rentalResult.vehicle_id;
-    inlineRentalBookingId = rentalResult.booking_id;
-    inlineRentalTotal = rentalResult.total_amount;
+    const { catalog, unitCount } = await resolveContestRentalChoice(contest, {
+      cafe_id: body.rental.cafe_id,
+      vehicle_catalog_id: body.rental.vehicle_catalog_id,
+    });
+    rentalCatalogId = catalog.id;
+    rentalCafeId = body.rental.cafe_id;
+    rentalUnitCount = unitCount;
   } else {
     if (!body.byoc_vehicle_name?.trim()) {
       throw new AppError(
@@ -132,112 +134,73 @@ export async function createContestRegistration(
     }
   }
 
-  let saved: ContestRegistration;
-  try {
-    saved = await AppDataSource.transaction(async (manager) => {
-      const transactionalRepo = manager.getRepository(ContestRegistration);
+  const saved: ContestRegistration = await AppDataSource.transaction(async (manager) => {
+    const transactionalRepo = manager.getRepository(ContestRegistration);
 
-      // Lock existing registrations for this contest to serialize concurrent registrations.
-      const existing = await transactionalRepo
-        .createQueryBuilder('registration')
-        .setLock('pessimistic_write')
-        .where('registration.contest_id = :contestId', { contestId })
-        .andWhere('registration.user_id = :userId', { userId: viewer.userId })
-        .getOne();
+    // Lock existing registrations for this contest to serialize concurrent registrations.
+    const existing = await transactionalRepo
+      .createQueryBuilder('registration')
+      .setLock('pessimistic_write')
+      .where('registration.contest_id = :contestId', { contestId })
+      .andWhere('registration.user_id = :userId', { userId: viewer.userId })
+      .getOne();
 
-      if (existing && existing.status !== ContestRegistrationStatus.CANCELLED) {
-        throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
-      }
+    if (existing && existing.status !== ContestRegistrationStatus.CANCELLED) {
+      throw new AppError('Bạn đã đăng ký contest này rồi', 409, 'CONTEST_ALREADY_REGISTERED');
+    }
 
-      if (contest.capacity && contest.capacity > 0) {
-        const lockedRegistrations = await manager.query(
-          `SELECT id
+    if (contest.capacity && contest.capacity > 0) {
+      const lockedRegistrations = await manager.query(
+        `SELECT id
          FROM contest_registrations
          WHERE contest_id = $1 AND status != $2
          FOR UPDATE`,
-          [contestId, ContestRegistrationStatus.CANCELLED],
-        );
-        const activeCount = lockedRegistrations.length;
-        if (activeCount >= contest.capacity) {
-          throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
-        }
-      }
-
-      // WF-B combined payment: when the inline rental booking is created and the
-      // contest charges an entry fee, fold the fee into the booking so the customer
-      // pays booking + entry fee in a single VNPay transaction. The component stays
-      // HELD until the booking payment succeeds; the registration paymentStatus is
-      // PENDING_PAYMENT and flips to MARKED_PAID from the payment confirm handler.
-      const entryFee = Number(contest.entryFee ?? 0);
-      if (inlineRentalBookingId && entryFee > 0) {
-        const bookingRepo = manager.getRepository(Booking);
-        const inlineBooking = await bookingRepo.findOne({ where: { id: inlineRentalBookingId } });
-        if (inlineBooking) {
-          const snapshot = (inlineBooking.snapshot ?? {}) as Record<string, unknown>;
-          inlineBooking.snapshot = {
-            ...snapshot,
-            total_charged: Number(snapshot.total_charged ?? inlineRentalTotal) + entryFee,
-            contest_entry_fee: entryFee,
-          };
-          await bookingRepo.save(inlineBooking);
-          const componentRepo = manager.getRepository(PaymentComponent);
-          await componentRepo.save(
-            componentRepo.create({
-              bookingId: inlineBooking.id,
-              bookingVehicleId: null,
-              type: PaymentComponentType.CONTEST_ENTRY_FEE,
-              amount: entryFee,
-              status: PaymentComponentStatus.HELD,
-            }),
-          );
-        }
-      }
-
-      const registration = existing ?? transactionalRepo.create();
-      registration.contestId = contestId;
-      registration.userId = viewer.userId;
-      registration.participantRoleSnapshot = UserRole.CUSTOMER;
-      registration.vehicleSource = body.vehicle_source;
-      registration.vehicleId =
-        body.vehicle_source === VehicleSource.RENTAL ? (resolvedVehicleId ?? null) : null;
-      registration.bookingId =
-        body.vehicle_source === VehicleSource.RENTAL ? (resolvedBookingId ?? null) : null;
-      registration.customerVehicleId = null;
-      registration.status = ContestRegistrationStatus.PENDING;
-      registration.checkInCode =
-        existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
-      registration.entryFeeAmount = Number(contest.entryFee ?? 0);
-      registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
-      registration.paymentStatus =
-        Number(contest.entryFee ?? 0) > 0
-          ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
-          : ContestEntryFeePaymentStatus.PENDING_REVIEW;
-      registration.metadata = {
-        ...(registration.metadata ?? {}),
-        booking_id: resolvedBookingId ?? null,
-        byoc_declaration:
-          body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
-      };
-
-      return transactionalRepo.save(registration);
-    });
-  } catch (err) {
-    // Compensating action: the inline rental booking was created outside the
-    // registration transaction (createBooking manages its own repositories), so
-    // cancel it here to keep register-with-rental atomic from the user's view.
-    if (inlineRentalBookingId) {
-      try {
-        await transition(inlineRentalBookingId, 'PAYMENT_TIMEOUT');
-      } catch (cancelErr) {
-        logger.error(
-          'ContestService',
-          `failed to cancel inline rental booking ${inlineRentalBookingId} after registration failure`,
-          cancelErr,
-        );
+        [contestId, ContestRegistrationStatus.CANCELLED],
+      );
+      const activeCount = lockedRegistrations.length;
+      if (activeCount >= contest.capacity) {
+        throw new AppError('Contest đã đủ sức chứa', 409, 'CONTEST_CAPACITY_REACHED');
       }
     }
-    throw err;
-  }
+
+    // Giữ chỗ dòng xe: đếm trong cùng transaction đã khoá registrations ở trên
+    // nên hai người chọn chiếc cuối cùng của một dòng không thể cùng lọt qua.
+    if (rentalCatalogId) {
+      await assertContestRentalCatalogHasSlot(manager, {
+        contestId,
+        catalogId: rentalCatalogId,
+        unitCount: rentalUnitCount,
+        excludeRegistrationId: existing?.id ?? null,
+      });
+    }
+
+    const registration = existing ?? transactionalRepo.create();
+    registration.contestId = contestId;
+    registration.userId = viewer.userId;
+    registration.participantRoleSnapshot = UserRole.CUSTOMER;
+    registration.vehicleSource = body.vehicle_source;
+    // Chiếc xe cụ thể và phiếu mượn xe chỉ có khi nhân viên giao xe lúc check-in.
+    registration.vehicleId = null;
+    registration.bookingId = null;
+    registration.rentalCatalogId = rentalCatalogId;
+    registration.rentalCafeId = rentalCafeId;
+    registration.customerVehicleId = null;
+    registration.status = ContestRegistrationStatus.PENDING;
+    registration.checkInCode = existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
+    registration.entryFeeAmount = Number(contest.entryFee ?? 0);
+    registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
+    registration.paymentStatus =
+      Number(contest.entryFee ?? 0) > 0
+        ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
+        : ContestEntryFeePaymentStatus.NOT_REQUIRED;
+    registration.metadata = {
+      ...(registration.metadata ?? {}),
+      byoc_declaration:
+        body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
+    };
+
+    return transactionalRepo.save(registration);
+  });
 
   await writeContestAudit({
     contestId,
@@ -248,28 +211,10 @@ export async function createContestRegistration(
     afterJson: { status: saved.status, paymentStatus: saved.paymentStatus },
   });
   await sendContestRegistrationCreatedSideEffects(saved);
+  // Thuê xe của quán mà không còn lệ phí phải chờ thì vào thẳng danh sách thi đấu.
+  await autoConfirmRentalRegistration(saved.id);
 
   const [mapped] = await mapContestRegistrationsPayload([saved], { includeContest: true });
-
-  // WF-B: include the linked booking so FE can proceed to payment in one step.
-  if (resolvedBookingId) {
-    const booking = await AppDataSource.getRepository(Booking).findOne({
-      where: { id: resolvedBookingId },
-    });
-    if (booking) {
-      return {
-        ...mapped,
-        booking: {
-          id: booking.id,
-          status: booking.status,
-          payment_expires_at: booking.paymentExpiresAt,
-          total_amount: Number(
-            (booking.snapshot as { total_charged?: number } | null)?.total_charged ?? 0,
-          ),
-        },
-      };
-    }
-  }
   return mapped;
 }
 
@@ -397,6 +342,7 @@ export async function markEntryFeePaid(registrationId: string, viewer: Viewer, n
     afterJson: { paymentStatus: registration.paymentStatus },
     reason: note ?? null,
   });
+  await autoConfirmRentalRegistration(registration.id);
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
@@ -417,6 +363,7 @@ export async function waiveEntryFee(registrationId: string, viewer: Viewer, note
     afterJson: { paymentStatus: registration.paymentStatus },
     reason: note ?? null,
   });
+  await autoConfirmRentalRegistration(registration.id);
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
@@ -438,19 +385,8 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
     );
   }
 
-  if (registration.vehicleSource === VehicleSource.RENTAL && registration.bookingId) {
-    const booking = await AppDataSource.getRepository(Booking).findOne({
-      where: { id: registration.bookingId },
-    });
-    if (!booking || booking.status !== BookingStatus.CONFIRMED) {
-      throw new AppError(
-        'Booking thuê xe phải được thanh toán (CONFIRMED) trước khi duyệt đăng ký',
-        400,
-        'BOOKING_NOT_CONFIRMED',
-      );
-    }
-  }
-
+  // Không còn ràng buộc "booking phải CONFIRMED": thuê xe trong giải là miễn phí
+  // nên chẳng có gì để thanh toán, và phiếu mượn xe chỉ sinh ra lúc giao xe.
   const contest = await getContestOrThrow(registration.contestId);
   if (![ContestStatus.OPEN, ContestStatus.CLOSED].includes(contest.status)) {
     throw new AppError(
@@ -500,9 +436,11 @@ export async function approveRegistration(registrationId: string, viewer: Viewer
   await sendContestRegistrationStatusNotification(
     registration,
     NotificationType.CONTEST_REGISTRATION_APPROVED,
-    'Dang ky giai dau da duoc duyet',
-    'Dang ky cua ban da duoc duyet. Ban hay theo doi thong bao de den check-in dung gio.',
+    'Bạn đã có suất thi đấu',
+    'Đăng ký của bạn đã được duyệt. Kiểm tra email để lấy mã check-in và địa điểm thi đấu.',
   );
+  // Email mang mã check-in chỉ gửi ở đây — khi suất thi đấu đã thật sự chắc chắn.
+  await sendContestRegistrationApprovedEmail(registration);
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
 }
@@ -587,8 +525,8 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
   await sendContestRegistrationStatusNotification(
     registration,
     NotificationType.CONTEST_REGISTRATION_REJECTED,
-    'Dang ky giai dau bi tu choi',
-    `Dang ky cua ban da bi tu choi.${registration.cancellationReason ? ` Ly do: ${registration.cancellationReason}` : ''}`,
+    'Đăng ký giải đấu bị từ chối',
+    `Đăng ký của bạn đã bị từ chối.${registration.cancellationReason ? ` Lý do: ${registration.cancellationReason}` : ''}`,
   );
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
@@ -696,8 +634,8 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
   await sendContestRegistrationStatusNotification(
     registration,
     NotificationType.CONTEST_REGISTRATION_CANCELLED,
-    'Dang ky giai dau da duoc huy',
-    `Dang ky cua ban da duoc huy.${registration.cancellationReason ? ` Ly do: ${registration.cancellationReason}` : ''}`,
+    'Đăng ký giải đấu đã được huỷ',
+    `Đăng ký của bạn đã được huỷ.${registration.cancellationReason ? ` Lý do: ${registration.cancellationReason}` : ''}`,
   );
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
@@ -733,6 +671,7 @@ export async function checkInRegistration(
   registrationId: string,
   checkedInCafeId: string,
   viewer: Viewer,
+  rentalVehicleId?: string | null,
   byocConfirmed?: boolean,
   byocInspection?: {
     photos?: Array<{ url: string; angle?: string; notes?: string }>;
@@ -857,6 +796,27 @@ export async function checkInRegistration(
     }
   }
 
+  // VĐV thuê xe của quán: phải chọn chiếc cụ thể để giao ngay tại quầy. Kiểm
+  // trước khi đổi trạng thái để không có ai bị đánh dấu đã điểm danh mà tay
+  // không có xe.
+  // Đăng ký cũ (trước khi có bước chọn dòng xe) không có gì để giao, nên không
+  // chặn điểm danh của họ.
+  const needsVehicleHandover =
+    registration.vehicleSource === VehicleSource.RENTAL && Boolean(registration.rentalCatalogId);
+
+  if (needsVehicleHandover) {
+    if (!rentalVehicleId) {
+      throw new AppError(
+        'Cần chọn xe để giao cho VĐV trước khi điểm danh',
+        400,
+        'CONTEST_HANDOVER_VEHICLE_REQUIRED',
+      );
+    }
+    if (registration.bookingId) {
+      throw new AppError('VĐV này đã được giao xe', 409, 'CONTEST_HANDOVER_ALREADY_EXISTS');
+    }
+  }
+
   // Build the merged metadata first so the BYOC inspection payload is persisted
   // in the same atomic UPDATE as the status transition.
   let mergedMetadata = registration.metadata ?? {};
@@ -900,6 +860,42 @@ export async function checkInRegistration(
     );
   }
 
+  if (needsVehicleHandover && rentalVehicleId) {
+    try {
+      const handover = await createContestVehicleHandover({
+        contest,
+        registration,
+        vehicleId: rentalVehicleId,
+        staffUserId: viewer.userId,
+      });
+      await repo.update(
+        { id: registration.id },
+        { bookingId: handover.bookingId, vehicleId: handover.vehicleId },
+      );
+      await writeContestAudit({
+        contestId: contest.id,
+        registrationId: registration.id,
+        actorId: viewer.userId,
+        actorRole: viewer.role,
+        eventType: 'registration.vehicle_handed_over',
+        afterJson: { booking_id: handover.bookingId, vehicle_id: handover.vehicleId },
+      });
+    } catch (error) {
+      // Giao xe hỏng thì trả trạng thái về, không để VĐV bị ghi là đã điểm danh
+      // trong khi chưa cầm xe.
+      await repo.update(
+        { id: registration.id, status: ContestRegistrationStatus.CHECKED_IN },
+        {
+          status: ContestRegistrationStatus.CONFIRMED,
+          checkedInAt: null,
+          checkedInBy: null,
+          checkedInCafeId: null,
+        },
+      );
+      throw error;
+    }
+  }
+
   const savedRegistration = await repo.findOne({ where: { id: registration.id } });
   if (!savedRegistration)
     throw new AppError('Registration không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
@@ -915,8 +911,8 @@ export async function checkInRegistration(
   await sendContestRegistrationStatusNotification(
     savedRegistration,
     NotificationType.CONTEST_CHECKIN_CONFIRMED,
-    'Check-in giai dau thanh cong',
-    'Ban da check-in thanh cong. He thong se cap nhat bracket va luot thi tiep theo cho ban.',
+    'Check-in thành công',
+    'Bạn đã check-in thành công. Theo dõi thông báo để biết sơ đồ đấu và lượt thi tiếp theo của mình.',
   );
   const [mapped] = await mapContestRegistrationsPayload([savedRegistration], {
     includeContest: true,
@@ -1043,4 +1039,15 @@ export async function disqualifyRegistration(
   });
   const [mapped] = await mapContestRegistrationsPayload([registration], { includeContest: false });
   return mapped;
+}
+
+/** Xe còn rảnh thuộc dòng VĐV đã đặt — nhân viên chọn một chiếc để giao. */
+export async function listRegistrationHandoverUnits(registrationId: string, viewer: Viewer) {
+  const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+    where: { id: registrationId },
+  });
+  if (!registration)
+    throw new AppError('Registration không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
+  await assertContestProviderOrAssignedStaff(registration.contestId, viewer);
+  return listContestHandoverUnits(registration);
 }

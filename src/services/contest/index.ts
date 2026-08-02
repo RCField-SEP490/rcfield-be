@@ -21,6 +21,7 @@ export {
   updateByocDeclaration,
   lookupRegistrationByCode,
   checkInRegistration,
+  listRegistrationHandoverUnits,
   createContestEntryPaymentUrl,
   disqualifyRegistration,
 } from './registrations';

@@ -12,9 +12,11 @@ import {
   VehicleSource,
 } from '../../types';
 import {
+  GeneratedMatch,
   KnockoutEngine,
   QualifyingFinalEngine,
   TimeTrialEngine,
+  buildBracketSeedOrder,
   getContestFormatEngine,
 } from '../../services/contest-format.engine';
 
@@ -127,19 +129,67 @@ describe('ContestFormatEngine', () => {
     });
   });
 
+  describe('buildBracketSeedOrder', () => {
+    it('should pair top seeds against bottom seeds', () => {
+      expect(buildBracketSeedOrder(4)).toEqual([1, 4, 2, 3]);
+      expect(buildBracketSeedOrder(8)).toEqual([1, 8, 4, 5, 2, 7, 3, 6]);
+    });
+
+    it('should keep seed 1 and seed 2 in opposite halves', () => {
+      const order = buildBracketSeedOrder(8);
+      const firstHalf = order.slice(0, 4);
+      expect(firstHalf).toContain(1);
+      expect(firstHalf).not.toContain(2);
+    });
+  });
+
   describe('KnockoutEngine', () => {
-    it('should generate bracket with correct round count', () => {
+    /**
+     * Mỗi trận sẽ đấu phải được cấp đúng 2 tay đua: người đã có sẵn trong sơ đồ
+     * cộng với người thắng của các nhánh còn chưa đấu. Thiếu một nguồn cấp nghĩa
+     * là trận đó sẽ treo với một người và staff buộc phải nhập kết quả giả.
+     */
+    function countIncomingDrivers(matches: GeneratedMatch[]): Map<GeneratedMatch, number> {
+      const byRound = new Map<number, GeneratedMatch[]>();
+      for (const match of matches) {
+        if (match.metadata.third_place === true) continue;
+        byRound.set(match.roundNo, [...(byRound.get(match.roundNo) ?? []), match]);
+      }
+
+      const roundNumbers = [...byRound.keys()].sort((a, b) => a - b);
+      const counts = new Map<GeneratedMatch, number>();
+      for (const [roundIndex, roundNo] of roundNumbers.entries()) {
+        const round = byRound.get(roundNo) ?? [];
+        const previousRound =
+          roundIndex > 0 ? (byRound.get(roundNumbers[roundIndex - 1]) ?? []) : [];
+        for (const [matchIndex, match] of round.entries()) {
+          const undecidedFeeders = previousRound.filter(
+            (feeder) =>
+              feeder.nextMatchIndex === matchIndex &&
+              feeder.status !== ContestMatchStatus.COMPLETED,
+          ).length;
+          counts.set(match, match.participants.length + undecidedFeeders);
+        }
+      }
+      return counts;
+    }
+
+    function generateKnockout(participantCount: number, capacity: number, config = {}) {
       const engine = new KnockoutEngine();
-      const contest = createMockContest({ config: { format: 'KNOCKOUT' } });
-      const registrations = Array.from({ length: 8 }, (_, i) =>
+      const contest = createMockContest({ capacity, config: { format: 'KNOCKOUT', ...config } });
+      const registrations = Array.from({ length: participantCount }, (_, i) =>
         createMockRegistration(`r${i + 1}`, i),
       );
-      const matches = engine.generateMatches({
+      return engine.generateMatches({
         contest,
         cafeId: 'cafe-1',
         registrations,
         registrationOrder: registrations.map((r) => r.id),
       });
+    }
+
+    it('should generate bracket with correct round count when the bracket is full', () => {
+      const matches = generateKnockout(8, 8);
 
       // 4 round 1 + 2 semifinal + 1 final = 7
       expect(matches).toHaveLength(7);
@@ -152,38 +202,19 @@ describe('ContestFormatEngine', () => {
       expect(finals[0].status).toBe(ContestMatchStatus.DRAFT);
     });
 
-    it('should create auto-bye for odd participants', () => {
-      const engine = new KnockoutEngine();
-      const contest = createMockContest({ config: { format: 'KNOCKOUT' } });
-      const registrations = Array.from({ length: 7 }, (_, i) =>
-        createMockRegistration(`r${i + 1}`, i),
-      );
-      const matches = engine.generateMatches({
-        contest,
-        cafeId: 'cafe-1',
-        registrations,
-        registrationOrder: registrations.map((r) => r.id),
-      });
+    it('should give the empty seat away as a walkover in round 1', () => {
+      const matches = generateKnockout(7, 8);
 
       const round1 = matches.filter((m) => m.roundNo === 1);
-      const byeMatch = round1.find((m) => m.isBye);
-      expect(byeMatch).toBeDefined();
-      expect(byeMatch?.status).toBe(ContestMatchStatus.COMPLETED);
-      expect(byeMatch?.byeWinnerRegistrationId).toBeDefined();
+      const byeMatches = round1.filter((m) => m.isBye);
+      expect(byeMatches).toHaveLength(1);
+      expect(byeMatches[0].status).toBe(ContestMatchStatus.COMPLETED);
+      // Ghế trống là ghế cuối (số 8) nên hạt giống 1 được đi tiếp.
+      expect(byeMatches[0].byeWinnerRegistrationId).toBe('r1');
     });
 
     it('should link next matches in round sequence', () => {
-      const engine = new KnockoutEngine();
-      const contest = createMockContest({ config: { format: 'KNOCKOUT' } });
-      const registrations = Array.from({ length: 4 }, (_, i) =>
-        createMockRegistration(`r${i + 1}`, i),
-      );
-      const matches = engine.generateMatches({
-        contest,
-        cafeId: 'cafe-1',
-        registrations,
-        registrationOrder: registrations.map((r) => r.id),
-      });
+      const matches = generateKnockout(4, 4);
 
       const round1 = matches.filter((m) => m.roundNo === 1);
       const round2 = matches.filter((m) => m.roundNo === 2);
@@ -191,6 +222,132 @@ describe('ContestFormatEngine', () => {
       expect(round2).toHaveLength(1);
       expect(round1[0].nextMatchIndex).toBe(0);
       expect(round1[1].nextMatchIndex).toBe(0);
+    });
+
+    it('should keep the bracket at the announced capacity and never leave a one-person match', () => {
+      const matches = generateKnockout(11, 16);
+
+      // 8 + 4 + 2 + 1 ô trận của sơ đồ 16 suất
+      expect(matches).toHaveLength(15);
+
+      // 11 người thi đấu loại trực tiếp luôn cần đúng 10 trận thật.
+      const playable = matches.filter((m) => m.status !== ContestMatchStatus.COMPLETED);
+      expect(playable).toHaveLength(10);
+
+      // Không trận nào phải chờ staff nhập kết quả giả cho một người.
+      const incoming = countIncomingDrivers(matches);
+      expect(playable.every((m) => incoming.get(m) === 2)).toBe(true);
+    });
+
+    it('should cascade walkovers through multiple rounds when the bracket is mostly empty', () => {
+      const matches = generateKnockout(5, 16);
+
+      // 5 người vẫn chỉ cần đúng 4 trận thật dù sơ đồ mở 16 suất.
+      const playable = matches.filter((m) => m.status !== ContestMatchStatus.COMPLETED);
+      expect(playable).toHaveLength(4);
+      const incoming = countIncomingDrivers(matches);
+      expect(playable.every((m) => incoming.get(m) === 2)).toBe(true);
+
+      // Cặp mà cả hai ghế đều trống được đánh dấu rõ để FE hiển thị ô trống.
+      const emptyMatches = matches.filter((m) => m.metadata.empty_slot === true);
+      expect(emptyMatches.length).toBeGreaterThan(0);
+      expect(emptyMatches.every((m) => m.status === ContestMatchStatus.COMPLETED)).toBe(true);
+      expect(emptyMatches.every((m) => !m.byeWinnerRegistrationId)).toBe(true);
+    });
+
+    it('should fall back to the next power of two when capacity is not usable', () => {
+      // Giải cũ có capacity 30 (không phải luỹ thừa của 2)
+      const matches = generateKnockout(5, 30);
+      expect(matches.filter((m) => m.roundNo === 1)).toHaveLength(4);
+      expect(matches[0].metadata.bracket_size).toBe(8);
+    });
+
+    it('should append a third place match only when the provider enables it', () => {
+      const without = generateKnockout(4, 4);
+      expect(without.some((m) => m.metadata.third_place === true)).toBe(false);
+
+      const withThirdPlace = generateKnockout(4, 4, { third_place_match: true });
+      const thirdPlace = withThirdPlace.find((m) => m.metadata.third_place === true);
+      expect(thirdPlace).toBeDefined();
+      expect(thirdPlace?.roundNo).toBe(2);
+      expect(thirdPlace?.matchNo).toBe(2);
+      expect(thirdPlace?.advancementRule.winners_to_advance).toBe(0);
+      expect(thirdPlace?.participants).toHaveLength(0);
+    });
+  });
+
+  describe('inferWinners', () => {
+    const engine = new KnockoutEngine();
+
+    function participant(overrides: Partial<ContestMatchParticipant>): ContestMatchParticipant {
+      return {
+        id: 'p',
+        registrationId: 'r',
+        slotNo: 1,
+        isWinner: false,
+        finishPosition: null,
+        bestLapSeconds: null,
+        totalTimeSeconds: null,
+        score: null,
+        status: ContestParticipantStatus.READY,
+        ...overrides,
+      } as unknown as ContestMatchParticipant;
+    }
+
+    it('should refuse to pick a winner when no result has been recorded', () => {
+      const winners = engine.inferWinners(
+        [
+          participant({ id: 'p1', registrationId: 'r1', slotNo: 1 }),
+          participant({ id: 'p2', registrationId: 'r2', slotNo: 2 }),
+        ],
+        1,
+      );
+      // Trước đây nhánh này trả về người ở làn 1 chỉ vì slotNo nhỏ hơn.
+      expect(winners).toHaveLength(0);
+    });
+
+    it('should hand the win to the present driver when the opponent is a no-show', () => {
+      const winners = engine.inferWinners(
+        [
+          participant({ id: 'p1', registrationId: 'r1', status: ContestParticipantStatus.DNS }),
+          participant({ id: 'p2', registrationId: 'r2', slotNo: 2 }),
+        ],
+        1,
+      );
+      expect(winners.map((item) => item.registrationId)).toEqual(['r2']);
+    });
+
+    it('should never advance a disqualified driver even if flagged as winner', () => {
+      const winners = engine.inferWinners(
+        [
+          participant({
+            id: 'p1',
+            registrationId: 'r1',
+            isWinner: true,
+            status: ContestParticipantStatus.DQ,
+          }),
+          participant({
+            id: 'p2',
+            registrationId: 'r2',
+            slotNo: 2,
+            finishPosition: 2,
+            status: ContestParticipantStatus.FINISHED,
+          }),
+        ],
+        1,
+      );
+      expect(winners.map((item) => item.registrationId)).toEqual(['r2']);
+    });
+
+    it('should return nobody when every driver failed to finish', () => {
+      const winners = engine.inferWinners(
+        [
+          participant({ id: 'p1', registrationId: 'r1', status: ContestParticipantStatus.DNS }),
+          participant({ id: 'p2', registrationId: 'r2', status: ContestParticipantStatus.DNF }),
+        ],
+        1,
+      );
+      expect(winners).toHaveLength(0);
     });
   });
 
@@ -277,11 +434,13 @@ describe('ContestFormatEngine', () => {
       expect(matches).toHaveLength(7);
       const quarterfinals = matches.filter((m) => m.roundNo === 2);
       expect(quarterfinals).toHaveLength(4);
+      // Thứ tự hạt giống chuẩn: hai trận đầu thuộc nửa trên (hạng 1), hai trận
+      // sau thuộc nửa dưới (hạng 2), nên hạng 1 và hạng 2 chỉ gặp nhau ở chung kết.
       expect(quarterfinals.map((m) => m.participants.map((p) => p.registrationId))).toEqual([
         ['r1', 'r8'],
+        ['r4', 'r5'],
         ['r2', 'r7'],
         ['r3', 'r6'],
-        ['r4', 'r5'],
       ]);
       expect(matches.filter((m) => m.roundNo === 4)[0].matchType).toBe(ContestMatchType.FINAL);
     });
@@ -304,9 +463,10 @@ describe('ContestFormatEngine', () => {
       const byeMatch = round1.find((m) => m.isBye);
       expect(byeMatch).toBeDefined();
       expect(byeMatch?.status).toBe(ContestMatchStatus.COMPLETED);
-      // seed order [r1, r3, r2] -> match1 r1 vs r3, match2 r2 alone gets the bye
-      expect(round1[0].participants.map((p) => p.registrationId)).toEqual(['r1', 'r3']);
-      expect(byeMatch?.byeWinnerRegistrationId).toBe('r2');
+      // Sơ đồ 4 suất, ghế 4 trống: hạng 1 gặp ô trống nên được miễn, hạng 2 gặp hạng 3.
+      expect(round1[0].participants.map((p) => p.registrationId)).toEqual(['r1']);
+      expect(round1[1].participants.map((p) => p.registrationId)).toEqual(['r2', 'r3']);
+      expect(byeMatch?.byeWinnerRegistrationId).toBe('r1');
     });
 
     it('should resolve finalists count from config with default 4', () => {

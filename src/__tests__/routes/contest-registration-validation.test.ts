@@ -247,7 +247,7 @@ describe('Contest registration validation', () => {
       .expect(400);
   });
 
-  it('rejects RENTAL registration without rental_slot', async () => {
+  it('rejects RENTAL registration without a chosen vehicle model', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
@@ -267,7 +267,7 @@ describe('Contest registration validation', () => {
       })
       .expect(400);
 
-    expect(res.body.code).toBe('CONTEST_RENTAL_BOOKING_REQUIRED');
+    expect(res.body.code).toBe('CONTEST_RENTAL_CHOICE_REQUIRED');
   });
 
   it('rejects check-in when a BYOC checklist item is NOT_OK', async () => {

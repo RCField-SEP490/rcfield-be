@@ -35,7 +35,11 @@ async function createContestFixture(
   providerId: string,
   cafeId: string,
   formatCode: 'TIME_TRIAL' | 'KNOCKOUT',
-  overrides?: Partial<{ entryFee: number; vehiclePolicy: 'RENTAL_ONLY' | 'BYOC_ONLY' | 'MIXED' }>,
+  overrides?: Partial<{
+    entryFee: number;
+    vehiclePolicy: 'RENTAL_ONLY' | 'BYOC_ONLY' | 'MIXED';
+    capacity: number;
+  }>,
 ) {
   const [trackType] = await AppDataSource.query<{ id: string; code: string }[]>(
     `SELECT id, code FROM track_types ORDER BY created_at ASC LIMIT 1`,
@@ -61,7 +65,7 @@ async function createContestFixture(
      VALUES
        ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day',
-        NULL, $10, $11, NOW() + INTERVAL '1 day', NOW() + INTERVAL '2 day', 32, $12, 'OPEN', $2)
+        NULL, $10, $11, NOW() + INTERVAL '1 day', NOW() + INTERVAL '2 day', $13, $12, 'OPEN', $2)
      RETURNING id`,
     [
       cafeId,
@@ -79,6 +83,7 @@ async function createContestFixture(
       }),
       JSON.stringify(contestTemplate.default_config ?? { format: formatCode }),
       overrides?.entryFee ?? 0,
+      overrides?.capacity ?? 32,
     ],
   );
 
@@ -275,7 +280,10 @@ describe('Contest runtime routes', () => {
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
     const token = generateToken(provider);
-    const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT');
+    // 4 suất cho đúng 4 tay đua: sơ đồ đầy, không có ô trống nào.
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT', {
+      capacity: 4,
+    });
     const registrationA = await createRegistrationFixture(contestId, 'CHECKED_IN');
     const registrationB = await createRegistrationFixture(contestId, 'CHECKED_IN');
     const registrationC = await createRegistrationFixture(contestId, 'CHECKED_IN');
@@ -647,11 +655,6 @@ describe('Contest runtime routes', () => {
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        rental_slot: {
-          cafe_id: cafe.id,
-          slot_start: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
-          slot_end: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
-        },
       })
       .expect(400);
 
@@ -715,10 +718,8 @@ describe('Contest runtime routes', () => {
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        rental_slot: {
+        rental: {
           cafe_id: cafe.id,
-          slot_start: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
-          slot_end: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
           vehicle_catalog_id: vehicle.catalog_id,
         },
       })
@@ -734,7 +735,7 @@ describe('Contest runtime routes', () => {
     expect(paymentRes.body.data.txn_ref).toContain('contest_');
   });
 
-  it('tao notification khi customer dang ky contest thanh cong', async () => {
+  it('dang ky thue xe o giai mien phi duoc xac nhan tu dong', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
@@ -755,10 +756,8 @@ describe('Contest runtime routes', () => {
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        rental_slot: {
+        rental: {
           cafe_id: cafe.id,
-          slot_start: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
-          slot_end: new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString(),
           vehicle_catalog_id: vehicle.catalog_id,
         },
       })
@@ -771,154 +770,268 @@ describe('Contest runtime routes', () => {
       [customer.id],
     );
 
-    expect(notifications[0]).toMatchObject({
-      type: NotificationType.CONTEST_REGISTRATION_CREATED,
-    });
+    const types = notifications.map((item) => item.type);
+    expect(types).toContain(NotificationType.CONTEST_REGISTRATION_CREATED);
+    // Giải miễn phí + thuê xe của quán: không có gì để duyệt nên hệ thống xác
+    // nhận luôn, khách nhận được mã check-in ngay thay vì chờ provider bấm nút.
+    expect(types).toContain(NotificationType.CONTEST_REGISTRATION_APPROVED);
+
+    const [registration] = await AppDataSource.query<{ status: string }[]>(
+      `SELECT status FROM contest_registrations WHERE id = $1`,
+      [registerRes.body.data.id],
+    );
+    expect(registration.status).toBe('CONFIRMED');
   });
 
-  it('customer co the dang ky contest voi rental_slot va provider duyet sau khi booking duoc thanh toan', async () => {
+  it('staff duoc phan cong xem duoc danh sach giai cua chi nhanh', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id) VALUES ($1, $2)`,
+      [staff.id, cafe.id],
+    );
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT');
+    await AppDataSource.query(
+      `INSERT INTO contest_staff_assignments (contest_id, staff_id, assigned_by) VALUES ($1, $2, $3)`,
+      [contestId, staff.id, provider.id],
+    );
+
+    // Nhánh staff có join contest_staff_assignments; cộng thêm skip/take của
+    // phân trang là đủ để TypeORM đổi sang đường DISTINCT-subquery — chính chỗ
+    // từng nổ 500 vì orderBy dùng tên cột DB.
+    const res = await request(app)
+      .get(`/api/v1/cafes/${cafe.id}/contests`)
+      .set('Authorization', `Bearer ${generateToken(staff)}`)
+      .expect(200);
+
+    expect(res.body.data.map((item: { id: string }) => item.id)).toContain(contestId);
+  });
+
+  it('staff chua duoc phan cong thi khong thay giai', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    await AppDataSource.query(
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id) VALUES ($1, $2)`,
+      [staff.id, cafe.id],
+    );
+    await createContestFixture(provider.id, cafe.id, 'KNOCKOUT');
+
+    const res = await request(app)
+      .get(`/api/v1/cafes/${cafe.id}/contests`)
+      .set('Authorization', `Bearer ${generateToken(staff)}`)
+      .expect(200);
+
+    expect(res.body.data).toHaveLength(0);
+  });
+
+  it('nhan vien giao xe cho VDV thue xe ngay luc diem danh', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
     const customer = await createTestUser({ role: UserRole.CUSTOMER });
     const providerToken = generateToken(provider);
     const customerToken = generateToken(customer);
-    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
-      vehiclePolicy: 'RENTAL_ONLY',
-    });
-    const vehicle = await createTestVehicle({
-      cafe_id: cafe.id,
-      compatible_track_types: [],
-    });
-
-    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
-    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
-
-    const registerRes = await request(app)
-      .post(`/api/v1/contests/${contestId}/register`)
-      .set('Authorization', `Bearer ${customerToken}`)
-      .send({
-        vehicle_source: 'RENTAL',
-        rental_slot: {
-          cafe_id: cafe.id,
-          slot_start: slotStart,
-          slot_end: slotEnd,
-          vehicle_catalog_id: vehicle.catalog_id,
-        },
-      })
-      .expect(201);
-
-    expect(registerRes.body.data.booking_id).toBeTruthy();
-    expect(registerRes.body.data.vehicle_id).toBeTruthy();
-    expect(registerRes.body.data.status).toBe('PENDING');
-    expect(registerRes.body.data.payment_status).toBe('PENDING_REVIEW');
-
-    const bookingId = registerRes.body.data.booking_id;
-    const [booking] = await AppDataSource.query<{ status: string }[]>(
-      'SELECT status FROM bookings WHERE id = $1',
-      [bookingId],
-    );
-    expect(booking.status).toBe('PENDING');
-
-    const approveBeforePayRes = await request(app)
-      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${providerToken}`)
-      .send({ reason: 'Duyet truoc thanh toan' })
-      .expect(400);
-
-    expect(approveBeforePayRes.body.code).toBe('BOOKING_NOT_CONFIRMED');
-
-    await AppDataSource.query('UPDATE bookings SET status = $1 WHERE id = $2', [
-      'CONFIRMED',
-      bookingId,
-    ]);
-
-    const approveAfterPayRes = await request(app)
-      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${providerToken}`)
-      .send({ reason: 'Duyet sau thanh toan' })
-      .expect(200);
-
-    expect(approveAfterPayRes.body.data.status).toBe('CONFIRMED');
-  });
-
-  it('dang ky rental_slot voi entry fee duoc gop chung vao mot giao dich thanh toan booking', async () => {
-    const provider = await createTestUser({ role: UserRole.PROVIDER });
-    await activateProvider(provider.id);
-    const cafe = await createTestCafe({ provider_id: provider.id });
-    const customer = await createTestUser({ role: UserRole.CUSTOMER });
-    const customerToken = generateToken(customer);
     const { contestId, trackTypeId } = await createContestFixture(
       provider.id,
       cafe.id,
-      'TIME_TRIAL',
-      {
-        entryFee: 150000,
-      },
+      'KNOCKOUT',
+      { vehiclePolicy: 'RENTAL_ONLY', capacity: 8 },
     );
     const vehicle = await createTestVehicle({
       cafe_id: cafe.id,
       compatible_track_types: [trackTypeId],
     });
 
-    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
-    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
+    const registerRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental: { cafe_id: cafe.id, vehicle_catalog_id: vehicle.catalog_id },
+      })
+      .expect(201);
+    const registrationId = registerRes.body.data.id;
+
+    // Giải miễn phí + thuê xe: đã tự động xác nhận, chỉ còn chờ ngày thi.
+    await AppDataSource.query(
+      `UPDATE contests SET status = 'CLOSED', starts_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
+      [contestId],
+    );
+
+    const unitsRes = await request(app)
+      .get(`/api/v1/contest-registrations/${registrationId}/handover-units`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
+    expect(unitsRes.body.data.map((u: { id: string }) => u.id)).toContain(vehicle.id);
+
+    // Chưa chọn xe thì không cho điểm danh.
+    const missingRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registrationId}/check-in`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ checked_in_cafe_id: cafe.id })
+      .expect(400);
+    expect(missingRes.body.code).toBe('CONTEST_HANDOVER_VEHICLE_REQUIRED');
+
+    await request(app)
+      .post(`/api/v1/contest-registrations/${registrationId}/check-in`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ checked_in_cafe_id: cafe.id, rental_vehicle_id: vehicle.id })
+      .expect(200);
+
+    // Phiếu mượn xe 0đ được dựng và gắn vào đăng ký.
+    const [registration] = await AppDataSource.query<
+      { status: string; booking_id: string | null; vehicle_id: string | null }[]
+    >(`SELECT status, booking_id, vehicle_id FROM contest_registrations WHERE id = $1`, [
+      registrationId,
+    ]);
+    expect(registration.status).toBe('CHECKED_IN');
+    expect(registration.booking_id).toBeTruthy();
+    expect(registration.vehicle_id).toBe(vehicle.id);
+
+    const [booking] = await AppDataSource.query<
+      { status: string; source: string; contest_id: string }[]
+    >(`SELECT status, source, contest_id FROM bookings WHERE id = $1`, [registration.booking_id]);
+    expect(booking.status).toBe('CONFIRMED');
+    expect(booking.source).toBe('CONTEST');
+    expect(booking.contest_id).toBe(contestId);
+
+    const [bookingVehicle] = await AppDataSource.query<
+      { rental_fee_snapshot: string; security_deposit_snapshot: string }[]
+    >(
+      `SELECT rental_fee_snapshot, security_deposit_snapshot FROM booking_vehicles WHERE booking_id = $1`,
+      [registration.booking_id],
+    );
+    expect(Number(bookingVehicle.rental_fee_snapshot)).toBe(0);
+    expect(Number(bookingVehicle.security_deposit_snapshot)).toBe(0);
+
+    // Phiên chơi mở sẵn để chạy tiếp inspection / tính hư hỏng.
+    const [session] = await AppDataSource.query<{ id: string; status: string }[]>(
+      `SELECT id, status FROM sessions WHERE booking_id = $1`,
+      [registration.booking_id],
+    );
+    expect(session.status).toBe('CHECKED_IN');
+    const sessionVehicles = await AppDataSource.query<{ vehicle_id: string }[]>(
+      `SELECT vehicle_id FROM session_vehicles WHERE session_id = $1`,
+      [session.id],
+    );
+    expect(sessionVehicles.map((sv) => sv.vehicle_id)).toEqual([vehicle.id]);
+
+    // Xe đã giao thì không còn hiện cho người khác chọn.
+    const unitsAfter = await request(app)
+      .get(`/api/v1/contest-registrations/${registrationId}/handover-units`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .expect(200);
+    expect(unitsAfter.body.data.map((u: { id: string }) => u.id)).not.toContain(vehicle.id);
+  });
+
+  it('dang ky thue xe chi chon dong xe, khong sinh phieu xe va khong co tien thue', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const providerToken = generateToken(provider);
+    const customerToken = generateToken(customer);
+    const { contestId, trackTypeId } = await createContestFixture(
+      provider.id,
+      cafe.id,
+      'TIME_TRIAL',
+      { vehiclePolicy: 'RENTAL_ONLY' },
+    );
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [trackTypeId],
+    });
 
     const registerRes = await request(app)
       .post(`/api/v1/contests/${contestId}/register`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        rental_slot: {
+        rental: {
           cafe_id: cafe.id,
-          slot_start: slotStart,
-          slot_end: slotEnd,
           vehicle_catalog_id: vehicle.catalog_id,
         },
       })
       .expect(201);
 
-    // Combined case: entry fee stays PENDING_PAYMENT until the booking is paid.
-    expect(registerRes.body.data.payment_status).toBe('PENDING_PAYMENT');
-    const bookingId = registerRes.body.data.booking_id;
-
-    const components = await AppDataSource.query<
-      { type: string; status: string; amount: string }[]
-    >(`SELECT type, status, amount FROM payment_components WHERE booking_id = $1`, [bookingId]);
-    const entryFeeComponent = components.find(
-      (component) => component.type === 'CONTEST_ENTRY_FEE',
+    // Dòng xe được ghi nhận, nhưng chưa gán chiếc nào và chưa có phiếu mượn xe.
+    const [registration] = await AppDataSource.query<
+      {
+        rental_catalog_id: string | null;
+        rental_cafe_id: string | null;
+        booking_id: string | null;
+        vehicle_id: string | null;
+      }[]
+    >(
+      `SELECT rental_catalog_id, rental_cafe_id, booking_id, vehicle_id
+         FROM contest_registrations WHERE id = $1`,
+      [registerRes.body.data.id],
     );
-    expect(entryFeeComponent).toBeTruthy();
-    expect(entryFeeComponent!.status).toBe('HELD');
-    expect(Number(entryFeeComponent!.amount)).toBe(150000);
+    expect(registration.rental_catalog_id).toBe(vehicle.catalog_id);
+    expect(registration.rental_cafe_id).toBe(cafe.id);
+    expect(registration.booking_id).toBeNull();
+    expect(registration.vehicle_id).toBeNull();
 
-    const [bookingRow] = await AppDataSource.query<
-      { snapshot: { total_charged: number; contest_entry_fee: number } }[]
-    >(`SELECT snapshot FROM bookings WHERE id = $1`, [bookingId]);
-    expect(Number(bookingRow.snapshot.contest_entry_fee)).toBe(150000);
-    const combinedTotal = Number(bookingRow.snapshot.total_charged);
-
-    // Checkout freezes booking + entry fee into a single VNPay transaction.
-    const checkout = await createCheckoutUrl(bookingId, '127.0.0.1');
-    expect(checkout.total_amount).toBe(combinedTotal);
-
-    const confirm = await processMockConfirmation(checkout.txn_ref!);
-    expect(confirm.rspCode).toBe('00');
-
-    const [bookingAfter] = await AppDataSource.query<{ status: string }[]>(
-      `SELECT status FROM bookings WHERE id = $1`,
-      [bookingId],
+    // Không booking nào được tạo, nên không có gì để tính tiền theo giờ.
+    const bookings = await AppDataSource.query<{ id: string }[]>(
+      `SELECT id FROM bookings WHERE contest_id = $1`,
+      [contestId],
     );
-    expect(bookingAfter.status).toBe('CONFIRMED');
+    expect(bookings).toHaveLength(0);
 
-    const [registrationAfter] = await AppDataSource.query<{ payment_status: string }[]>(
-      `SELECT payment_status FROM contest_registrations WHERE booking_id = $1`,
-      [bookingId],
-    );
-    expect(registrationAfter.payment_status).toBe('MARKED_PAID');
+    // Giải không thu lệ phí thì duyệt được ngay, không còn chờ booking CONFIRMED.
+    const approveRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/approve`)
+      .set('Authorization', `Bearer ${providerToken}`)
+      .send({ reason: 'Duyet ngay' })
+      .expect(200);
+    expect(approveRes.body.data.status).toBe('CONFIRMED');
   });
 
-  it('contest rental tao booking rieng ngay ca khi customer co booking PENDING thuong cung khung gio', async () => {
+  it('giu cho dong xe theo so xe co that', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const firstCustomer = await createTestUser({ role: UserRole.CUSTOMER });
+    const secondCustomer = await createTestUser({ role: UserRole.CUSTOMER });
+    const { contestId, trackTypeId } = await createContestFixture(
+      provider.id,
+      cafe.id,
+      'TIME_TRIAL',
+      { vehiclePolicy: 'RENTAL_ONLY' },
+    );
+    // createTestVehicle tạo một catalog kèm đúng một chiếc.
+    const vehicle = await createTestVehicle({
+      cafe_id: cafe.id,
+      compatible_track_types: [trackTypeId],
+    });
+
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${generateToken(firstCustomer)}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental: { cafe_id: cafe.id, vehicle_catalog_id: vehicle.catalog_id },
+      })
+      .expect(201);
+
+    const secondRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/register`)
+      .set('Authorization', `Bearer ${generateToken(secondCustomer)}`)
+      .send({
+        vehicle_source: 'RENTAL',
+        rental: { cafe_id: cafe.id, vehicle_catalog_id: vehicle.catalog_id },
+      })
+      .expect(409);
+
+    expect(secondRes.body.code).toBe('CONTEST_RENTAL_CATALOG_FULL');
+  });
+
+  it('le phi giai chi con mot duong thanh toan, khong gop vao phieu xe', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
@@ -928,51 +1041,37 @@ describe('Contest runtime routes', () => {
       provider.id,
       cafe.id,
       'TIME_TRIAL',
-      {
-        vehiclePolicy: 'RENTAL_ONLY',
-      },
+      { entryFee: 150000, vehiclePolicy: 'RENTAL_ONLY' },
     );
     const vehicle = await createTestVehicle({
       cafe_id: cafe.id,
-      compatible_track_types: [],
+      compatible_track_types: [trackTypeId],
     });
-
-    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000);
-    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000);
-
-    // Plain PENDING booking at the same cafe/slot, created outside the contest flow.
-    const [plainBooking] = await AppDataSource.query<{ id: string }[]>(
-      `INSERT INTO bookings
-         (customer_id, cafe_id, track_type_id, play_mode, source, status, slot_start, slot_end, slot_count, payment_expires_at, discount_amount)
-       VALUES
-         ($1, $2, $3, 'RENTAL', 'APP', 'PENDING', $4, $5, 1, NOW() + INTERVAL '30 minutes', 0)
-       RETURNING id`,
-      [customer.id, cafe.id, trackTypeId, slotStart.toISOString(), slotEnd.toISOString()],
-    );
 
     const registerRes = await request(app)
       .post(`/api/v1/contests/${contestId}/register`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        rental_slot: {
-          cafe_id: cafe.id,
-          slot_start: slotStart.toISOString(),
-          slot_end: slotEnd.toISOString(),
-          vehicle_catalog_id: vehicle.catalog_id,
-        },
+        rental: { cafe_id: cafe.id, vehicle_catalog_id: vehicle.catalog_id },
       })
       .expect(201);
 
-    const contestBookingId = registerRes.body.data.booking_id;
-    expect(contestBookingId).toBeTruthy();
-    expect(contestBookingId).not.toBe(plainBooking.id);
+    expect(registerRes.body.data.payment_status).toBe('PENDING_PAYMENT');
 
-    const [contestBooking] = await AppDataSource.query<{ contest_id: string | null }[]>(
-      `SELECT contest_id FROM bookings WHERE id = $1`,
-      [contestBookingId],
+    // Không còn booking để gộp lệ phí vào, nên cũng không còn thành phần
+    // CONTEST_ENTRY_FEE nằm song song với đường CONTEST_ENTRY.
+    const components = await AppDataSource.query<{ type: string }[]>(
+      `SELECT type FROM payment_components WHERE type = 'CONTEST_ENTRY_FEE'`,
     );
-    expect(contestBooking.contest_id).toBe(contestId);
+    expect(components).toHaveLength(0);
+
+    const paymentRes = await request(app)
+      .post(`/api/v1/contest-registrations/${registerRes.body.data.id}/create-entry-fee-payment`)
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({})
+      .expect(201);
+    expect(paymentRes.body.data.amount).toBe(150000);
   });
 
   it('provider co the xem rental options va available vehicles cua contest', async () => {
@@ -1001,34 +1100,27 @@ describe('Contest runtime routes', () => {
       vehicle.catalog_id,
     );
 
-    const slotStart = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
-    const slotEnd = new Date(Date.now() + 26 * 60 * 60 * 1000).toISOString();
-
     const availableRes = await request(app)
       .get(`/api/v1/contests/${contestId}/available-rental-vehicles`)
       .set('Authorization', `Bearer ${customerToken}`)
-      .query({
-        cafe_id: cafe.id,
-        slot_start: slotStart,
-        slot_end: slotEnd,
-      })
+      .query({ cafe_id: cafe.id })
       .expect(200);
 
     const group = availableRes.body.data.find(
       (g: { catalog_id: string }) => g.catalog_id === vehicle.catalog_id,
     );
     expect(group).toBeTruthy();
-    expect(group.available_units.length).toBeGreaterThan(0);
+    expect(group.remaining_slots).toBeGreaterThan(0);
+    // Thuê xe trong giải là miễn phí nên không còn giá giờ để hiển thị.
+    expect(group.hourly_rate).toBeUndefined();
 
     await request(app)
       .post(`/api/v1/contests/${contestId}/register`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
         vehicle_source: 'RENTAL',
-        rental_slot: {
+        rental: {
           cafe_id: cafe.id,
-          slot_start: slotStart,
-          slot_end: slotEnd,
           vehicle_catalog_id: vehicle.catalog_id,
         },
       })
@@ -1037,17 +1129,14 @@ describe('Contest runtime routes', () => {
     const availableAfterRes = await request(app)
       .get(`/api/v1/contests/${contestId}/available-rental-vehicles`)
       .set('Authorization', `Bearer ${customerToken}`)
-      .query({
-        cafe_id: cafe.id,
-        slot_start: slotStart,
-        slot_end: slotEnd,
-      })
+      .query({ cafe_id: cafe.id })
       .expect(200);
 
     const groupAfter = availableAfterRes.body.data.find(
       (g: { catalog_id: string }) => g.catalog_id === vehicle.catalog_id,
     );
-    expect(groupAfter.available_units.length).toBeLessThan(group.available_units.length);
+    // Đăng ký giữ chỗ dòng xe, nên suất còn lại giảm đi mà không cần booking nào.
+    expect(groupAfter.remaining_slots).toBe(group.remaining_slots - 1);
   });
 
   it('admin co the tao featured popup va public lay popup active uu tien cao nhat', async () => {

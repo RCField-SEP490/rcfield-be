@@ -553,13 +553,12 @@ export const UpdateContestSchema = ContestUpsertBaseSchema.partial()
 
 export const CreateContestRegistrationSchema = z.object({
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
-  rental_slot: z
+  // Thuê xe của quán chỉ cần chi nhánh và dòng xe: khung giờ do lịch thi đấu
+  // quyết định, chiếc xe cụ thể do nhân viên gán lúc giao xe.
+  rental: z
     .object({
       cafe_id: z.string().uuid(),
-      slot_start: z.coerce.date(),
-      slot_end: z.coerce.date(),
-      track_config_id: z.string().uuid().optional().nullable(),
-      vehicle_catalog_id: z.string().uuid().optional().nullable(),
+      vehicle_catalog_id: z.string().uuid(),
     })
     .optional()
     .nullable(),
@@ -601,6 +600,8 @@ export const ContestBanLiftSchema = z.object({
 });
 
 export const ContestCheckInSchema = z.object({
+  // Chiếc xe cụ thể nhân viên giao cho VĐV thuê xe, chọn ngay lúc điểm danh.
+  rental_vehicle_id: z.string().uuid().optional().nullable(),
   checked_in_cafe_id: z.string().uuid(),
   byoc_confirmed: z.boolean().optional(),
   byoc_inspection: z

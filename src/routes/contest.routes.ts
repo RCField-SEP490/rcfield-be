@@ -259,6 +259,12 @@ contestRouter.patch(
   authorize(UserRole.CUSTOMER),
   contestController.updateByocDeclaration,
 );
+contestRouter.get(
+  '/contest-registrations/:registrationId/handover-units',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestController.listHandoverUnits,
+);
 contestRouter.post(
   '/contest-registrations/:registrationId/check-in',
   authenticate,
