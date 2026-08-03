@@ -783,14 +783,124 @@ describe('Contest runtime routes', () => {
     expect(registration.status).toBe('CONFIRMED');
   });
 
+  it('boc tham dau loai truoc ngay thi tu nguoi da duyet, va boc lai duoc khi chua ai thi dau', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const token = generateToken(provider);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT', {
+      capacity: 8,
+    });
+
+    // 5 người MỚI ĐƯỢC DUYỆT, chưa ai check-in — đúng tình huống bốc thăm trước ngày thi.
+    for (let i = 0; i < 5; i += 1) {
+      await createRegistrationFixture(contestId, 'CONFIRMED');
+    }
+
+    // Không gửi registration_ids: hệ thống tự bốc cả giải.
+    const drawRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ cafe_id: cafe.id })
+      .expect(201);
+
+    // 5 người trong sơ đồ 8 suất: 1 trận thật + 3 suất thắng do ô trống.
+    const playable = drawRes.body.data.filter(
+      (match: { status: string }) => match.status !== 'COMPLETED',
+    );
+    expect(playable).toHaveLength(4);
+
+    // Lá thăm được lưu lại để dựng lại khi có khiếu nại.
+    const [contestRow] = await AppDataSource.query<
+      { config: { bracket_draw?: { seed: number; registration_order: string[] } } }[]
+    >(`SELECT config FROM contests WHERE id = $1`, [contestId]);
+    expect(typeof contestRow.config.bracket_draw?.seed).toBe('number');
+    expect(contestRow.config.bracket_draw?.registration_order).toHaveLength(5);
+
+    // Bốc lại: các trận gặp ô trống tuy COMPLETED nhưng chưa ai thi đấu thật,
+    // nên không được tính là khoá sơ đồ.
+    await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ cafe_id: cafe.id })
+      .expect(201);
+  });
+
+  it('khong cho boc lai khi da co tran thi dau that', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const token = generateToken(provider);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT', {
+      capacity: 8,
+    });
+    for (let i = 0; i < 8; i += 1) {
+      await createRegistrationFixture(contestId, 'CONFIRMED');
+    }
+
+    const drawRes = await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ cafe_id: cafe.id })
+      .expect(201);
+
+    const firstMatch = drawRes.body.data.find(
+      (match: { round_no: number; participants: unknown[] }) =>
+        match.round_no === 1 && match.participants.length === 2,
+    );
+    await request(app)
+      .post(`/api/v1/contest-matches/${firstMatch.id}/results`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        reason: 'Ket qua vong 1',
+        results: [
+          {
+            registration_id: firstMatch.participants[0].registration_id,
+            finish_position: 1,
+            is_winner: true,
+          },
+          {
+            registration_id: firstMatch.participants[1].registration_id,
+            finish_position: 2,
+          },
+        ],
+      })
+      .expect(200);
+
+    const res = await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ cafe_id: cafe.id })
+      .expect(409);
+    expect(res.body.code).toBe('CONTEST_RUNTIME_LOCKED');
+  });
+
+  it('boc tham dau loai can it nhat 2 nguoi da duyet', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const token = generateToken(provider);
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT', {
+      capacity: 8,
+    });
+    await createRegistrationFixture(contestId, 'CONFIRMED');
+
+    const res = await request(app)
+      .post(`/api/v1/contests/${contestId}/matches/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ cafe_id: cafe.id })
+      .expect(400);
+    expect(res.body.code).toBe('CONTEST_NOT_ENOUGH_PARTICIPANTS');
+  });
+
   it('staff duoc phan cong xem duoc danh sach giai cua chi nhanh', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
     const staff = await createTestUser({ role: UserRole.STAFF });
     await AppDataSource.query(
-      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id) VALUES ($1, $2)`,
-      [staff.id, cafe.id],
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by) VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
     );
     const { contestId } = await createContestFixture(provider.id, cafe.id, 'KNOCKOUT');
     await AppDataSource.query(
@@ -815,8 +925,8 @@ describe('Contest runtime routes', () => {
     const cafe = await createTestCafe({ provider_id: provider.id });
     const staff = await createTestUser({ role: UserRole.STAFF });
     await AppDataSource.query(
-      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id) VALUES ($1, $2)`,
-      [staff.id, cafe.id],
+      `INSERT INTO staff_cafe_assignments (staff_id, cafe_id, assigned_by) VALUES ($1, $2, $3)`,
+      [staff.id, cafe.id, provider.id],
     );
     await createContestFixture(provider.id, cafe.id, 'KNOCKOUT');
 

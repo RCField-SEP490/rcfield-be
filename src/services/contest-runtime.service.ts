@@ -30,12 +30,13 @@ import {
   GeneratedMatch,
   QualifyingFinalEngine,
   getContestFormatEngine,
+  shuffleWithSeed,
 } from './contest-format.engine';
 
 type GenerateMatchesBody = {
   cafe_id: string;
   track_config_id?: string | null;
-  registration_ids: string[];
+  registration_ids?: string[];
   drivers_per_match?: number;
   seeding_mode?: 'MANUAL' | 'CHECK_IN_ORDER';
 };
@@ -110,7 +111,19 @@ async function validateContestCafe(contestId: string, cafeId: string): Promise<C
   return contestCafe;
 }
 
-async function loadEligibleRegistrations(contestId: string, registrationIds: string[]) {
+/**
+ * Ai được đưa vào sơ đồ thi đấu.
+ *
+ * Mặc định chỉ nhận người đã check-in — đúng cho các thể thức bốc thăm ngay tại
+ * chỗ. Riêng đấu loại trực tiếp bốc thăm SAU KHI ĐÓNG ĐĂNG KÝ và TRƯỚC ngày thi
+ * để công bố sơ đồ cho khách biết trước đối thủ, nên lúc đó chưa ai check-in cả
+ * và điều kiện là "đã được duyệt".
+ */
+async function loadEligibleRegistrations(
+  contestId: string,
+  registrationIds: string[],
+  options?: { allowConfirmed?: boolean },
+) {
   const registrations = await AppDataSource.getRepository(ContestRegistration).findBy({
     id: In(registrationIds),
     contestId,
@@ -118,16 +131,35 @@ async function loadEligibleRegistrations(contestId: string, registrationIds: str
   if (registrations.length !== registrationIds.length) {
     throw new AppError('Có registration không thuộc contest', 400, 'REGISTRATION_CONTEST_MISMATCH');
   }
+  const allowed = options?.allowConfirmed
+    ? [ContestRegistrationStatus.CONFIRMED, ContestRegistrationStatus.CHECKED_IN]
+    : [ContestRegistrationStatus.CHECKED_IN];
   for (const registration of registrations) {
-    if (registration.status !== ContestRegistrationStatus.CHECKED_IN) {
+    if (!allowed.includes(registration.status)) {
       throw new AppError(
-        'Chỉ người chơi đã check-in mới được đưa vào thi đấu',
+        options?.allowConfirmed
+          ? 'Chỉ người chơi đã được duyệt mới được đưa vào sơ đồ thi đấu'
+          : 'Chỉ người chơi đã check-in mới được đưa vào thi đấu',
         400,
         'REGISTRATION_NOT_RUNTIME_READY',
       );
     }
   }
   return registrations;
+}
+
+/**
+ * Trận đã ngã ngũ bằng thi đấu thật, phân biệt với trận đóng sẵn lúc bốc thăm
+ * vì gặp ô trống.
+ *
+ * Bốc lại sơ đồ chỉ bị cấm khi đã có người thi đấu thật. Nếu tính cả các trận
+ * gặp ô trống thì giải nào không kín chỗ cũng bị khoá ngay từ giây đầu tiên,
+ * dù chưa ai chạy vòng nào.
+ */
+function isDecidedByPlay(match: ContestMatch): boolean {
+  if (match.status === ContestMatchStatus.RUNNING) return true;
+  if (match.status !== ContestMatchStatus.COMPLETED) return false;
+  return match.metadata?.bye !== true && match.metadata?.empty_slot !== true;
 }
 
 async function loadMatchBundle(matchId: string) {
@@ -583,36 +615,68 @@ export async function generateContestMatches(
     }
   }
 
-  const registrations = await loadEligibleRegistrations(contestId, body.registration_ids);
+  const engine = getEngine(contest);
+  const isKnockoutDraw = engine.code === 'KNOCKOUT';
+
+  // Đấu loại bốc thăm từ toàn bộ người đã duyệt; bỏ trống registration_ids nghĩa
+  // là "bốc cả giải", ban tổ chức không nhặt ai vào ai ra.
+  const requestedIds = body.registration_ids?.length
+    ? body.registration_ids
+    : (
+        await AppDataSource.getRepository(ContestRegistration).findBy({
+          contestId,
+          status: isKnockoutDraw
+            ? In([ContestRegistrationStatus.CONFIRMED, ContestRegistrationStatus.CHECKED_IN])
+            : ContestRegistrationStatus.CHECKED_IN,
+        })
+      ).map((item) => item.id);
+
+  if (requestedIds.length === 0) {
+    throw new AppError(
+      'Chưa có người chơi nào đủ điều kiện để tạo lượt thi đấu',
+      400,
+      'CONTEST_NOT_ENOUGH_PARTICIPANTS',
+    );
+  }
+  // Chỉ sơ đồ đấu loại mới cần đối thủ; đua tính giờ một VĐV vẫn là một lượt chạy hợp lệ.
+  if (isKnockoutDraw && requestedIds.length < 2) {
+    throw new AppError(
+      'Cần ít nhất 2 người đã được duyệt để bốc thăm sơ đồ đấu loại',
+      400,
+      'CONTEST_NOT_ENOUGH_PARTICIPANTS',
+    );
+  }
+
+  const registrations = await loadEligibleRegistrations(contestId, requestedIds, {
+    allowConfirmed: isKnockoutDraw,
+  });
   const matchRepo = AppDataSource.getRepository(ContestMatch);
 
   const existingMatches = await matchRepo.find({ where: { contestId } });
-  if (
-    existingMatches.some((match) =>
-      [ContestMatchStatus.COMPLETED, ContestMatchStatus.RUNNING].includes(match.status),
-    )
-  ) {
+  if (existingMatches.some(isDecidedByPlay)) {
     throw new AppError(
-      'Không thể tạo lại bracket khi đã có match đang diễn ra hoặc đã hoàn tất',
+      'Không thể bốc thăm lại khi đã có trận thi đấu xong hoặc đang diễn ra',
       409,
       'CONTEST_RUNTIME_LOCKED',
     );
   }
 
-  const orderedRegistrations =
-    getSeedingMode(contest, body.seeding_mode) === 'CHECK_IN_ORDER'
-      ? [...registrations].sort((a, b) => {
+  // Đấu loại: bốc ngẫu nhiên, lưu seed để dựng lại đúng lá thăm khi có khiếu nại.
+  const drawSeed = isKnockoutDraw ? Math.floor(Math.random() * 0xffffffff) : null;
+  const orderedRegistrations = isKnockoutDraw
+    ? shuffleWithSeed(registrations, drawSeed!)
+    : getSeedingMode(contest, body.seeding_mode) === 'CHECK_IN_ORDER'
+      ? ([...registrations] as ContestRegistration[]).sort((a, b) => {
           const aTime = a.checkedInAt?.getTime() ?? a.createdAt.getTime();
           const bTime = b.checkedInAt?.getTime() ?? b.createdAt.getTime();
           return aTime - bTime;
         })
-      : body.registration_ids
+      : requestedIds
           .map((registrationId) => registrations.find((item) => item.id === registrationId)!)
           .filter(Boolean);
 
   await clearExistingRuntime(contestId);
 
-  const engine = getEngine(contest);
   const driversPerMatch = Math.max(1, getDriversPerMatch(contest, body.drivers_per_match));
   const generatedMatches = engine.generateMatches({
     contest,
@@ -634,8 +698,22 @@ export async function generateContestMatches(
   // Người thắng do gặp ô trống đã được engine đẩy sang vòng sau ngay lúc sinh sơ
   // đồ, nên ở đây không cần advance thêm lần nữa.
 
+  // Bốc thăm là lúc chốt danh sách, nên đăng ký đóng lại luôn.
   if (contest.status === ContestStatus.OPEN) {
     contest.status = ContestStatus.CLOSED;
+  }
+  if (drawSeed !== null) {
+    // Lưu cả seed lẫn thứ tự đã bốc: seed để chứng minh không ai can thiệp, thứ
+    // tự để đối chiếu ngay mà không phải chạy lại thuật toán.
+    contest.config = {
+      ...(contest.config ?? {}),
+      bracket_draw: {
+        seed: drawSeed,
+        drawn_at: new Date().toISOString(),
+        drawn_by: viewer.userId,
+        registration_order: orderedRegistrations.map((item) => item.id),
+      },
+    };
   }
   await AppDataSource.getRepository(Contest).save(contest);
 
@@ -643,11 +721,12 @@ export async function generateContestMatches(
     contestId,
     actorId: viewer.userId,
     actorRole: viewer.role,
-    eventType: 'contest.matches_generated',
+    eventType: isKnockoutDraw ? 'contest.bracket_drawn' : 'contest.matches_generated',
     afterJson: {
       generated_match_count: createdMatches.length,
       registration_count: orderedRegistrations.length,
       format: engine.code,
+      ...(drawSeed !== null ? { draw_seed: drawSeed } : {}),
     },
     metadata: {
       cafe_id: body.cafe_id,

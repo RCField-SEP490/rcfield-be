@@ -26,6 +26,7 @@
     "seed:demo-july19": "ts-node --transpile-only src/seeds/seed-demo-july19-contest.ts",
     "seed:racing-network": "ts-node --transpile-only src/seeds/seed-racing-network.ts",
     "seed:all": "npm run seed && npm run seed:cafes && npm run seed:menu && npm run seed:operations && npm run seed:contests && npm run seed:racing-network",
+    "seed:contest-entrants": "ts-node --transpile-only src/scripts/seed-contest-entrants.ts",
     "reset:bookings": "ts-node --transpile-only src/scripts/reset-bookings.ts",
     "test:kb": "ts-node --transpile-only src/scripts/test-kb.ts",
     "test:staff-customer-flow": "ts-node --transpile-only src/scripts/test-staff-customer-flow.ts",

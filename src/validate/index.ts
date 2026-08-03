@@ -673,7 +673,9 @@ export const FeaturedPopupListQuerySchema = z.object({
 export const ContestGenerateMatchesSchema = z.object({
   cafe_id: z.string().uuid(),
   track_config_id: z.string().uuid().nullable().optional(),
-  registration_ids: z.array(z.string().uuid()).min(1),
+  // Bỏ trống thì hệ thống tự lấy toàn bộ người đủ điều kiện của giải — đúng
+  // cách bốc thăm: ban tổ chức không chọn ai vào ai ra.
+  registration_ids: z.array(z.string().uuid()).optional(),
   drivers_per_match: z.number().int().positive().max(64).optional(),
   seeding_mode: z.enum(['MANUAL', 'CHECK_IN_ORDER']).optional(),
 });

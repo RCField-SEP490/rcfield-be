@@ -223,6 +223,32 @@ export class TimeTrialEngine implements ContestFormatEngine {
   }
 }
 
+/**
+ * Bốc thăm ngẫu nhiên nhưng tái lập được.
+ *
+ * Giải đấu bị khiếu nại thì phải dựng lại được đúng lá thăm đã bốc, nên không
+ * dùng Math.random: seed được lưu cùng sơ đồ, cùng seed và cùng danh sách người
+ * thì luôn ra cùng thứ tự.
+ */
+export function shuffleWithSeed<T>(items: T[], seed: number): T[] {
+  // mulberry32 — nhỏ, không phụ thuộc thư viện, đủ ngẫu nhiên cho việc bốc thăm.
+  let state = seed >>> 0;
+  const nextRandom = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(nextRandom() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 export function isPowerOfTwo(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && (value & (value - 1)) === 0;
 }
