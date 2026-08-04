@@ -682,6 +682,26 @@ export const FeaturedPopupListQuerySchema = z.object({
   is_active: z.coerce.boolean().optional(),
 });
 
+/**
+ * Xử thua vắng mặt.
+ *
+ * Lý do bắt buộc vì đây là quyết định loại một người khỏi giải mà họ không được
+ * thi đấu — phải có căn cứ ghi lại để đối chiếu khi có khiếu nại.
+ */
+export const ContestMatchWalkoverSchema = z.object({
+  absent: z
+    .array(
+      z.object({
+        registration_id: z.string().uuid(),
+        status: z.enum(['DNS', 'DNF', 'DQ'], {
+          message: 'Lý do vắng mặt phải là DNS, DNF hoặc DQ',
+        }),
+      }),
+    )
+    .min(1, 'Cần chọn ít nhất một người vắng mặt'),
+  reason: z.string().trim().min(5, 'Cần nêu lý do xử thua (tối thiểu 5 ký tự)').max(1000),
+});
+
 export const ContestGenerateMatchesSchema = z.object({
   cafe_id: z.string().uuid(),
   track_config_id: z.string().uuid().nullable().optional(),

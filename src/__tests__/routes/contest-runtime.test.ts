@@ -378,11 +378,15 @@ describe('Contest runtime routes', () => {
       })
       .expect(200);
 
-    const resetFinal = forcedCorrectionRes.body.data.find(
+    // Sửa xong là người thắng mới sang vòng sau ngay, không phải bấm advance
+    // thêm lần nữa. Người thắng cũ bị gỡ chứ không nằm lại bên cạnh.
+    const correctedFinal = forcedCorrectionRes.body.data.find(
       (match: { round_no: number }) => match.round_no === 2,
     );
-    expect(resetFinal.participants).toHaveLength(0);
+    expect(correctedFinal.participants).toHaveLength(1);
+    expect(correctedFinal.participants[0].registration_id).toBe(semifinalLoser);
 
+    // Bấm đồng bộ lại vẫn ra đúng như vậy — phép đẩy là bất biến.
     const reAdvanceRes = await request(app)
       .post(`/api/v1/contest-matches/${semifinal.id}/advance`)
       .set('Authorization', `Bearer ${token}`)

@@ -16,6 +16,7 @@ import {
   ContestMatchParticipantsUpdateSchema,
   ContestRegistrationsQuerySchema,
   ContestRegistrationActionSchema,
+  ContestMatchWalkoverSchema,
   ContestRejectRegistrationSchema,
   ContestSubmitResultsSchema,
   CreateContestRegistrationSchema,
@@ -413,6 +414,22 @@ export const contestController = {
       const viewer = requireViewer(req);
       const body = ContestCorrectResultsSchema.parse(req.body);
       const data = await contestRuntimeService.correctMatchResults(
+        req.params.matchId,
+        viewer,
+        body,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // POST /api/v1/contest-matches/:matchId/walkover  [auth]
+  async recordMatchWalkover(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestMatchWalkoverSchema.parse(req.body);
+      const data = await contestRuntimeService.recordMatchWalkover(
         req.params.matchId,
         viewer,
         body,

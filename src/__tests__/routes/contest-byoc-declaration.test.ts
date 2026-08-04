@@ -165,6 +165,9 @@ describe('PATCH /contest-registrations/:id/byoc-declaration', () => {
       vehicle_brand: 'Yokomo',
       vehicle_class: 'RWD Drift',
       notes: 'fixed typo',
+      // Sửa bản khai mà không gửi ảnh nghĩa là giữ nguyên ảnh cũ, không phải
+      // xoá sạch — bản khai này vốn chưa có ảnh nào nên ra mảng rỗng.
+      photos: [],
     });
     // Other metadata keys are preserved.
     expect(row.metadata.booking_id).toBeNull();

@@ -90,11 +90,29 @@ function getSeedingMode(
   return contest.config?.seeding_mode === 'MANUAL' ? 'MANUAL' : 'CHECK_IN_ORDER';
 }
 
-function getLeaderboardMode(contest: Contest): 'BEST_LAP' | 'TOTAL_TIME' | 'KNOCKOUT_WINS' {
+type LeaderboardMode = 'BEST_LAP' | 'TOTAL_TIME' | 'KNOCKOUT_BRACKET';
+
+/**
+ * Cách xếp hạng cuối giải.
+ *
+ * Đấu loại LUÔN xếp theo sơ đồ, bất kể cấu hình ghi gì: người dừng ở vòng sâu
+ * hơn xếp trên. Trước đây mặc định là BEST_LAP, mà đấu loại có nhập thời gian
+ * vòng chạy đâu — toàn null nên thứ tự thành tuỳ tiện. Chế độ đếm số trận thắng
+ * cũng bỏ vì nó cộng cả những trận thắng do gặp ô trống.
+ */
+function getLeaderboardMode(contest: Contest): LeaderboardMode {
+  if (getContestRuntimeFormatCode(contest) === 'KNOCKOUT') return 'KNOCKOUT_BRACKET';
   const mode = contest.config?.leaderboard_mode;
   if (mode === 'TOTAL_TIME') return 'TOTAL_TIME';
-  if (mode === 'KNOCKOUT_WINS') return 'KNOCKOUT_WINS';
+  // Giá trị cũ trong seed và ở thể thức vòng loại + chung kết: ý định vẫn là
+  // "xếp theo sơ đồ đấu", chỉ khác cách tính, nên trỏ về chế độ mới thay vì để
+  // rơi xuống BEST_LAP.
+  if (mode === 'KNOCKOUT_WINS') return 'KNOCKOUT_BRACKET';
   return 'BEST_LAP';
+}
+
+function getContestRuntimeFormatCode(contest: Contest): string {
+  return String(contest.config?.runtime_format ?? contest.config?.format ?? '');
 }
 
 function getEngine(contest: Contest): ContestFormatEngine {
@@ -149,8 +167,20 @@ async function loadEligibleRegistrations(
 }
 
 /**
- * Trận đã ngã ngũ bằng thi đấu thật, phân biệt với trận đóng sẵn lúc bốc thăm
- * vì gặp ô trống.
+ * Trận đã ngã ngũ ngay lúc bốc thăm vì đối thủ là ô trống, hoặc vì cả hai ghế
+ * đều trống. Không ai chạy nên không thể có thời gian hay điểm số.
+ */
+function isDecidedAtDraw(match: ContestMatch): boolean {
+  return (
+    match.metadata?.bye === true ||
+    match.metadata?.empty_slot === true ||
+    // Cả hai bên đều vắng nên không ai chạy — cũng không thể có điểm số.
+    match.metadata?.no_contest === true
+  );
+}
+
+/**
+ * Trận đã ngã ngũ bằng thi đấu thật.
  *
  * Bốc lại sơ đồ chỉ bị cấm khi đã có người thi đấu thật. Nếu tính cả các trận
  * gặp ô trống thì giải nào không kín chỗ cũng bị khoá ngay từ giây đầu tiên,
@@ -159,7 +189,7 @@ async function loadEligibleRegistrations(
 function isDecidedByPlay(match: ContestMatch): boolean {
   if (match.status === ContestMatchStatus.RUNNING) return true;
   if (match.status !== ContestMatchStatus.COMPLETED) return false;
-  return match.metadata?.bye !== true && match.metadata?.empty_slot !== true;
+  return !isDecidedAtDraw(match);
 }
 
 async function loadMatchBundle(matchId: string) {
@@ -481,15 +511,16 @@ async function protectDownstreamCorrection(match: ContestMatch, forceCascade: bo
     }
   }
 
-  // Clear all downstream participants and reset match state to DRAFT.
+  // Chỉ gỡ những người do CHÍNH trận này đẩy sang. Trước đây xoá sạch cả chuỗi
+  // hạ nguồn, cuốn theo cả người do nhánh bên kia đẩy vào — và không có gì đưa
+  // họ trở lại, nên chung kết âm thầm mất một người.
   for (const downstream of downstreamChain) {
-    const downstreamParticipants = await participantRepo.find({
-      where: { matchId: downstream.id },
-    });
-    if (downstreamParticipants.length > 0) {
-      await participantRepo.remove(downstreamParticipants);
-    }
-    downstream.status = ContestMatchStatus.DRAFT;
+    const contributed = await participantRepo.find({ where: { matchId: downstream.id } });
+    const fromThisMatch = contributed.filter((item) => item.metadata?.source_match_id === match.id);
+    if (fromThisMatch.length > 0) await participantRepo.remove(fromThisMatch);
+
+    const remaining = contributed.length - fromThisMatch.length;
+    downstream.status = remaining >= 2 ? ContestMatchStatus.READY : ContestMatchStatus.DRAFT;
     downstream.startedAt = null;
     downstream.endedAt = null;
     downstream.decidedAt = null;
@@ -599,6 +630,98 @@ async function persistGeneratedMatches(
   return createdMatches;
 }
 
+/**
+ * Điền hai người thua bán kết vào trận tranh hạng 3.
+ *
+ * Trận này không nằm trên đường `next_match_id` — đường đó chỉ dành cho người
+ * thắng — nên nó không bao giờ tự có người. Phải gọi lại sau mỗi lần một trận
+ * bán kết ngã ngũ, nếu không trận tranh hạng 3 nằm mãi ở DRAFT và chặn công bố
+ * bảng xếp hạng vĩnh viễn.
+ */
+async function populateThirdPlaceMatch(contestId: string): Promise<void> {
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+
+  const contestMatches = await matchRepo.find({ where: { contestId } });
+  const thirdPlaceMatch = contestMatches.find((match) => match.metadata?.third_place === true);
+  if (!thirdPlaceMatch) return;
+  if (thirdPlaceMatch.status === ContestMatchStatus.COMPLETED) return;
+  if ((await participantRepo.count({ where: { matchId: thirdPlaceMatch.id } })) > 0) return;
+
+  const feederRoundNo = Number(thirdPlaceMatch.metadata?.feeder_round_no ?? 0);
+  if (!feederRoundNo) return;
+
+  const feederMatches = contestMatches.filter(
+    (match) => match.roundNo === feederRoundNo && match.metadata?.third_place !== true,
+  );
+  if (feederMatches.length === 0) return;
+  // Chờ đủ cả hai bán kết: điền sớm một nửa thì người thua bán kết còn lại
+  // không còn chỗ.
+  if (feederMatches.some((match) => match.status !== ContestMatchStatus.COMPLETED)) return;
+
+  const feederParticipants = await loadContestMatchParticipantsByMatch(
+    feederMatches.map((match) => match.id),
+  );
+  // Bán kết thắng do gặp ô trống chỉ có một người và người đó là người thắng,
+  // nên không sinh ra người thua nào.
+  const losers = feederMatches.flatMap((match) =>
+    (feederParticipants.get(match.id) ?? []).filter((participant) => !participant.isWinner),
+  );
+
+  if (losers.length === 0) {
+    thirdPlaceMatch.status = ContestMatchStatus.COMPLETED;
+    thirdPlaceMatch.endedAt = new Date();
+    thirdPlaceMatch.decidedAt = new Date();
+    thirdPlaceMatch.metadata = { ...thirdPlaceMatch.metadata, empty_slot: true };
+    await matchRepo.save(thirdPlaceMatch);
+  } else {
+    for (const [index, loser] of losers.slice(0, 2).entries()) {
+      await participantRepo.save(
+        participantRepo.create({
+          matchId: thirdPlaceMatch.id,
+          registrationId: loser.registrationId,
+          slotNo: index + 1,
+          lane: `L${index + 1}`,
+          seedNo: loser.seedNo,
+          // Chỉ một người tới được thì người đó nhận hạng 3, không phải thi đấu.
+          isWinner: losers.length === 1,
+          status:
+            losers.length === 1
+              ? ContestParticipantStatus.FINISHED
+              : ContestParticipantStatus.READY,
+          metadata: {
+            source_match_id: loser.matchId,
+            advanced_as: 'third_place_feeder',
+          },
+        }),
+      );
+    }
+
+    if (losers.length === 1) {
+      thirdPlaceMatch.status = ContestMatchStatus.COMPLETED;
+      thirdPlaceMatch.endedAt = new Date();
+      thirdPlaceMatch.decidedAt = new Date();
+      thirdPlaceMatch.metadata = { ...thirdPlaceMatch.metadata, bye: true };
+    } else {
+      thirdPlaceMatch.status = ContestMatchStatus.READY;
+    }
+    await matchRepo.save(thirdPlaceMatch);
+  }
+
+  await writeContestAudit({
+    contestId,
+    matchId: thirdPlaceMatch.id,
+    actorId: null,
+    actorRole: 'SYSTEM',
+    eventType: 'match.third_place_populated',
+    afterJson: {
+      status: thirdPlaceMatch.status,
+      loser_count: losers.length,
+      registration_ids: losers.slice(0, 2).map((item) => item.registrationId),
+    },
+  });
+}
+
 export async function generateContestMatches(
   contestId: string,
   viewer: Viewer,
@@ -697,6 +820,10 @@ export async function generateContestMatches(
 
   // Người thắng do gặp ô trống đã được engine đẩy sang vòng sau ngay lúc sinh sơ
   // đồ, nên ở đây không cần advance thêm lần nữa.
+
+  // Sơ đồ quá ít người thì bán kết có thể ngã ngũ ngay lúc bốc, phải điền trận
+  // tranh hạng 3 luôn chứ không đợi ai nhập kết quả.
+  await populateThirdPlaceMatch(contestId);
 
   // Bốc thăm là lúc chốt danh sách, nên đăng ký đóng lại luôn.
   if (contest.status === ContestStatus.OPEN) {
@@ -856,9 +983,14 @@ export async function updateMatchParticipants(
   }
 
   const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+  // Sơ đồ đấu loại được bốc TRƯỚC ngày thi nên chưa ai check-in cả; sửa sơ đồ
+  // mà đòi đã check-in thì suốt từ lúc bốc tới sáng ngày thi không đụng vào
+  // được. Điều kiện đúng là "đã được duyệt", giống hệt lúc bốc thăm.
+  const contest = await getContestOrThrow(match.contestId);
   const registrations = await loadEligibleRegistrations(
     match.contestId,
     body.participants.map((item) => item.registration_id),
+    { allowConfirmed: getEngine(contest).code === 'KNOCKOUT' },
   );
   const registrationMap = new Map(registrations.map((item) => [item.id, item]));
 
@@ -974,6 +1106,18 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
   );
   const winnerIds = new Set(inferredWinners.map((item) => item.id));
 
+  // Trận đấu loại phải có người thắng thì mới đóng được. Không xác định được ai
+  // thắng mà vẫn đánh dấu hoàn tất thì vòng sau không bao giờ có người, sơ đồ
+  // đứng và không công bố được bảng xếp hạng — đúng lúc chẳng ai còn nhớ trận
+  // nào bị bỏ sót.
+  if (match.nextMatchId && inferredWinners.length === 0) {
+    throw new AppError(
+      'Chưa xác định được người thắng: hãy chọn người thắng, hoặc ghi nhận đối thủ vắng mặt (DNS/DNF/DQ)',
+      400,
+      'MATCH_WINNER_REQUIRED',
+    );
+  }
+
   for (const participant of refreshedParticipants) {
     participant.isWinner = winnerIds.has(participant.id);
     if (!body.results.some((item) => item.registration_id === participant.registrationId)) {
@@ -1005,6 +1149,207 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
     afterJson: { status: match.status, result_summary: match.resultSummary },
     reason: body.reason,
   });
+
+  // Người thắng đi tiếp ngay khi có kết quả. Trước đây phải bấm thêm nút
+  // "advance" cho từng trận — quên một trận là vòng sau rỗng, sơ đồ đứng và
+  // không bao giờ công bố được bảng xếp hạng.
+  const advanced = await syncWinnersToNextMatch(match, refreshedParticipants, contest);
+  if (advanced) {
+    await writeContestAudit({
+      contestId: match.contestId,
+      matchId: match.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'match.advanced',
+      afterJson: { next_match_id: advanced.nextMatchId, winners: advanced.winnerIds },
+      metadata: { auto_advanced: true },
+    });
+  }
+
+  // Trận vừa xong có thể là bán kết cuối cùng còn thiếu.
+  await populateThirdPlaceMatch(match.contestId);
+
+  return mapMatchesPayload(match.contestId, viewer);
+}
+
+/**
+ * Gỡ tắc cho trận vòng sau khi một nhánh cấp người của nó không sinh ra ai.
+ *
+ * Cả hai bên cùng vắng thì trận đó không có người thắng, và trận kế tiếp sẽ mãi
+ * chỉ có một người ngồi chờ đối thủ không bao giờ tới. Ở đây soi lại: khi mọi
+ * nhánh cấp người đã ngã ngũ mà trận sau chỉ còn một người thì người đó đi tiếp
+ * luôn, không còn ai thì trận đó thành ô trống. Lan truyền tiếp lên các vòng
+ * sau, đúng cách engine xử lý ô trống lúc bốc thăm.
+ */
+async function resolveStalledNextMatch(nextMatchId: string, contestId: string): Promise<void> {
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+
+  let currentId: string | null = nextMatchId;
+  while (currentId) {
+    const current: ContestMatch | null = await matchRepo.findOne({ where: { id: currentId } });
+    if (!current) return;
+    if (
+      current.status === ContestMatchStatus.COMPLETED ||
+      current.status === ContestMatchStatus.RUNNING
+    ) {
+      return;
+    }
+
+    const feeders = await matchRepo.find({ where: { contestId, nextMatchId: current.id } });
+    if (feeders.some((feeder) => feeder.status !== ContestMatchStatus.COMPLETED)) return;
+
+    const currentParticipants = await participantRepo.find({ where: { matchId: current.id } });
+    if (currentParticipants.length >= 2) return;
+
+    if (currentParticipants.length === 1) {
+      const [winner] = currentParticipants;
+      winner.isWinner = true;
+      winner.status = ContestParticipantStatus.FINISHED;
+      await participantRepo.save(winner);
+      current.metadata = {
+        ...current.metadata,
+        bye: true,
+        bye_winner_registration_id: winner.registrationId,
+      };
+    } else {
+      current.metadata = { ...current.metadata, empty_slot: true };
+    }
+
+    current.status = ContestMatchStatus.COMPLETED;
+    current.endedAt = new Date();
+    current.decidedAt = new Date();
+    await matchRepo.save(current);
+
+    await writeContestAudit({
+      contestId,
+      matchId: current.id,
+      actorId: null,
+      actorRole: 'SYSTEM',
+      eventType: 'match.auto_resolved',
+      afterJson: {
+        status: current.status,
+        participant_count: currentParticipants.length,
+      },
+      reason: 'Nhánh cấp người không sinh ra đối thủ',
+    });
+
+    if (currentParticipants.length === 1 && current.nextMatchId) {
+      const contest = await getContestOrThrow(contestId);
+      await syncWinnersToNextMatch(current, currentParticipants, contest);
+    }
+    currentId = current.nextMatchId;
+  }
+}
+
+/**
+ * Xử thua vắng mặt: đánh dấu người không tới (DNS), bỏ giữa chừng (DNF) hoặc bị
+ * loại vì vi phạm (DQ), rồi trao trận cho người còn lại.
+ *
+ * Không tự động chạy theo giờ — nhân viên phải bấm xác nhận kèm lý do, vì đây
+ * là quyết định loại người ta khỏi giải.
+ */
+export async function recordMatchWalkover(
+  matchId: string,
+  viewer: Viewer,
+  body: {
+    absent: Array<{ registration_id: string; status: 'DNS' | 'DNF' | 'DQ' }>;
+    reason: string;
+  },
+) {
+  const { match, participants } = await loadMatchBundle(matchId);
+  await assertViewerCanOperateMatch(match, viewer);
+  const contest = await getContestOrThrow(match.contestId);
+
+  if (match.status === ContestMatchStatus.COMPLETED) {
+    throw new AppError(
+      'Trận đã hoàn tất; dùng sửa kết quả nếu cần thay đổi',
+      400,
+      'MATCH_ALREADY_COMPLETED',
+    );
+  }
+  if (participants.length === 0) {
+    throw new AppError('Match chưa có participant', 400, 'MATCH_HAS_NO_PARTICIPANTS');
+  }
+
+  const absentByRegistration = new Map(body.absent.map((item) => [item.registration_id, item]));
+  const unknown = body.absent.find(
+    (item) =>
+      !participants.some((participant) => participant.registrationId === item.registration_id),
+  );
+  if (unknown) {
+    throw new AppError('Có người không thuộc trận này', 400, 'MATCH_RESULT_INVALID');
+  }
+
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+  const remaining = participants.filter(
+    (participant) => !absentByRegistration.has(participant.registrationId),
+  );
+  if (remaining.length > 1) {
+    throw new AppError(
+      'Vẫn còn nhiều hơn một người có mặt; hãy nhập kết quả thi đấu thay vì xử thua',
+      400,
+      'MATCH_WALKOVER_NOT_APPLICABLE',
+    );
+  }
+
+  const before = { status: match.status };
+
+  for (const participant of participants) {
+    const absent = absentByRegistration.get(participant.registrationId);
+    if (absent) {
+      participant.status = absent.status as ContestParticipantStatus;
+      participant.isWinner = false;
+      participant.finishPosition = null;
+    } else {
+      participant.status = ContestParticipantStatus.FINISHED;
+      participant.isWinner = true;
+      participant.finishPosition = 1;
+    }
+    await participantRepo.save(participant);
+  }
+
+  match.status = ContestMatchStatus.COMPLETED;
+  match.startedAt = match.startedAt ?? new Date();
+  match.endedAt = new Date();
+  match.decidedAt = new Date();
+  match.decidedBy = viewer.userId;
+  match.metadata = {
+    ...match.metadata,
+    walkover: true,
+    // Cả hai cùng vắng: không ai thắng, và trận này vĩnh viễn không có điểm số.
+    ...(remaining.length === 0 ? { no_contest: true } : {}),
+  };
+  const refreshed = await participantRepo.find({ where: { matchId }, order: { slotNo: 'ASC' } });
+  match.resultSummary = getEngine(contest).buildResultSummary(contest, match, refreshed);
+  await AppDataSource.getRepository(ContestMatch).save(match);
+
+  if (contest.status !== ContestStatus.RUNNING) {
+    contest.status = ContestStatus.RUNNING;
+    await AppDataSource.getRepository(Contest).save(contest);
+  }
+
+  await writeContestAudit({
+    contestId: match.contestId,
+    matchId: match.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'match.walkover',
+    beforeJson: before,
+    afterJson: {
+      status: match.status,
+      absent: body.absent,
+      winner_registration_id: remaining[0]?.registrationId ?? null,
+    },
+    reason: body.reason,
+  });
+
+  if (remaining.length === 1) {
+    await syncWinnersToNextMatch(match, refreshed, contest);
+  } else if (match.nextMatchId) {
+    await resolveStalledNextMatch(match.nextMatchId, match.contestId);
+  }
+  await populateThirdPlaceMatch(match.contestId);
 
   return mapMatchesPayload(match.contestId, viewer);
 }
@@ -1067,6 +1412,108 @@ export async function correctMatchResults(
   return submitMatchResults(matchId, viewer, body);
 }
 
+/**
+ * Đưa người thắng của một trận sang trận kế tiếp.
+ *
+ * Chạy được nhiều lần cho ra cùng một kết quả: nó gỡ những người mà trận này
+ * từng đẩy sang nhưng nay không còn là người thắng, rồi mới thêm người thắng
+ * hiện tại. Nhờ vậy sửa kết quả không để lại người cũ nằm lại vòng sau —
+ * trước đây bấm đẩy lần nữa là trận sau có ba người.
+ *
+ * Chỉ đụng tới những dòng mang `source_match_id` của chính trận này, nên người
+ * do nhánh bên kia đẩy vào vẫn nguyên vẹn.
+ */
+async function syncWinnersToNextMatch(
+  match: ContestMatch,
+  participants: ContestMatchParticipant[],
+  contest: Contest,
+): Promise<{ nextMatchId: string; winnerIds: string[] } | null> {
+  if (!match.nextMatchId) return null;
+
+  const matchRepo = AppDataSource.getRepository(ContestMatch);
+  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+
+  const nextMatch = await matchRepo.findOne({ where: { id: match.nextMatchId } });
+  if (!nextMatch) {
+    throw new AppError('Match kế tiếp không tồn tại', 404, 'NEXT_MATCH_NOT_FOUND');
+  }
+  // Trận sau đã đấu xong thì không được âm thầm đổi người của nó; muốn sửa phải
+  // đi qua correctMatchResults để lớp bảo vệ hạ nguồn có tiếng nói.
+  if (
+    nextMatch.status === ContestMatchStatus.COMPLETED ||
+    nextMatch.status === ContestMatchStatus.RUNNING
+  ) {
+    return null;
+  }
+
+  const winnersToAdvance =
+    typeof match.advancementRule?.winners_to_advance === 'number'
+      ? Number(match.advancementRule.winners_to_advance)
+      : 1;
+  const winners = getEngine(contest).inferWinners(participants, Math.max(1, winnersToAdvance));
+  if (winners.length === 0) return null;
+  const winnerIds = new Set(winners.map((item) => item.registrationId));
+
+  const nextParticipants = await participantRepo.find({
+    where: { matchId: nextMatch.id },
+    order: { slotNo: 'ASC' },
+  });
+
+  const stale = nextParticipants.filter(
+    (item) => item.metadata?.source_match_id === match.id && !winnerIds.has(item.registrationId),
+  );
+  if (stale.length > 0) await participantRepo.remove(stale);
+
+  const remaining = nextParticipants.filter((item) => !stale.includes(item));
+  const usedSlots = new Set(remaining.map((item) => item.slotNo));
+
+  for (const winner of winners) {
+    const alreadyThere = remaining.some(
+      (item) =>
+        item.metadata?.source_match_id === match.id &&
+        item.registrationId === winner.registrationId,
+    );
+    if (alreadyThere) continue;
+
+    let slotNo = 1;
+    while (usedSlots.has(slotNo)) slotNo += 1;
+    usedSlots.add(slotNo);
+
+    await participantRepo.save(
+      participantRepo.create({
+        matchId: nextMatch.id,
+        registrationId: winner.registrationId,
+        slotNo,
+        lane: `L${slotNo}`,
+        seedNo: winner.seedNo,
+        status: ContestParticipantStatus.READY,
+        metadata: {
+          source_match_id: match.id,
+          source_match_no: match.matchNo,
+          source_round_no: match.roundNo,
+        },
+      }),
+    );
+  }
+
+  // Chỉ mở trận sau khi đã đủ đối thủ; còn thiếu một nhánh thì nó vẫn là bản
+  // nháp, đúng như lúc engine sinh sơ đồ.
+  const finalCount = await participantRepo.count({ where: { matchId: nextMatch.id } });
+  const nextStatus = finalCount >= 2 ? ContestMatchStatus.READY : ContestMatchStatus.DRAFT;
+  if (nextMatch.status !== nextStatus) {
+    nextMatch.status = nextStatus;
+    await matchRepo.save(nextMatch);
+  }
+
+  return { nextMatchId: nextMatch.id, winnerIds: winners.map((item) => item.registrationId) };
+}
+
+/**
+ * Đẩy người thắng bằng tay.
+ *
+ * Từ khi nhập kết quả tự đẩy, endpoint này chỉ còn là đường chữa cháy khi dữ
+ * liệu lệch; chạy lại không gây hại vì phép đồng bộ là bất biến.
+ */
 export async function advanceMatch(matchId: string, viewer: Viewer) {
   const { match, participants } = await loadMatchBundle(matchId);
   await assertViewerCanOperateMatch(match, viewer);
@@ -1078,62 +1525,11 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
     throw new AppError('Chỉ advance được match đã hoàn tất', 400, 'MATCH_NOT_COMPLETED');
   }
 
-  const nextMatch = await AppDataSource.getRepository(ContestMatch).findOne({
-    where: { id: match.nextMatchId },
-  });
-  if (!nextMatch) {
-    throw new AppError('Match kế tiếp không tồn tại', 404, 'NEXT_MATCH_NOT_FOUND');
-  }
-
   const contest = await getContestOrThrow(match.contestId);
-  const engine = getEngine(contest);
-
-  const winnersToAdvance =
-    typeof match.advancementRule?.winners_to_advance === 'number'
-      ? Number(match.advancementRule.winners_to_advance)
-      : 1;
-  const winners = engine.inferWinners(participants, Math.max(1, winnersToAdvance));
-  if (winners.length === 0) {
+  const synced = await syncWinnersToNextMatch(match, participants, contest);
+  if (!synced) {
     throw new AppError('Chưa xác định được winner để advance', 400, 'MATCH_WINNER_NOT_FOUND');
   }
-
-  const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
-  const nextParticipants = await participantRepo.find({
-    where: { matchId: nextMatch.id },
-    order: { slotNo: 'ASC' },
-  });
-  const usedSlots = new Set(nextParticipants.map((item) => item.slotNo));
-
-  for (const winner of winners) {
-    const existing = nextParticipants.find(
-      (item) =>
-        item.metadata?.source_match_id === match.id &&
-        item.registrationId === winner.registrationId,
-    );
-    if (existing) continue;
-
-    let slotNo = 1;
-    while (usedSlots.has(slotNo)) slotNo += 1;
-    usedSlots.add(slotNo);
-
-    const advancedParticipant = participantRepo.create({
-      matchId: nextMatch.id,
-      registrationId: winner.registrationId,
-      slotNo,
-      lane: `L${slotNo}`,
-      seedNo: winner.seedNo,
-      status: ContestParticipantStatus.READY,
-      metadata: {
-        source_match_id: match.id,
-        source_match_no: match.matchNo,
-        source_round_no: match.roundNo,
-      },
-    });
-    await participantRepo.save(advancedParticipant);
-  }
-
-  nextMatch.status = ContestMatchStatus.READY;
-  await AppDataSource.getRepository(ContestMatch).save(nextMatch);
 
   await writeContestAudit({
     contestId: match.contestId,
@@ -1141,7 +1537,7 @@ export async function advanceMatch(matchId: string, viewer: Viewer) {
     actorId: viewer.userId,
     actorRole: viewer.role,
     eventType: 'match.advanced',
-    afterJson: { next_match_id: nextMatch.id, winners: winners.map((item) => item.registrationId) },
+    afterJson: { next_match_id: synced.nextMatchId, winners: synced.winnerIds },
   });
 
   return mapMatchesPayload(match.contestId, viewer);
@@ -1159,6 +1555,14 @@ type LeaderboardEntry = {
   latest_finish_position: number | null;
   matches_completed: number;
   progressed_round: number;
+  /** Vòng của trận cuối cùng người này thật sự thi đấu. */
+  last_played_round: number;
+  /** Thắng trận cuối cùng đó hay không. */
+  won_last_match: boolean;
+  /** Số trận thắng bằng thi đấu thật, không tính thắng do gặp ô trống. */
+  real_wins: number;
+  /** Hạng ấn định sẵn cho 4 vị trí đầu; null nghĩa là xếp theo vòng bị loại. */
+  fixed_rank: number | null;
 };
 
 function normalizeContestTimeSeconds(value: number | string | null | undefined): number | null {
@@ -1167,18 +1571,22 @@ function normalizeContestTimeSeconds(value: number | string | null | undefined):
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function sortLeaderboardEntries(
-  entries: LeaderboardEntry[],
-  mode: 'BEST_LAP' | 'TOTAL_TIME' | 'KNOCKOUT_WINS',
-) {
+function sortLeaderboardEntries(entries: LeaderboardEntry[], mode: LeaderboardMode) {
   return [...entries].sort((a, b) => {
-    if (mode === 'KNOCKOUT_WINS') {
-      if (a.wins !== b.wins) return b.wins - a.wins;
-      if (a.progressed_round !== b.progressed_round) return b.progressed_round - a.progressed_round;
-      return (
-        (a.latest_finish_position ?? Number.MAX_SAFE_INTEGER) -
-        (b.latest_finish_position ?? Number.MAX_SAFE_INTEGER)
-      );
+    if (mode === 'KNOCKOUT_BRACKET') {
+      // Bốn vị trí đầu do chung kết và trận tranh hạng 3 định đoạt.
+      if (a.fixed_rank !== null || b.fixed_rank !== null) {
+        if (a.fixed_rank === null) return 1;
+        if (b.fixed_rank === null) return -1;
+        if (a.fixed_rank !== b.fixed_rank) return a.fixed_rank - b.fixed_rank;
+      }
+      // Còn lại: ai đi sâu hơn xếp trên.
+      if (a.last_played_round !== b.last_played_round) {
+        return b.last_played_round - a.last_played_round;
+      }
+      if (a.won_last_match !== b.won_last_match) return a.won_last_match ? -1 : 1;
+      // Cùng dừng một vòng thì ai thắng nhiều trận thật hơn xếp trên.
+      return b.real_wins - a.real_wins;
     }
     if (mode === 'TOTAL_TIME') {
       return (
@@ -1191,6 +1599,47 @@ function sortLeaderboardEntries(
       (b.best_lap_seconds ?? Number.MAX_SAFE_INTEGER)
     );
   });
+}
+
+/**
+ * Ấn định bốn vị trí đầu theo đúng kết quả trên sân.
+ *
+ * Chung kết cho ra hạng 1 và 2; trận tranh hạng 3 cho ra hạng 3 và 4. Không
+ * suy ra được từ "vòng dừng lại" vì trận tranh hạng 3 nằm cùng vòng với chung
+ * kết — người thắng nó mà xét theo vòng thì ngang hàng nhà vô địch.
+ *
+ * Giải không bật trận tranh hạng 3 thì hai người thua bán kết cùng đứng thứ ba,
+ * không bịa ra thứ tự giữa họ.
+ */
+function assignKnockoutFixedRanks(
+  completedMatches: ContestMatch[],
+  participantsByMatch: Map<string, ContestMatchParticipant[]>,
+  entryMap: Map<string, LeaderboardEntry>,
+): void {
+  const bracketMatches = completedMatches.filter((match) => match.metadata?.third_place !== true);
+  if (bracketMatches.length === 0) return;
+
+  const finalRoundNo = Math.max(...bracketMatches.map((match) => match.roundNo));
+  const finalMatch = bracketMatches.find((match) => match.roundNo === finalRoundNo);
+  const thirdPlaceMatch = completedMatches.find((match) => match.metadata?.third_place === true);
+
+  const setRank = (registrationId: string | undefined, rank: number) => {
+    if (!registrationId) return;
+    const entry = entryMap.get(registrationId);
+    if (entry) entry.fixed_rank = rank;
+  };
+
+  const rankPair = (match: ContestMatch | undefined, winnerRank: number) => {
+    if (!match) return;
+    const participants = participantsByMatch.get(match.id) ?? [];
+    setRank(participants.find((item) => item.isWinner)?.registrationId, winnerRank);
+    // Trận thắng do gặp ô trống không có người thua để xếp hạng kế tiếp.
+    if (isDecidedAtDraw(match)) return;
+    setRank(participants.find((item) => !item.isWinner)?.registrationId, winnerRank + 1);
+  };
+
+  rankPair(finalMatch, 1);
+  rankPair(thirdPlaceMatch, 3);
 }
 
 async function buildLeaderboard(contestId: string, contest: Contest) {
@@ -1225,11 +1674,25 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
         latest_finish_position: null,
         matches_completed: 0,
         progressed_round: 0,
+        last_played_round: 0,
+        won_last_match: false,
+        real_wins: 0,
+        fixed_rank: null,
       };
       current.matches_completed += 1;
       current.progressed_round = Math.max(current.progressed_round, match.roundNo);
       current.latest_finish_position = participant.finishPosition ?? current.latest_finish_position;
       if (participant.isWinner) current.wins += 1;
+
+      // Trận gặp ô trống không phải một trận đấu: không tính là đã đi tới vòng
+      // đó bằng thực lực, và cũng không tính là một trận thắng.
+      if (!isDecidedAtDraw(match)) {
+        if (match.roundNo >= current.last_played_round) {
+          current.last_played_round = match.roundNo;
+          current.won_last_match = participant.isWinner === true;
+        }
+        if (participant.isWinner) current.real_wins += 1;
+      }
       const bestLapSeconds = normalizeContestTimeSeconds(participant.bestLapSeconds);
       const totalTimeSeconds = normalizeContestTimeSeconds(participant.totalTimeSeconds);
       if (bestLapSeconds !== null) {
@@ -1249,6 +1712,9 @@ async function buildLeaderboard(contestId: string, contest: Contest) {
   }
 
   const mode = getLeaderboardMode(contest);
+  if (mode === 'KNOCKOUT_BRACKET') {
+    assignKnockoutFixedRanks(completedMatches, participantsByMatch, entryMap);
+  }
   const sorted = sortLeaderboardEntries(Array.from(entryMap.values()), mode).map(
     (entry, index) => ({
       rank: index + 1,
@@ -1290,16 +1756,23 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
   const participantsByMatch = await loadContestMatchParticipantsByMatch(
     matches.map((item) => item.id),
   );
-  const matchWithoutResults = matches.find((match) => {
-    const participants = participantsByMatch.get(match.id) ?? [];
-    return participants.every(
-      (participant) =>
-        participant.finishPosition === null &&
-        participant.bestLapSeconds === null &&
-        participant.totalTimeSeconds === null &&
-        participant.score === null,
-    );
-  });
+  // Chỉ đòi kết quả ở trận thật sự có người chạy. Trận gặp ô trống hoặc cả hai
+  // ghế đều trống được đóng ngay lúc bốc thăm và vĩnh viễn không có điểm số —
+  // bắt chúng phải có kết quả thì sơ đồ mở 8 suất mà chỉ 6 người đăng ký sẽ
+  // không bao giờ công bố được bảng xếp hạng.
+  const matchWithoutResults = matches
+    .filter((match) => !isDecidedAtDraw(match))
+    .find((match) => {
+      const participants = participantsByMatch.get(match.id) ?? [];
+      if (participants.length === 0) return true;
+      return participants.every(
+        (participant) =>
+          participant.finishPosition === null &&
+          participant.bestLapSeconds === null &&
+          participant.totalTimeSeconds === null &&
+          participant.score === null,
+      );
+    });
   if (matchWithoutResults) {
     throw new AppError(
       'Có match hoàn tất nhưng chưa có kết quả hợp lệ',

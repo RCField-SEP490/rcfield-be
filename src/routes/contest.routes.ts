@@ -290,6 +290,13 @@ contestRouter.post(
   contestController.correctMatchResults,
 );
 contestRouter.post(
+  '/contest-matches/:matchId/walkover',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestController.recordMatchWalkover,
+);
+
+contestRouter.post(
   '/contest-matches/:matchId/advance',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),

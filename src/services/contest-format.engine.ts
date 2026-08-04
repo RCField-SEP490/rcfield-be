@@ -83,14 +83,22 @@ function isEliminatedStatus(status: ContestParticipantStatus | undefined | null)
 }
 
 /** Có bất kỳ dấu hiệu nào cho thấy kết quả đã thực sự được ghi nhận chưa. */
+/**
+ * VĐV này đã có dữ liệu để xếp trên hay dưới người khác chưa.
+ *
+ * Trạng thái "đã hoàn thành" KHÔNG tính: nó chỉ nói người đó chạy xong, không
+ * nói chạy thế nào. Trước đây tính nó là có kết quả, mà `submitMatchResults`
+ * lại mặc định gán FINISHED cho mọi người — nên bấm Lưu với form trống là cả
+ * hai đều "có kết quả", hoà nhau ở mọi tiêu chí, rồi rơi xuống nhánh so slotNo
+ * ở cuối: người làn 1 mặc nhiên thắng, không một lời cảnh báo.
+ */
 function hasRecordedResult(participant: ContestMatchParticipant): boolean {
   return (
     participant.isWinner === true ||
     participant.finishPosition !== null ||
     participant.bestLapSeconds !== null ||
     participant.totalTimeSeconds !== null ||
-    participant.score !== null ||
-    participant.status === ContestParticipantStatus.FINISHED
+    participant.score !== null
   );
 }
 
