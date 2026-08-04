@@ -88,6 +88,25 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
         : Promise.resolve([]),
     ]);
 
+  // Đếm trận bằng MỘT truy vấn gộp cho cả trang, không phải mỗi giải một lần.
+  // Danh sách giải trước đây không có số liệu này nên nhãn luôn hiện "Chưa tạo
+  // bracket" kể cả khi sơ đồ đã bốc xong.
+  const matchStatsRows =
+    contestIds.length > 0
+      ? await AppDataSource.query<
+          { contest_id: string; total: string; rounds: string; running: string }[]
+        >(
+          `SELECT contest_id,
+                  COUNT(*)                                   AS total,
+                  COUNT(DISTINCT round_no)                    AS rounds,
+                  COUNT(*) FILTER (WHERE status = 'RUNNING')  AS running
+             FROM contest_matches
+            WHERE contest_id = ANY($1::uuid[])
+            GROUP BY contest_id`,
+          [contestIds],
+        )
+      : [];
+
   const cafeIds = Array.from(new Set(contestCafes.map((item) => item.cafeId)));
   const staffIds = Array.from(new Set(directAssignments.map((item) => item.staffId)));
   const cafes =
@@ -96,6 +115,16 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
     staffIds.length > 0 ? await AppDataSource.getRepository(User).findBy({ id: In(staffIds) }) : [];
 
   return {
+    matchStatsByContest: new Map(
+      matchStatsRows.map((row) => [
+        row.contest_id,
+        {
+          total: Number(row.total),
+          rounds: Number(row.rounds),
+          running: Number(row.running),
+        },
+      ]),
+    ),
     trackTypeMap: new Map(trackTypes.map((item) => [item.id, item])),
     typeMap: new Map(types.map((item) => [item.id, item])),
     formatMap: new Map(formats.map((item) => [item.id, item])),
@@ -141,6 +170,7 @@ export async function mapContestPayload(contests: Contest[]) {
     registrationStatsByContest,
     staffAssignmentsByContest,
     staffMap,
+    matchStatsByContest,
   } = await loadContestCatalogMaps(contests);
 
   return contests.map((contest) => {
@@ -201,9 +231,20 @@ export async function mapContestPayload(contests: Contest[]) {
       };
     });
 
+    const matchStats = matchStatsByContest.get(contest.id) ?? {
+      total: 0,
+      rounds: 0,
+      running: 0,
+    };
+
     return {
       id: contest.id,
       provider_id: contest.providerId,
+      match_stats: {
+        total: matchStats.total,
+        total_rounds: matchStats.rounds,
+        has_live_matches: matchStats.running > 0,
+      },
       name: contest.name,
       description: contest.description,
       status: contest.status,

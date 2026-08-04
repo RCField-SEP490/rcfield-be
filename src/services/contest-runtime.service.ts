@@ -1826,7 +1826,29 @@ export async function listContestAuditLogs(
     skip: (page - 1) * limit,
     take: limit,
   });
-  return { data: rows, meta: { total, page, limit } };
+  // Kèm tên trận để nhật ký đọc được "Tứ kết 1" thay vì một đoạn mã băm.
+  const matchIds = Array.from(
+    new Set(rows.map((row) => row.matchId).filter((id): id is string => Boolean(id))),
+  );
+  const matchNameById = new Map<string, string>();
+  if (matchIds.length > 0) {
+    const auditMatches = await AppDataSource.getRepository(ContestMatch).findBy({
+      id: In(matchIds),
+    });
+    for (const match of auditMatches) {
+      matchNameById.set(
+        match.id,
+        match.name?.trim() || `Vòng ${match.roundNo} · Trận ${match.matchNo}`,
+      );
+    }
+  }
+
+  const data = rows.map((row) => ({
+    ...row,
+    matchName: row.matchId ? (matchNameById.get(row.matchId) ?? null) : null,
+  }));
+
+  return { data, meta: { total, page, limit } };
 }
 
 export async function getContestMetrics(contestId: string, viewer: Viewer) {
