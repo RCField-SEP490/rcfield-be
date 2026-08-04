@@ -207,6 +207,43 @@ describe('contest knockout — công bố bảng xếp hạng', () => {
     expect(published).toBeTruthy();
   });
 
+  it('công bố được khi trận chỉ ghi ai thắng, không có điểm số', async () => {
+    // Đấu loại 1v1 thì "ai thắng" chính là kết quả — không có thời gian vòng
+    // chạy nào để nhập. Đòi thêm trường số là chặn nhầm và giải kẹt vĩnh viễn.
+    const contestId = await createKnockoutContest({
+      providerId: provider.id,
+      cafeId,
+      capacity: 4,
+    });
+    await addConfirmedEntrants(contestId, 4);
+    await generateContestMatches(contestId, viewer, { cafe_id: cafeId });
+
+    for (let round = 1; round <= 2; round += 1) {
+      const roundMatches = (await loadMatches(contestId)).filter(
+        (match) => match.round_no === round && match.status !== ContestMatchStatus.COMPLETED,
+      );
+      for (const match of roundMatches) {
+        const participants = await AppDataSource.query<{ registration_id: string }[]>(
+          `SELECT registration_id FROM contest_match_participants
+            WHERE match_id = $1 ORDER BY slot_no ASC`,
+          [match.id],
+        );
+        if (participants.length === 0) continue;
+        await submitMatchResults(match.id, viewer, {
+          // Chỉ đánh dấu người thắng, không gửi finish_position/score/thời gian.
+          results: participants.map((participant, index) => ({
+            registration_id: participant.registration_id,
+            is_winner: index === 0,
+          })),
+          reason: 'Chỉ ghi người thắng',
+        });
+      }
+    }
+
+    const published = await publishContestLeaderboard(contestId, viewer);
+    expect(published).toBeTruthy();
+  });
+
   it('điền người thua bán kết vào trận tranh hạng 3 rồi mới cho công bố', async () => {
     const contestId = await createKnockoutContest({
       providerId: provider.id,

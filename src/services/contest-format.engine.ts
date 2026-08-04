@@ -74,7 +74,7 @@ function normalizeTimeSeconds(value: number | string | null | undefined): number
 }
 
 /** DNS/DNF/DQ đều là "không hoàn thành lượt đấu" nên không bao giờ được đi tiếp. */
-function isEliminatedStatus(status: ContestParticipantStatus | undefined | null): boolean {
+export function isEliminatedStatus(status: ContestParticipantStatus | undefined | null): boolean {
   return (
     status === ContestParticipantStatus.DNS ||
     status === ContestParticipantStatus.DNF ||

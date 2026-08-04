@@ -14,9 +14,21 @@ function getSafeFrontendUrl(): string {
   return url;
 }
 
+const nodeEnv = process.env.NODE_ENV ?? 'development';
+
 export const env = {
-  NODE_ENV: process.env.NODE_ENV ?? 'development',
+  NODE_ENV: nodeEnv,
   PORT: parseInt(process.env.PORT ?? '3000', 10),
+
+  /**
+   * Cờ TẠM THỜI để thử luồng ngày thi mà không phải chờ tới đúng giờ giải.
+   *
+   * Bỏ qua điều kiện thời gian và trạng thái giải khi điểm danh. Cố ý chặn cứng
+   * ở production: một cờ env đặt nhầm trên máy chủ thật sẽ cho điểm danh giải
+   * chưa đóng đăng ký, giao xe cho người chưa chắc suất.
+   */
+  devBypassContestCheckInWindow:
+    nodeEnv !== 'production' && parseBoolean(process.env.DEV_BYPASS_CONTEST_CHECKIN),
 
   db: {
     url: process.env.DATABASE_URL,

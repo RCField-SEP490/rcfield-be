@@ -715,19 +715,28 @@ export async function checkInRegistration(
     throw new AppError('Registration vẫn đang chờ xử lý phí tham gia', 400, 'ENTRY_FEE_PENDING');
   }
 
-  if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
-    throw new AppError(
-      'Check-in chỉ được thực hiện khi contest ở trạng thái CLOSED hoặc RUNNING',
-      400,
-      'CONTEST_NOT_CHECKIN_READY',
+  // Cờ dev cho phép thử luồng ngày thi mà không phải chờ đúng giờ giải; nó bị
+  // ép tắt ở production ngay trong `env`, không phụ thuộc biến môi trường.
+  if (env.devBypassContestCheckInWindow) {
+    logger.warn(
+      'ContestService',
+      `DEV_BYPASS_CONTEST_CHECKIN đang bật — bỏ qua kiểm tra thời gian điểm danh cho contest ${contest.id}`,
     );
-  }
-  const now = new Date();
-  if (contest.startsAt && now < contest.startsAt) {
-    throw new AppError('Chưa tới giờ check-in của contest', 400, 'CONTEST_CHECKIN_NOT_STARTED');
-  }
-  if (contest.endsAt && now > contest.endsAt) {
-    throw new AppError('Contest đã kết thúc, không thể check-in', 400, 'CONTEST_CHECKIN_ENDED');
+  } else {
+    if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
+      throw new AppError(
+        'Check-in chỉ được thực hiện khi contest ở trạng thái CLOSED hoặc RUNNING',
+        400,
+        'CONTEST_NOT_CHECKIN_READY',
+      );
+    }
+    const now = new Date();
+    if (contest.startsAt && now < contest.startsAt) {
+      throw new AppError('Chưa tới giờ check-in của contest', 400, 'CONTEST_CHECKIN_NOT_STARTED');
+    }
+    if (contest.endsAt && now > contest.endsAt) {
+      throw new AppError('Contest đã kết thúc, không thể check-in', 400, 'CONTEST_CHECKIN_ENDED');
+    }
   }
 
   const contestCafe = await AppDataSource.getRepository(ContestCafe).findOne({

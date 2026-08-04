@@ -30,6 +30,7 @@ import {
   GeneratedMatch,
   QualifyingFinalEngine,
   getContestFormatEngine,
+  isEliminatedStatus,
   shuffleWithSeed,
 } from './contest-format.engine';
 
@@ -1765,12 +1766,17 @@ export async function publishContestLeaderboard(contestId: string, viewer: Viewe
     .find((match) => {
       const participants = participantsByMatch.get(match.id) ?? [];
       if (participants.length === 0) return true;
+      // Với đấu loại 1v1, "ai thắng" CHÍNH LÀ kết quả — không có thời gian hay
+      // điểm số nào để nhập. Chỉ đòi mấy trường số là chặn nhầm cả những trận
+      // đã có người thắng rõ ràng, và giải không bao giờ công bố được.
       return participants.every(
         (participant) =>
           participant.finishPosition === null &&
           participant.bestLapSeconds === null &&
           participant.totalTimeSeconds === null &&
-          participant.score === null,
+          participant.score === null &&
+          participant.isWinner !== true &&
+          !isEliminatedStatus(participant.status),
       );
     });
   if (matchWithoutResults) {
