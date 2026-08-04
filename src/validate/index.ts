@@ -566,6 +566,9 @@ export const CreateContestRegistrationSchema = z.object({
   byoc_vehicle_brand: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_class: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_notes: z.string().trim().max(1000).optional(),
+  // Ảnh xe do VĐV tự chụp lúc đăng ký. Ban tổ chức duyệt xe cá nhân dựa vào
+  // đây; chỉ có mỗi tên xe gõ tay thì không đủ căn cứ để nói đạt hay không đạt.
+  byoc_vehicle_photos: z.array(z.string().trim().url().max(2048)).max(6).optional(),
 });
 
 export const UpdateByocDeclarationSchema = z.object({
@@ -573,10 +576,19 @@ export const UpdateByocDeclarationSchema = z.object({
   vehicle_brand: z.string().trim().min(1).max(120).nullable().optional(),
   vehicle_class: z.string().trim().min(1).max(120).nullable().optional(),
   notes: z.string().trim().max(1000).nullable().optional(),
+  photos: z.array(z.string().trim().url().max(2048)).max(6).optional(),
 });
 
 export const ContestRegistrationActionSchema = z.object({
   reason: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * Từ chối là quyết định gạt một người ra khỏi giải, và lý do được gửi thẳng vào
+ * thông báo cho họ — nên bắt buộc phải viết, khác với ghi chú thu tiền hay huỷ.
+ */
+export const ContestRejectRegistrationSchema = z.object({
+  reason: z.string().trim().min(5, 'Cần nêu lý do từ chối (tối thiểu 5 ký tự)').max(1000),
 });
 
 export const ContestMarkFeePaidSchema = z.object({

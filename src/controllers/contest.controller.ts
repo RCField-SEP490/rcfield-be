@@ -16,6 +16,7 @@ import {
   ContestMatchParticipantsUpdateSchema,
   ContestRegistrationsQuerySchema,
   ContestRegistrationActionSchema,
+  ContestRejectRegistrationSchema,
   ContestSubmitResultsSchema,
   CreateContestRegistrationSchema,
   CreateContestSchema,
@@ -262,7 +263,7 @@ export const contestController = {
   async rejectRegistration(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);
-      const body = ContestRegistrationActionSchema.parse(req.body);
+      const body = ContestRejectRegistrationSchema.parse(req.body);
       const data = await contestService.rejectRegistration(
         req.params.registrationId,
         viewer,

@@ -492,12 +492,14 @@ export async function cleanupContestRentalBookingOnRegistrationCancel(
   });
 }
 
-export async function rejectRegistration(registrationId: string, viewer: Viewer, reason?: string) {
+export async function rejectRegistration(registrationId: string, viewer: Viewer, reason: string) {
   const registration = await getContestRegistrationForOwner(registrationId, viewer);
   registration.status = ContestRegistrationStatus.CANCELLED;
   registration.cancelledBy = viewer.userId;
   registration.cancelledAt = new Date();
-  registration.cancellationReason = reason ?? 'Rejected by provider';
+  // Lý do là bắt buộc ở tầng validate, nên tới đây luôn có chữ thật để gửi cho
+  // VĐV thay vì câu mặc định vô nghĩa.
+  registration.cancellationReason = reason;
   await AppDataSource.getRepository(ContestRegistration).save(registration);
   await removeRegistrationFromActiveMatches(registration.id);
   try {
@@ -537,6 +539,7 @@ export interface UpdateByocDeclarationBody {
   vehicle_brand?: string | null;
   vehicle_class?: string | null;
   notes?: string | null;
+  photos?: string[];
 }
 
 export async function updateByocDeclaration(
@@ -567,11 +570,16 @@ export async function updateByocDeclaration(
 
   const beforeDeclaration =
     (registration.metadata?.byoc_declaration as Record<string, unknown> | undefined) ?? null;
+  const previousPhotos = Array.isArray((beforeDeclaration as { photos?: unknown } | null)?.photos)
+    ? ((beforeDeclaration as { photos: string[] }).photos ?? [])
+    : [];
   const declaration = {
     vehicle_name: body.vehicle_name,
     vehicle_brand: body.vehicle_brand ?? null,
     vehicle_class: body.vehicle_class ?? null,
     notes: body.notes ?? null,
+    // Không gửi photos nghĩa là "giữ nguyên ảnh cũ", không phải "xoá hết ảnh".
+    photos: body.photos ?? previousPhotos,
   };
   registration.metadata = {
     ...(registration.metadata ?? {}),

@@ -19,6 +19,9 @@
  *   --count=<n>       Số thí sinh. Mặc định = capacity - 2 (tối thiểu 2).
  *   --rental=<n>      Bao nhiêu người thuê xe quán. Mặc định theo vehicle_policy
  *                     của giải; giải BYOC_ONLY thì luôn là 0.
+ *   --pending=<n>     Bao nhiêu người để ở trạng thái CHỜ DUYỆT thay vì đã duyệt,
+ *                     để thử nút "Duyệt xe". Chỉ áp cho xe cá nhân — thuê xe
+ *                     của quán được backend tự xác nhận nên không giữ chờ được.
  *   --reset           Xoá sơ đồ đấu + thí sinh do script tạo, đưa giải về OPEN
  *                     để bốc thăm lại từ đầu.
  *   --dry-run         Chỉ in ra dự định, không ghi gì vào DB.
@@ -98,6 +101,7 @@ type Args = {
   contestId: string;
   count: number | null;
   rental: number | null;
+  pending: number | null;
   reset: boolean;
   dryRun: boolean;
 };
@@ -117,6 +121,8 @@ type PlannedEntrant = {
   rentalCatalogId: string | null;
   rentalCatalogName: string | null;
   rentalCafeId: string | null;
+  /** Giữ ở PENDING để ban tổ chức còn có cái mà bấm "Duyệt xe". */
+  pendingReview: boolean;
 };
 
 function parseArgs(): Args {
@@ -147,6 +153,7 @@ function parseArgs(): Args {
     contestId,
     count: parseNumber(get('count'), 'count'),
     rental: parseNumber(get('rental'), 'rental'),
+    pending: parseNumber(get('pending'), 'pending'),
     reset: has('reset'),
     dryRun: has('dry-run'),
   };
@@ -351,6 +358,17 @@ async function seedEntrants(): Promise<void> {
       );
     }
 
+    // Thuê xe của quán được backend tự xác nhận nên không giữ chờ duyệt được;
+    // chờ duyệt chỉ có nghĩa với xe cá nhân, khi ban tổ chức còn phải xem ảnh.
+    const byocCount = requestedCount - rentalCount;
+    const pendingCount = Math.min(args.pending ?? 0, byocCount);
+    if (args.pending !== null && args.pending > byocCount) {
+      console.log(
+        `Chỉ giữ chờ duyệt được ${byocCount} người (số đăng ký xe cá nhân), ` +
+          `bỏ qua phần dư của --pending=${args.pending}.`,
+      );
+    }
+
     // Rải đều theo dòng xe: hết chiếc của dòng này mới sang dòng khác.
     const slotQueue: CatalogSlot[] = rentalSlots.map((slot) => ({ ...slot }));
     const planned: PlannedEntrant[] = [];
@@ -360,6 +378,7 @@ async function seedEntrants(): Promise<void> {
       if (useRental && slot) slot.freeUnits -= 1;
 
       planned.push({
+        pendingReview: !useRental && index - rentalCount < pendingCount,
         index: index + 1,
         email: `${SEED_EMAIL_PREFIX}${String(index + 1).padStart(2, '0')}${SEED_EMAIL_DOMAIN}`,
         fullName: RACER_NAMES[index],
@@ -372,7 +391,9 @@ async function seedEntrants(): Promise<void> {
 
     console.log(
       `Sẽ nạp ${requestedCount} thí sinh (${rentalCount} thuê xe, ` +
-        `${requestedCount - rentalCount} mang xe cá nhân) — chính sách xe: ${vehiclePolicy}`,
+        `${byocCount} mang xe cá nhân` +
+        `${pendingCount > 0 ? `, ${pendingCount} chờ duyệt` : ''}) ` +
+        `— chính sách xe: ${vehiclePolicy}`,
     );
     if (contest.capacity) {
       const emptySeats = contest.capacity - requestedCount;
@@ -418,7 +439,9 @@ async function seedEntrants(): Promise<void> {
         registration.customerVehicleId = null;
         registration.rentalCatalogId = entrant.rentalCatalogId;
         registration.rentalCafeId = entrant.rentalCafeId;
-        registration.status = ContestRegistrationStatus.CONFIRMED;
+        registration.status = entrant.pendingReview
+          ? ContestRegistrationStatus.PENDING
+          : ContestRegistrationStatus.CONFIRMED;
         registration.checkInCode =
           existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
         registration.entryFeeAmount = entryFee;
@@ -470,7 +493,8 @@ async function seedEntrants(): Promise<void> {
           : `cá nhân · ${BYOC_VEHICLES[(entrant.index - 1) % BYOC_VEHICLES.length].name}`;
       console.log(
         `  ${String(entrant.index).padStart(2)}. ${entrant.fullName.padEnd(20)} ` +
-          `${checkInCode.padEnd(12)} ${vehicle}`,
+          `${checkInCode.padEnd(12)} ${entrant.pendingReview ? 'CHỜ DUYỆT' : 'đã duyệt '} ` +
+          `${vehicle}`,
       );
     }
     console.log('');

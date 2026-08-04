@@ -120,6 +120,7 @@ export function buildByocMetadata(body: CreateRegistrationBody) {
     vehicle_brand: body.byoc_vehicle_brand ?? null,
     vehicle_class: body.byoc_vehicle_class ?? null,
     notes: body.byoc_vehicle_notes ?? null,
+    photos: body.byoc_vehicle_photos ?? [],
   };
 }
 
