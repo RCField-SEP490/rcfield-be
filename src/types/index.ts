@@ -263,6 +263,24 @@ export enum ContestParticipantStatus {
   DQ = 'DQ',
 }
 
+/** Vòng đời đơn phí tổ chức giải. */
+export enum ContestFeeOrderStatus {
+  /** Đã chọn gói, chưa khai báo chuyển khoản. */
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  /** Đã khai báo chuyển khoản, chờ admin đối soát. */
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  PAID = 'PAID',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+}
+
+/** Suất quảng bá do provider trả phí phải qua admin duyệt nội dung mới lên trang chủ. */
+export enum FeaturedPopupReviewStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
 export enum FeaturedPopupPlacement {
   EXPLORE = 'EXPLORE',
 }

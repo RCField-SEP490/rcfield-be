@@ -6,7 +6,11 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { FeaturedPopupAudienceScope, FeaturedPopupPlacement } from '../types';
+import {
+  FeaturedPopupAudienceScope,
+  FeaturedPopupPlacement,
+  FeaturedPopupReviewStatus,
+} from '../types';
 
 @Entity('featured_popups')
 @Index(['placement', 'isActive', 'startsAt', 'endsAt'])
@@ -51,6 +55,21 @@ export class FeaturedPopup {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
+
+  /** Suất do admin tự tạo mặc định APPROVED; suất provider trả phí bắt đầu ở PENDING. */
+  @Column({
+    name: 'review_status',
+    type: 'varchar',
+    length: 20,
+    default: FeaturedPopupReviewStatus.APPROVED,
+  })
+  reviewStatus: FeaturedPopupReviewStatus;
+
+  @Column({ name: 'contest_fee_order_id', type: 'uuid', nullable: true })
+  contestFeeOrderId: string | null;
+
+  @Column({ name: 'review_notes', type: 'text', nullable: true })
+  reviewNotes: string | null;
 
   @Column({ type: 'integer', default: 100 })
   priority: number;

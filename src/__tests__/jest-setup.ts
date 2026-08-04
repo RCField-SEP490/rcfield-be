@@ -37,6 +37,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await AppDataSource.query(`
     TRUNCATE TABLE
+      featured_popups,
+      contest_fee_orders,
       race_records,
       achievement_definitions,
       contest_bans,

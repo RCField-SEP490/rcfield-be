@@ -22,6 +22,7 @@ import {
   mergeContestConfig,
   resolveContestResourceLocks,
 } from '../contest-lock.service';
+import { assertContestFeePaid } from '../contest-fee.service';
 import { getContestPublicRuntimeSummary } from '../contest-runtime.service';
 import { uploadImage } from '../cloudinary.service';
 import { mapContestPayload, mapContestRegistrationsPayload } from './payload';
@@ -446,6 +447,12 @@ export async function changeContestStatus(
       400,
       'CONTEST_STATUS_INVALID',
     );
+  }
+
+  // Mở đăng ký là lúc giải bắt đầu tiêu tốn tài nguyên nền tảng và xuất hiện
+  // trước khách, nên đây là cửa thu phí. Huỷ giải thì không chặn.
+  if (nextStatus === ContestStatus.OPEN) {
+    await assertContestFeePaid(contest);
   }
 
   if (nextStatus === ContestStatus.CANCELLED) {

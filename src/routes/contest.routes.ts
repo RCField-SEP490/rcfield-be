@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { contestController } from '../controllers/contest.controller';
+import { contestFeeController } from '../controllers/contest-fee.controller';
 import {
   authenticate,
   authorize,
@@ -301,4 +302,53 @@ contestRouter.post(
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.advanceMatch,
+);
+
+// ── Phí tổ chức giải ─────────────────────────────────────────────────────────
+// Đăng ký TRƯỚC các route '/contests/:contestId' động khác thì không cần, vì
+// '/contest-fee-plans' là đường tĩnh riêng biệt.
+contestRouter.get('/contest-fee-plans', authenticate, contestFeeController.listPlans);
+
+contestRouter.get(
+  '/contests/:contestId/fee',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  contestFeeController.getStatus,
+);
+contestRouter.post(
+  '/contests/:contestId/fee/order',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.createOrder,
+);
+contestRouter.delete(
+  '/contests/:contestId/fee/order',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.cancelOrder,
+);
+contestRouter.post(
+  '/contests/:contestId/fee/transfer',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.submitTransfer,
+);
+
+contestRouter.get(
+  '/admin/contest-fee-orders',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  contestFeeController.listForAdmin,
+);
+contestRouter.post(
+  '/admin/contest-fee-orders/:orderId/confirm',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  contestFeeController.confirm,
+);
+contestRouter.post(
+  '/admin/contest-fee-orders/:orderId/reject',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  contestFeeController.reject,
 );

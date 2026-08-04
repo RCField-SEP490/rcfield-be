@@ -688,6 +688,33 @@ export const FeaturedPopupListQuerySchema = z.object({
  * Lý do bắt buộc vì đây là quyết định loại một người khỏi giải mà họ không được
  * thi đấu — phải có căn cứ ghi lại để đối chiếu khi có khiếu nại.
  */
+export const FeaturedPopupReviewSchema = z.object({
+  approve: z.boolean(),
+  notes: z.string().trim().max(1000).optional(),
+});
+
+export const ContestFeeOrderCreateSchema = z.object({
+  plan_id: z.string().uuid('Gói tổ chức giải không hợp lệ'),
+});
+
+export const ContestFeeTransferSchema = z.object({
+  transfer_reference: z
+    .string()
+    .trim()
+    .min(3, 'Nhập mã giao dịch hoặc nội dung chuyển khoản')
+    .max(255),
+  transfer_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày chuyển khoản không hợp lệ'),
+  transfer_amount: z.number().positive('Số tiền chuyển khoản phải lớn hơn 0'),
+});
+
+export const ContestFeeOrderReviewSchema = z.object({
+  notes: z.string().trim().max(1000).optional(),
+});
+
+export const ContestFeeOrderRejectSchema = z.object({
+  reason: z.string().trim().min(5, 'Cần nêu lý do từ chối (tối thiểu 5 ký tự)').max(1000),
+});
+
 export const ContestMatchWalkoverSchema = z.object({
   absent: z
     .array(
