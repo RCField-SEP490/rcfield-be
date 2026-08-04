@@ -14,10 +14,16 @@ import { assertContestOperator } from '../contest.helpers';
 import { Viewer } from '../cafe.service';
 import { CreateRegistrationBody } from './types';
 
+/**
+ * @param options.requireReleasedFormat Chỉ bật khi provider đang CHỌN thể thức.
+ * Giải cũ lỡ nằm trên thể thức chưa phát hành vẫn phải sửa được tên, giờ, sức
+ * chứa — chặn ở mọi lần update là khoá luôn giải của họ mà chẳng cứu được gì.
+ */
 export async function resolveCatalogOrThrow(
   contestTypeId: string,
   contestFormatId: string,
   contestTemplateId: string,
+  options: { requireReleasedFormat: boolean },
 ) {
   const [contestType, contestFormat, contestTemplate] = await Promise.all([
     AppDataSource.getRepository(ContestType).findOne({
@@ -34,6 +40,14 @@ export async function resolveCatalogOrThrow(
   if (!contestType) throw new AppError('Contest type không hợp lệ', 400, 'CONTEST_TYPE_INVALID');
   if (!contestFormat)
     throw new AppError('Contest format không hợp lệ', 400, 'CONTEST_FORMAT_INVALID');
+  if (options.requireReleasedFormat && !contestFormat.isReleased) {
+    throw new AppError(
+      `Thể thức "${contestFormat.name}" đang được hoàn thiện, chưa mở để tạo giải`,
+      400,
+      'CONTEST_FORMAT_NOT_RELEASED',
+      { contest_format_code: contestFormat.code },
+    );
+  }
   if (!contestTemplate)
     throw new AppError('Contest template không hợp lệ', 400, 'CONTEST_TEMPLATE_INVALID');
   if (

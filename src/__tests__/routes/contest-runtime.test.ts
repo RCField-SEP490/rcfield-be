@@ -471,7 +471,10 @@ describe('Contest runtime routes', () => {
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
     const token = generateToken(provider);
-    const payload = await createContestPayload(cafe.id, 'TIME_TRIAL');
+    // Bài này kiểm tra việc giữ chỗ, thể thức chỉ là thứ đi kèm. Phải là thể
+    // thức đã mở vì tạo giải qua API nay chặn thể thức còn dở; các bài khác
+    // trong file dựng contest thẳng bằng SQL nên không vướng.
+    const payload = await createContestPayload(cafe.id, 'KNOCKOUT');
 
     await request(app)
       .post('/api/v1/contests')

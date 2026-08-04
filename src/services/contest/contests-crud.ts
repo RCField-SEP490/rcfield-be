@@ -205,7 +205,9 @@ export async function createContest(viewer: Viewer, body: CreateContestBody) {
       where: { id: body.track_type_id, isActive: true },
     }),
     resolveProviderBranchesOrThrow(viewer.userId, body.participating_cafe_ids),
-    resolveCatalogOrThrow(body.contest_type_id, body.contest_format_id, body.contest_template_id),
+    resolveCatalogOrThrow(body.contest_type_id, body.contest_format_id, body.contest_template_id, {
+      requireReleasedFormat: true,
+    }),
   ]);
   if (!trackType) throw new AppError('Track type không hợp lệ', 400, 'TRACK_TYPE_INVALID');
   await assertParticipatingCafesSupportTrackType(
@@ -304,7 +306,15 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   const nextFormatId = body.contest_format_id ?? contest.contestFormatId;
   const nextTemplateId = body.contest_template_id ?? contest.contestTemplateId;
   if (nextTypeId && nextFormatId && nextTemplateId) {
-    catalog = await resolveCatalogOrThrow(nextTypeId, nextFormatId, nextTemplateId);
+    // Chỉ chặn khi provider ĐỔI sang thể thức khác. Update nào cũng resolve lại
+    // catalog từ id sẵn có, nên chặn vô điều kiện sẽ khoá cứng giải cũ đang nằm
+    // trên thể thức chưa phát hành — họ không sửa nổi cả cái tên.
+    const isSwitchingFormat = Boolean(
+      body.contest_format_id && body.contest_format_id !== contest.contestFormatId,
+    );
+    catalog = await resolveCatalogOrThrow(nextTypeId, nextFormatId, nextTemplateId, {
+      requireReleasedFormat: isSwitchingFormat,
+    });
   }
 
   const nextParticipatingCafeIds =
