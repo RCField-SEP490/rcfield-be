@@ -151,6 +151,80 @@ function inferMatchWinners(
   return ranked.slice(0, winnersToAdvance);
 }
 
+export const MIN_RUNS_PER_DRIVER = 1;
+export const MAX_RUNS_PER_DRIVER = 5;
+export const DEFAULT_RUNS_PER_DRIVER = 3;
+
+/**
+ * Số lượt chạy mỗi VĐV được cấp trong thể thức tính giờ.
+ *
+ * Đua tính giờ thật cho mỗi người vài lượt rồi lấy lap tốt nhất — chạy đúng một
+ * lượt thì một cú trượt tay là hỏng cả giải, và trước đây muốn chạy lại phải bốc
+ * thăm lại, mà bốc lại thì bị khoá ngay khi có một lượt hoàn tất.
+ */
+export function resolveRunsPerDriver(contest: Contest): number {
+  const raw = Number(contest.config?.runs_per_driver);
+  if (!Number.isFinite(raw)) return DEFAULT_RUNS_PER_DRIVER;
+  return Math.min(MAX_RUNS_PER_DRIVER, Math.max(MIN_RUNS_PER_DRIVER, Math.floor(raw)));
+}
+
+/**
+ * Sinh các lượt chạy tính giờ: mỗi VĐV `runs` lượt, mỗi lượt một match riêng.
+ *
+ * `roundNo` là số thứ tự lượt nên giao diện gom đúng "Lượt 1 / Lượt 2 / ..."
+ * thay vì đổ tất cả vào một vòng. Bảng xếp hạng đã lấy `Math.min` lap qua mọi
+ * match của cùng một người nên không cần thêm gì để chốt lap tốt nhất.
+ */
+function buildTimeAttackRuns(params: {
+  contest: Contest;
+  code: string;
+  orderedRegistrations: ContestRegistration[];
+  runs: number;
+  extraMetadata?: Record<string, unknown>;
+  namePrefix: string;
+}): GeneratedMatch[] {
+  const { contest, code, orderedRegistrations, runs, extraMetadata, namePrefix } = params;
+  const matches: GeneratedMatch[] = [];
+  let sequence = 0;
+
+  for (let runNo = 1; runNo <= runs; runNo += 1) {
+    for (const [index, registration] of orderedRegistrations.entries()) {
+      matches.push({
+        roundNo: runNo,
+        matchNo: index + 1,
+        name: runs > 1 ? `${namePrefix} ${runNo} · VĐV ${index + 1}` : `${namePrefix} ${index + 1}`,
+        matchType: ContestMatchType.TIME_ATTACK,
+        status: ContestMatchStatus.READY,
+        scheduledAt: new Date(contest.startsAt.getTime() + sequence * 5 * 60 * 1000),
+        advancementRule: { winners_to_advance: 0, format: code },
+        metadata: {
+          generated_from: 'contest-runtime.generate',
+          format: code,
+          run_no: runNo,
+          runs_per_driver: runs,
+          ...(extraMetadata ?? {}),
+        },
+        participants: [
+          {
+            registrationId: registration.id,
+            slotNo: 1,
+            seedNo: index + 1,
+            status: ContestParticipantStatus.READY,
+            metadata: {
+              generated_seed_order: index + 1,
+              run_no: runNo,
+              ...(extraMetadata ?? {}),
+            },
+          },
+        ],
+      });
+      sequence += 1;
+    }
+  }
+
+  return matches;
+}
+
 export class TimeTrialEngine implements ContestFormatEngine {
   readonly code = 'TIME_TRIAL';
 
@@ -160,29 +234,13 @@ export class TimeTrialEngine implements ContestFormatEngine {
       .map((id) => registrations.find((r) => r.id === id))
       .filter((r): r is ContestRegistration => Boolean(r));
 
-    const matches: GeneratedMatch[] = [];
-    for (const [index, registration] of orderedRegistrations.entries()) {
-      matches.push({
-        roundNo: 1,
-        matchNo: index + 1,
-        name: `Lượt thi đấu ${index + 1}`,
-        matchType: ContestMatchType.TIME_ATTACK,
-        status: ContestMatchStatus.READY,
-        scheduledAt: new Date(contest.startsAt.getTime() + index * 5 * 60 * 1000),
-        advancementRule: { winners_to_advance: 0, format: this.code },
-        metadata: { generated_from: 'contest-runtime.generate', format: this.code },
-        participants: [
-          {
-            registrationId: registration.id,
-            slotNo: 1,
-            seedNo: index + 1,
-            status: ContestParticipantStatus.READY,
-            metadata: { generated_seed_order: index + 1 },
-          },
-        ],
-      });
-    }
-    return matches;
+    return buildTimeAttackRuns({
+      contest,
+      code: this.code,
+      orderedRegistrations,
+      runs: resolveRunsPerDriver(contest),
+      namePrefix: 'Lượt',
+    });
   }
 
   buildResultSummary(
@@ -537,8 +595,8 @@ export class QualifyingFinalEngine implements ContestFormatEngine {
   readonly code = 'QUALIFYING_FINAL';
 
   /**
-   * Phase 1 (QUALIFYING): one TIME_ATTACK match per checked-in registration,
-   * identical shape to TIME_TRIAL but tagged with phase metadata.
+   * Pha 1 (VÒNG LOẠI): các lượt chạy tính giờ, giống hệt TIME_TRIAL nhưng gắn
+   * thêm nhãn phase để pha chung kết nhận ra.
    */
   generateMatches(input: GenerateMatchesInput): GeneratedMatch[] {
     const { contest, registrations, registrationOrder } = input;
@@ -546,33 +604,14 @@ export class QualifyingFinalEngine implements ContestFormatEngine {
       .map((id) => registrations.find((r) => r.id === id))
       .filter((r): r is ContestRegistration => Boolean(r));
 
-    const matches: GeneratedMatch[] = [];
-    for (const [index, registration] of orderedRegistrations.entries()) {
-      matches.push({
-        roundNo: 1,
-        matchNo: index + 1,
-        name: `Vòng loại ${index + 1}`,
-        matchType: ContestMatchType.TIME_ATTACK,
-        status: ContestMatchStatus.READY,
-        scheduledAt: new Date(contest.startsAt.getTime() + index * 5 * 60 * 1000),
-        advancementRule: { winners_to_advance: 0, format: this.code },
-        metadata: {
-          generated_from: 'contest-runtime.generate',
-          format: this.code,
-          phase: 'QUALIFYING',
-        },
-        participants: [
-          {
-            registrationId: registration.id,
-            slotNo: 1,
-            seedNo: index + 1,
-            status: ContestParticipantStatus.READY,
-            metadata: { generated_seed_order: index + 1, phase: 'QUALIFYING' },
-          },
-        ],
-      });
-    }
-    return matches;
+    return buildTimeAttackRuns({
+      contest,
+      code: this.code,
+      orderedRegistrations,
+      runs: resolveRunsPerDriver(contest),
+      extraMetadata: { phase: 'QUALIFYING' },
+      namePrefix: 'Vòng loại',
+    });
   }
 
   resolveFinalistsCount(contest: Contest): number {

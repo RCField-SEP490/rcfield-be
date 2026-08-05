@@ -276,6 +276,18 @@ describe('contest knockout — công bố bảng xếp hạng', () => {
     expect(populated).toHaveLength(2);
 
     await playOutBracket(contestId, viewer);
+
+    // Trận tranh hạng 3 khai `winners_to_advance: 0` vì nó không đẩy ai đi tiếp,
+    // nhưng vẫn phải chốt ai hạng 3 ai hạng 4. Luật "lượt chạy một mình thì
+    // không có người thắng" chỉ được áp cho match TIME_ATTACK, không được lan
+    // sang đây — nếu lan thì hạng 3 và 4 mất trắng mà chẳng ai báo lỗi.
+    const thirdPlaceWinners = await AppDataSource.query<{ count: string }[]>(
+      `SELECT COUNT(*) AS count FROM contest_match_participants
+        WHERE match_id = $1 AND is_winner = TRUE`,
+      [thirdPlace!.id],
+    );
+    expect(Number(thirdPlaceWinners[0].count)).toBe(1);
+
     const published = await publishContestLeaderboard(contestId, viewer);
     expect(published).toBeTruthy();
   });

@@ -196,8 +196,10 @@ describe('Contest runtime routes', () => {
       })
       .expect(201);
 
+    // 2 VĐV × 3 lượt mặc định. Đua tính giờ thật cho mỗi người vài lượt rồi lấy
+    // lap tốt nhất; trước đây mỗi người đúng một lượt và không có đường chạy lại.
     expect(generateRes.body.success).toBe(true);
-    expect(generateRes.body.data).toHaveLength(2);
+    expect(generateRes.body.data).toHaveLength(6);
     expect(generateRes.body.data[0].participants).toHaveLength(1);
 
     const matchesRes = await request(app)
@@ -205,39 +207,43 @@ describe('Contest runtime routes', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
-    const [firstMatch, secondMatch] = matchesRes.body.data;
+    // Lap tốt nhất của A là 34.00 ở lượt 2, của B là 33.10 ở lượt 1 — bảng xếp
+    // hạng phải lấy đúng hai con số đó chứ không phải lượt cuối cùng nhập.
+    const lapsByRegistration: Record<string, number[]> = {
+      [registrationA.id]: [35.21, 34.0, 36.5],
+      [registrationB.id]: [33.1, 38.0, 39.0],
+    };
 
-    await request(app)
-      .post(`/api/v1/contest-matches/${firstMatch.id}/results`)
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        reason: 'Finish time trial lane 1',
-        results: [
-          {
-            registration_id: firstMatch.participants[0].registration_id,
-            finish_position: 1,
-            best_lap_seconds: 35.21,
-            total_time_seconds: 35.21,
-          },
-        ],
-      })
-      .expect(200);
+    for (const match of matchesRes.body.data) {
+      const participant = match.participants[0];
+      const lap = lapsByRegistration[participant.registration_id][match.metadata.run_no - 1];
+      await request(app)
+        .post(`/api/v1/contest-matches/${match.id}/results`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          reason: `Lượt ${match.metadata.run_no}`,
+          results: [
+            {
+              registration_id: participant.registration_id,
+              best_lap_seconds: lap,
+              total_time_seconds: lap,
+            },
+          ],
+        })
+        .expect(200);
+    }
 
-    await request(app)
-      .post(`/api/v1/contest-matches/${secondMatch.id}/results`)
+    // Chạy một mình thì không có "người thắng". Trước đây mọi lượt đều gắn
+    // is_winner vì `Math.max(1, 0 || 1)` nuốt mất số 0 đã khai trong luật trận.
+    const afterResultsRes = await request(app)
+      .get(`/api/v1/contests/${contestId}/matches`)
       .set('Authorization', `Bearer ${token}`)
-      .send({
-        reason: 'Finish time trial lane 2',
-        results: [
-          {
-            registration_id: secondMatch.participants[0].registration_id,
-            finish_position: 1,
-            best_lap_seconds: 33.1,
-            total_time_seconds: 33.1,
-          },
-        ],
-      })
       .expect(200);
+    const anyWinner = afterResultsRes.body.data.some(
+      (match: { participants: { is_winner: boolean }[] }) =>
+        match.participants.some((participant) => participant.is_winner),
+    );
+    expect(anyWinner).toBe(false);
 
     const leaderboardRes = await request(app)
       .post(`/api/v1/contests/${contestId}/leaderboard/publish`)
@@ -252,13 +258,18 @@ describe('Contest runtime routes', () => {
       rank: 1,
       best_lap_seconds: 33.1,
     });
+    expect(leaderboardRes.body.data.entries[1]).toMatchObject({
+      registration_id: registrationA.id,
+      rank: 2,
+      best_lap_seconds: 34.0,
+    });
 
     const metricsRes = await request(app)
       .get(`/api/v1/contests/${contestId}/metrics`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
-    expect(metricsRes.body.data.match_counts.completed).toBe(2);
+    expect(metricsRes.body.data.match_counts.completed).toBe(6);
     expect(metricsRes.body.data.leaderboard.published).toBe(true);
 
     const auditRes = await request(app)

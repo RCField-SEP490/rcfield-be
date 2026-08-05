@@ -6,6 +6,11 @@ import { ContestCafe } from '../models/contest-cafe.entity';
 import { Contest } from '../models/contest.entity';
 import { AppError, BookingStatus, ContestResourceScope, ContestStatus } from '../types';
 import type { ContestRuntimeFormat } from './contest/guards';
+import {
+  DEFAULT_RUNS_PER_DRIVER,
+  MAX_RUNS_PER_DRIVER,
+  MIN_RUNS_PER_DRIVER,
+} from './contest-format.engine';
 
 export type ContestResourceLock = {
   cafe_id: string;
@@ -162,6 +167,17 @@ export function mergeContestConfig(
     runtime_format: runtimeFormat,
     resource_locks: resourceLocks,
   } as Record<string, unknown>;
+
+  // Hai thể thức có pha chạy tính giờ đều cấp nhiều lượt cho mỗi VĐV.
+  if (runtimeFormat === 'TIME_TRIAL' || runtimeFormat === 'QUALIFYING_FINAL') {
+    const requestedRuns = Number(nextConfig.runs_per_driver);
+    nextConfig.runs_per_driver = Number.isFinite(requestedRuns)
+      ? Math.min(MAX_RUNS_PER_DRIVER, Math.max(MIN_RUNS_PER_DRIVER, Math.floor(requestedRuns)))
+      : DEFAULT_RUNS_PER_DRIVER;
+  } else {
+    // Đấu loại không có lượt chạy tính giờ; để lại chỉ gây hiểu nhầm khi đọc config.
+    delete nextConfig.runs_per_driver;
+  }
 
   if (runtimeFormat === 'TIME_TRIAL') {
     if (nextConfig.leaderboard_mode === 'KNOCKOUT_WINS') {

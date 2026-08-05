@@ -82,9 +82,11 @@ function createMockRegistration(id: string, index: number): ContestRegistration 
 
 describe('ContestFormatEngine', () => {
   describe('TimeTrialEngine', () => {
-    it('should generate one match per registration', () => {
+    it('should give every driver the configured number of runs', () => {
       const engine = new TimeTrialEngine();
-      const contest = createMockContest({ config: { format: 'TIME_TRIAL' } });
+      const contest = createMockContest({
+        config: { format: 'TIME_TRIAL', runs_per_driver: 3 },
+      });
       const registrations = [createMockRegistration('r1', 0), createMockRegistration('r2', 1)];
       const matches = engine.generateMatches({
         contest,
@@ -93,11 +95,37 @@ describe('ContestFormatEngine', () => {
         registrationOrder: ['r1', 'r2'],
       });
 
-      expect(matches).toHaveLength(2);
-      expect(matches[0].roundNo).toBe(1);
+      expect(matches).toHaveLength(6);
       expect(matches[0].matchType).toBe(ContestMatchType.TIME_ATTACK);
       expect(matches[0].participants).toHaveLength(1);
       expect(matches[0].participants[0].registrationId).toBe('r1');
+
+      // roundNo là số thứ tự lượt nên giao diện gom đúng "Lượt 1 / 2 / 3".
+      expect(matches.map((match) => match.roundNo)).toEqual([1, 1, 2, 2, 3, 3]);
+      // Mỗi VĐV đúng 3 lượt, không ai bị thiếu hay thừa.
+      expect(matches.filter((match) => match.participants[0].registrationId === 'r1')).toHaveLength(
+        3,
+      );
+    });
+
+    it('should clamp runs per driver into the allowed range', () => {
+      const engine = new TimeTrialEngine();
+      const registrations = [createMockRegistration('r1', 0)];
+      const generate = (runsPerDriver: unknown) =>
+        engine.generateMatches({
+          contest: createMockContest({
+            config: { format: 'TIME_TRIAL', runs_per_driver: runsPerDriver },
+          }),
+          cafeId: 'cafe-1',
+          registrations,
+          registrationOrder: ['r1'],
+        });
+
+      expect(generate(1)).toHaveLength(1);
+      expect(generate(99)).toHaveLength(5);
+      expect(generate(0)).toHaveLength(1);
+      // Không cấu hình thì dùng mặc định 3 lượt.
+      expect(generate(undefined)).toHaveLength(3);
     });
 
     it('should infer winner by best lap', () => {
@@ -352,9 +380,11 @@ describe('ContestFormatEngine', () => {
   });
 
   describe('QualifyingFinalEngine', () => {
-    it('should generate one qualifying TIME_ATTACK match per registration', () => {
+    it('should give every driver the configured number of qualifying runs', () => {
       const engine = new QualifyingFinalEngine();
-      const contest = createMockContest({ config: { format: 'QUALIFYING_FINAL', finalists: 4 } });
+      const contest = createMockContest({
+        config: { format: 'QUALIFYING_FINAL', finalists: 4, runs_per_driver: 2 },
+      });
       const registrations = [createMockRegistration('r1', 0), createMockRegistration('r2', 1)];
       const matches = engine.generateMatches({
         contest,
@@ -363,12 +393,13 @@ describe('ContestFormatEngine', () => {
         registrationOrder: ['r1', 'r2'],
       });
 
-      expect(matches).toHaveLength(2);
+      expect(matches).toHaveLength(4);
       expect(matches[0].roundNo).toBe(1);
       expect(matches[0].matchType).toBe(ContestMatchType.TIME_ATTACK);
       expect(matches[0].metadata.phase).toBe('QUALIFYING');
       expect(matches[0].participants).toHaveLength(1);
       expect(matches[0].participants[0].registrationId).toBe('r1');
+      expect(matches.every((match) => match.metadata.phase === 'QUALIFYING')).toBe(true);
     });
 
     it('should rank qualifying results by best lap ascending', () => {

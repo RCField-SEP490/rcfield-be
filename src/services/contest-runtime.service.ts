@@ -11,6 +11,7 @@ import { User } from '../models/user.entity';
 import {
   AppError,
   ContestMatchStatus,
+  ContestMatchType,
   ContestParticipantStatus,
   ContestRegistrationStatus,
   ContestStatus,
@@ -29,6 +30,7 @@ import {
   ContestFormatEngine,
   GeneratedMatch,
   QualifyingFinalEngine,
+  QualifyingFinalRankInput,
   getContestFormatEngine,
   isEliminatedStatus,
   shuffleWithSeed,
@@ -868,6 +870,59 @@ export async function generateContestMatches(
   return mapMatchesPayload(contestId, viewer);
 }
 
+/**
+ * Gộp mọi lượt chạy vòng loại về một dòng cho mỗi VĐV.
+ *
+ * Hai luật, cả hai đều từng sai:
+ *
+ * 1. Mỗi người chạy nhiều lượt nên xuất hiện nhiều lần trong danh sách kết quả.
+ *    Xếp hạng thẳng trên danh sách thô thì một người nhanh chiếm luôn hai, ba
+ *    suất chung kết, đẩy người khác ra ngoài.
+ * 2. Người không hoàn thành lượt nào — DNS, DNF, DQ, hoặc chỉ đơn giản là chưa
+ *    có thời gian — trước đây vẫn nằm trong danh sách với thời gian coi như vô
+ *    cực, nên vẫn lọt vào chung kết khi số người có thành tích ít hơn số suất.
+ *    Vào chung kết mà chưa từng chạy xong một vòng là sai về thể thao.
+ */
+function aggregateQualifyingResults(
+  participants: ContestMatchParticipant[],
+): QualifyingFinalRankInput[] {
+  const bestByRegistration = new Map<string, QualifyingFinalRankInput>();
+
+  for (const participant of participants) {
+    if (isEliminatedStatus(participant.status)) continue;
+
+    const bestLapSeconds = normalizeContestTimeSeconds(participant.bestLapSeconds);
+    const totalTimeSeconds = normalizeContestTimeSeconds(participant.totalTimeSeconds);
+    if (bestLapSeconds === null && totalTimeSeconds === null) continue;
+
+    const current = bestByRegistration.get(participant.registrationId);
+    if (!current) {
+      bestByRegistration.set(participant.registrationId, {
+        registrationId: participant.registrationId,
+        bestLapSeconds,
+        totalTimeSeconds,
+        seedNo: participant.seedNo,
+      });
+      continue;
+    }
+
+    bestByRegistration.set(participant.registrationId, {
+      registrationId: participant.registrationId,
+      bestLapSeconds: pickFasterTime(current.bestLapSeconds, bestLapSeconds),
+      totalTimeSeconds: pickFasterTime(current.totalTimeSeconds ?? null, totalTimeSeconds),
+      seedNo: current.seedNo ?? participant.seedNo,
+    });
+  }
+
+  return [...bestByRegistration.values()];
+}
+
+function pickFasterTime(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
+}
+
 export async function generateContestFinalBracket(contestId: string, viewer: Viewer) {
   const contest = await assertContestOperator(contestId, viewer);
   await ensureContestRuntimeEditable(contest);
@@ -893,8 +948,23 @@ export async function generateContestFinalBracket(contestId: string, viewer: Vie
       'QUALIFYING_NOT_GENERATED',
     );
   }
-  if (matches.some((match) => !qualifyingMatches.includes(match))) {
-    throw new AppError('Vòng chung kết đã được tạo trước đó', 409, 'FINAL_BRACKET_ALREADY_EXISTS');
+  // Sinh nhầm nhánh chung kết từng là ngõ cụt: generate matches bị khoá vì vòng
+  // loại đã xong, còn đây thì chặn cứng. Lối thoát duy nhất là sửa DB tay. Nay
+  // chừng nào chưa ai đấu trận chung kết nào thì vẫn dựng lại được.
+  const existingFinalMatches = matches.filter((match) => !qualifyingMatches.includes(match));
+  if (existingFinalMatches.length > 0) {
+    if (existingFinalMatches.some(isDecidedByPlay)) {
+      throw new AppError(
+        'Vòng chung kết đã bắt đầu thi đấu, không dựng lại được',
+        409,
+        'FINAL_BRACKET_ALREADY_PLAYED',
+      );
+    }
+    const participantRepo = AppDataSource.getRepository(ContestMatchParticipant);
+    await participantRepo.delete({ matchId: In(existingFinalMatches.map((item) => item.id)) });
+    await AppDataSource.getRepository(ContestMatch).delete({
+      id: In(existingFinalMatches.map((item) => item.id)),
+    });
   }
   if (qualifyingMatches.some((match) => match.status !== ContestMatchStatus.COMPLETED)) {
     throw new AppError(
@@ -908,28 +978,27 @@ export async function generateContestFinalBracket(contestId: string, viewer: Vie
     qualifyingMatches.map((match) => match.id),
   );
   const qualifyingResults = [...participantsByMatch.values()].flat();
-  if (qualifyingResults.length < 2) {
+  const rankInputs = aggregateQualifyingResults(qualifyingResults);
+  if (rankInputs.length < 2) {
     throw new AppError(
-      'Cần ít nhất 2 kết quả vòng loại để tạo vòng chung kết',
+      'Cần ít nhất 2 người có thành tích vòng loại để tạo vòng chung kết',
       400,
       'QUALIFYING_RESULTS_INSUFFICIENT',
     );
   }
 
-  const ranked = engine.rankQualifyingResults(
-    qualifyingResults.map((participant) => ({
-      registrationId: participant.registrationId,
-      bestLapSeconds: normalizeContestTimeSeconds(participant.bestLapSeconds),
-      totalTimeSeconds: normalizeContestTimeSeconds(participant.totalTimeSeconds),
-      seedNo: participant.seedNo,
-    })),
-  );
+  const ranked = engine.rankQualifyingResults(rankInputs);
   const finalistsCount = Math.min(engine.resolveFinalistsCount(contest), ranked.length);
   const finalistIds = ranked.slice(0, finalistsCount).map((item) => item.registrationId);
 
   const registrations = await AppDataSource.getRepository(ContestRegistration).findBy({
     id: In(finalistIds),
   });
+
+  // Vòng loại chiếm mỗi lượt chạy một vòng, nên nhánh chung kết phải bắt đầu
+  // sau vòng loại cuối cùng. Cắm cứng số 2 thì giải nhiều lượt sẽ đụng khoá
+  // duy nhất (contest_id, round_no, match_no) ngay lúc ghi.
+  const lastQualifyingRound = Math.max(...qualifyingMatches.map((match) => match.roundNo));
 
   const generatedMatches = engine.generateFinalBracket({
     contest,
@@ -939,7 +1008,7 @@ export async function generateContestFinalBracket(contestId: string, viewer: Vie
     registrationOrder: finalistIds,
     driversPerMatch: 2,
     createdBy: viewer.userId,
-    startRoundNo: 2,
+    startRoundNo: lastQualifyingRound + 1,
   });
 
   const createdMatches = await persistGeneratedMatches(contestId, generatedMatches, {
@@ -1095,16 +1164,25 @@ export async function submitMatchResults(matchId: string, viewer: Viewer, body: 
     where: { matchId },
     order: { slotNo: 'ASC' },
   });
-  const winnersToAdvance =
+  const declaredWinners =
     typeof match.advancementRule?.winners_to_advance === 'number'
       ? Number(match.advancementRule.winners_to_advance)
       : match.nextMatchId
         ? 1
         : 0;
-  const inferredWinners = engine.inferWinners(
-    refreshedParticipants,
-    Math.max(1, winnersToAdvance || 1),
-  );
+
+  // `Math.max(1, x || 1)` cũ nuốt mất số 0 do `||`, nên mọi lượt chạy tính giờ
+  // một mình đều bị gắn "người thắng" — vô nghĩa với đua tính giờ và cộng một
+  // trận thắng ảo cho tất cả mọi người ở thể thức vòng loại + chung kết.
+  //
+  // Nhưng không thể tôn trọng số 0 một cách mù quáng: trận tranh hạng 3 cũng
+  // khai 0 vì nó không đẩy ai đi tiếp, mà vẫn phải chốt ai hạng 3, ai hạng 4.
+  // Ranh giới đúng là loại trận, không phải con số.
+  const winnersNeeded =
+    match.matchType === ContestMatchType.TIME_ATTACK
+      ? Math.max(0, declaredWinners)
+      : Math.max(1, declaredWinners || 1);
+  const inferredWinners = engine.inferWinners(refreshedParticipants, winnersNeeded);
   const winnerIds = new Set(inferredWinners.map((item) => item.id));
 
   // Trận đấu loại phải có người thắng thì mới đóng được. Không xác định được ai

@@ -32,12 +32,33 @@ async function resolveCatalogIds(formatCode: string) {
   return { trackType, contestType, contestFormat, contestTemplate };
 }
 
+/**
+ * Thể thức bị hạ xuống "chưa phát hành" chỉ trong phạm vi bài test.
+ *
+ * Bài này kiểm CƠ CHẾ chặn, không kiểm thể thức nào đang mở — mà danh sách đó
+ * thay đổi theo tiến độ sản phẩm. Khoá cứng vào TIME_TRIAL thì tới ngày mở nó
+ * ra là test đỏ dù chẳng có gì hỏng.
+ */
+const UNRELEASED_CODE = 'TIME_TRIAL';
+
+async function setReleased(code: string, released: boolean): Promise<void> {
+  await AppDataSource.query(`UPDATE contest_formats SET is_released = $1 WHERE code = $2`, [
+    released,
+    code,
+  ]);
+}
+
 describe('Cửa chặn thể thức chưa phát hành', () => {
   let viewer: Viewer;
   let cafeId: string;
   let trackTypeId: string;
 
+  afterEach(async () => {
+    await setReleased(UNRELEASED_CODE, true);
+  });
+
   beforeEach(async () => {
+    await setReleased(UNRELEASED_CODE, false);
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     viewer = { userId: provider.id, role: UserRole.PROVIDER };
@@ -84,7 +105,7 @@ describe('Cửa chặn thể thức chưa phát hành', () => {
   }
 
   it('chặn tạo giải trên thể thức còn dở, nêu đích danh thể thức', async () => {
-    const catalog = await resolveCatalogIds('TIME_TRIAL');
+    const catalog = await resolveCatalogIds(UNRELEASED_CODE);
 
     await expect(createContest(viewer, buildBody(catalog))).rejects.toMatchObject({
       statusCode: 400,
@@ -105,7 +126,7 @@ describe('Cửa chặn thể thức chưa phát hành', () => {
     // Cửa chặn nằm ở resolveCatalogOrThrow, mà mọi lần update đều resolve lại
     // catalog từ id sẵn có. Chặn vô điều kiện là khoá cứng giải cũ: provider
     // không đổi nổi cái tên, cũng không huỷ được. Đây là bài kiểm chứng điều đó.
-    const catalog = await resolveCatalogIds('TIME_TRIAL');
+    const catalog = await resolveCatalogIds(UNRELEASED_CODE);
     const body = buildBody(catalog);
     const [row] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO contests
@@ -126,7 +147,7 @@ describe('Cửa chặn thể thức chưa phát hành', () => {
         body.registration_opens_at,
         body.registration_closes_at,
         JSON.stringify(body.vehicle_rule),
-        JSON.stringify({ runtime_format: 'TIME_TRIAL' }),
+        JSON.stringify({ runtime_format: UNRELEASED_CODE }),
         body.starts_at,
         body.ends_at,
         body.capacity,
@@ -146,7 +167,7 @@ describe('Cửa chặn thể thức chưa phát hành', () => {
   it('chặn khi đổi giải đang chạy sang thể thức còn dở', async () => {
     const released = await resolveCatalogIds('KNOCKOUT');
     const contest = await createContest(viewer, buildBody(released));
-    const unreleased = await resolveCatalogIds('QUALIFYING_FINAL');
+    const unreleased = await resolveCatalogIds(UNRELEASED_CODE);
 
     await expect(
       updateContest(contest.id, viewer, {
