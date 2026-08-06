@@ -32,6 +32,7 @@ export interface BookingFinancialSummary {
   prepaidServiceTotal: number;
   prepaidDiscountAmount: number;
   prepaidPaidAmount: number;
+  prepaidOutstandingAmount: number;
   additionalTotal: number;
   additionalPaidAmount: number;
   additionalOutstandingAmount: number;
@@ -39,6 +40,21 @@ export interface BookingFinancialSummary {
   totalRefundedAmount: number;
   outstandingAmount: number;
   isSettled: boolean;
+}
+
+/**
+ * A PENDING booking deliberately has no persisted payment components yet: those
+ * components are created only after the gateway confirms the payment.  Its
+ * checkout snapshot is therefore the source for the amount being held/owed.
+ */
+export interface PendingInitialPaymentSnapshot {
+  slot_fee_total?: number;
+  slot_fee?: number;
+  vehicles?: Array<{ rental_fee?: number }>;
+  rental_fee?: number;
+  fnb_total?: number;
+  fnb_preorder_fee?: number;
+  contest_entry_fee?: number;
 }
 
 type TransactionComponentSnapshot = {
@@ -77,12 +93,10 @@ function componentLabel(component: PaymentComponent): string {
       return 'Phí lịch chơi';
     case PaymentComponentType.RENTAL_FEE:
       return 'Phí thuê xe';
+    case PaymentComponentType.CONTEST_ENTRY_FEE:
+      return 'Phí tham gia giải đấu';
     case PaymentComponentType.FB_PREORDER:
-      // Historical records used this type for both preorder and at-counter F&B.
-      // HELD identifies the amount collected with the original booking.
-      return component.status === PaymentComponentStatus.HELD
-        ? 'Đồ ăn & thức uống đặt trước'
-        : 'Đồ ăn & thức uống gọi tại quầy';
+      return 'Đồ ăn & thức uống đặt trước';
     case PaymentComponentType.FNB_ON_SITE:
       return 'Đồ ăn & thức uống gọi tại quầy';
     case PaymentComponentType.EXTENSION_FEE:
@@ -100,9 +114,53 @@ function isPrepaidComponent(component: PaymentComponent): boolean {
   return (
     component.type === PaymentComponentType.SLOT_FEE ||
     component.type === PaymentComponentType.RENTAL_FEE ||
-    (component.type === PaymentComponentType.FB_PREORDER &&
-      component.status === PaymentComponentStatus.HELD)
+    component.type === PaymentComponentType.CONTEST_ENTRY_FEE ||
+    component.type === PaymentComponentType.FB_PREORDER
   );
+}
+
+function pendingPrepaidLines(snapshot: PendingInitialPaymentSnapshot): FinancialLine[] {
+  const slotFee = Number(snapshot.slot_fee_total ?? snapshot.slot_fee ?? 0);
+  const rentalFee = Array.isArray(snapshot.vehicles)
+    ? snapshot.vehicles.reduce((sum, vehicle) => sum + Number(vehicle.rental_fee ?? 0), 0)
+    : Number(snapshot.rental_fee ?? 0);
+  const fnbPreorderFee = Number(snapshot.fnb_total ?? snapshot.fnb_preorder_fee ?? 0);
+  const contestEntryFee = Number(snapshot.contest_entry_fee ?? 0);
+
+  return [
+    {
+      componentId: 'pending-slot-fee',
+      type: PaymentComponentType.SLOT_FEE,
+      label: 'Phí lịch chơi',
+      amount: slotFee,
+      status: PaymentComponentStatus.PENDING,
+      group: 'PREPAID' as const,
+    },
+    {
+      componentId: 'pending-rental-fee',
+      type: PaymentComponentType.RENTAL_FEE,
+      label: 'Phí thuê xe',
+      amount: rentalFee,
+      status: PaymentComponentStatus.PENDING,
+      group: 'PREPAID' as const,
+    },
+    {
+      componentId: 'pending-fnb-preorder',
+      type: PaymentComponentType.FB_PREORDER,
+      label: 'Đồ ăn & thức uống đặt trước',
+      amount: fnbPreorderFee,
+      status: PaymentComponentStatus.PENDING,
+      group: 'PREPAID' as const,
+    },
+    {
+      componentId: 'pending-contest-entry-fee',
+      type: PaymentComponentType.CONTEST_ENTRY_FEE,
+      label: 'Phí tham gia giải đấu',
+      amount: contestEntryFee,
+      status: PaymentComponentStatus.PENDING,
+      group: 'PREPAID' as const,
+    },
+  ].filter((line) => Number.isFinite(line.amount) && line.amount > 0);
 }
 
 function findSuccessfulPayment(
@@ -145,6 +203,7 @@ export function buildBookingFinancialSummary(
   components: PaymentComponent[],
   transactions: PaymentTransaction[],
   discountAmount = 0,
+  pendingInitialPaymentSnapshot?: PendingInitialPaymentSnapshot | null,
 ): BookingFinancialSummary {
   const chargeComponents = components.filter(
     (component) => component.type !== PaymentComponentType.SECURITY_DEPOSIT,
@@ -154,7 +213,7 @@ export function buildBookingFinancialSummary(
     (component) => !isPrepaidComponent(component),
   );
 
-  const prepaidLines = prepaidComponents.map((component) => ({
+  const persistedPrepaidLines = prepaidComponents.map((component) => ({
     componentId: component.id,
     type: component.type,
     label: componentLabel(component),
@@ -163,6 +222,10 @@ export function buildBookingFinancialSummary(
     group: 'PREPAID' as const,
     payment: findSuccessfulPayment(component, transactions, false),
   }));
+  const prepaidLines =
+    persistedPrepaidLines.length > 0 || !pendingInitialPaymentSnapshot
+      ? persistedPrepaidLines
+      : pendingPrepaidLines(pendingInitialPaymentSnapshot);
   const additionalLines = additionalComponents.map((component) => ({
     componentId: component.id,
     type: component.type,
@@ -198,16 +261,23 @@ export function buildBookingFinancialSummary(
     (sum, transaction) => sum + Number(transaction.amount),
     0,
   );
+  const prepaidPaidAmount = prepaidPayments.reduce(
+    (sum, transaction) => sum + Number(transaction.amount),
+    0,
+  );
+  const prepaidOutstandingAmount = Math.max(
+    0,
+    prepaidServiceTotal - normalizedDiscountAmount - prepaidPaidAmount,
+  );
+  const outstandingAmount = prepaidOutstandingAmount + additionalOutstandingAmount;
 
   return {
     prepaidLines,
     additionalLines,
     prepaidServiceTotal,
     prepaidDiscountAmount: normalizedDiscountAmount,
-    prepaidPaidAmount: prepaidPayments.reduce(
-      (sum, transaction) => sum + Number(transaction.amount),
-      0,
-    ),
+    prepaidPaidAmount,
+    prepaidOutstandingAmount,
     additionalTotal,
     additionalPaidAmount: additionalPayments.reduce(
       (sum, transaction) => sum + Number(transaction.amount),
@@ -218,7 +288,7 @@ export function buildBookingFinancialSummary(
       successfulPayments.reduce((sum, transaction) => sum + Number(transaction.amount), 0) -
       totalRefundedAmount,
     totalRefundedAmount,
-    outstandingAmount: additionalOutstandingAmount,
-    isSettled: additionalOutstandingAmount === 0,
+    outstandingAmount,
+    isSettled: outstandingAmount === 0,
   };
 }

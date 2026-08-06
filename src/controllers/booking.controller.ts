@@ -46,7 +46,10 @@ import { PaymentTransaction } from '../models/payment-transaction.entity';
 import { Inspection } from '../models/inspection.entity';
 import { DamageLineItem } from '../models/damage-line-item.entity';
 import { ExtensionProposal } from '../models/extension-proposal.entity';
-import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
+import {
+  buildBookingFinancialSummary,
+  type PendingInitialPaymentSnapshot,
+} from '../lib/booking-financial-summary';
 
 function getInitialPaymentReceiptComponents(
   value: unknown,
@@ -279,6 +282,31 @@ export const bookingController = {
       if (role === UserRole.CUSTOMER && booking.customerId !== req.user!.userId) {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
       }
+      if (role === UserRole.PROVIDER) {
+        const ownsCafe = await AppDataSource.getRepository(Cafe).exist({
+          where: { id: booking.cafeId, providerId: req.user!.userId },
+        });
+        if (!ownsCafe) {
+          throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
+        }
+      }
+      if (role === UserRole.STAFF) {
+        const [assignment] = await AppDataSource.query<{ exists: boolean }[]>(
+          `SELECT EXISTS(
+             SELECT 1
+             FROM staff_cafe_assignments assignment
+             JOIN users staff ON staff.id = assignment.staff_id
+             WHERE assignment.staff_id = $1
+               AND assignment.cafe_id = $2
+               AND staff.is_active = true
+               AND staff.deleted_at IS NULL
+           ) AS "exists"`,
+          [req.user!.userId, booking.cafeId],
+        );
+        if (!assignment?.exists) {
+          throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
+        }
+      }
 
       // Load related records
       const [rawParticipants, vehicles, components, fnbOrders, cafe, session, transactions] =
@@ -295,7 +323,8 @@ export const bookingController = {
           }),
         ]);
 
-      // Load damage breakdown from CHECK_OUT inspection (for PROVIDER/STAFF visibility)
+      // Damage/inspection details are handled by the cafe's staff team. Providers
+      // do not participate in disputes and must not receive this breakdown.
       let damageBreakdown: {
         lineItems: {
           id: string;
@@ -369,19 +398,25 @@ export const bookingController = {
           });
           return {
             ...bv,
-            catalogName: vehicle?.catalog?.name ?? null,
-            tier: vehicle?.catalog?.tier ?? null,
-            identifier: vehicle?.identifier ?? null,
-            color: vehicle?.color ?? null,
+            catalogName: bv.catalogNameSnapshot ?? vehicle?.catalog?.name ?? null,
+            tier: bv.tierSnapshot ?? vehicle?.catalog?.tier ?? null,
+            identifier: bv.identifierSnapshot ?? vehicle?.identifier ?? null,
+            color: bv.colorSnapshot ?? vehicle?.color ?? null,
             // A unit's own photo represents the assigned rental car more accurately.
             // Use the catalog cover only when that unit has no photo.
-            coverImageUrl: vehicle?.distinctiveImageUrl ?? vehicle?.catalog?.coverImageUrl ?? null,
+            coverImageUrl:
+              bv.coverImageUrlSnapshot ??
+              vehicle?.distinctiveImageUrl ??
+              vehicle?.catalog?.coverImageUrl ??
+              null,
           };
         }),
       );
       void vehicleIds; // suppress unused warning
 
-      // Enrich FnbOrder items with menu item names across all orders (exclude CANCELLED)
+      // Booking history includes cancelled F&B too. They must stay out of
+      // preparation queues, but remain visible on the booking for audit and
+      // refund reconciliation.
       type EnrichedFnbOrderItem = FnbOrderItem & {
         itemName: string | null;
         variantName: string | null;
@@ -397,12 +432,12 @@ export const bookingController = {
       }> = [];
       let mergedFnbOrder = null;
 
-      const activeFnbOrders = fnbOrders.filter((o) => o.status !== 'CANCELLED');
+      const historicalFnbOrders = fnbOrders;
 
-      if (activeFnbOrders.length > 0) {
+      if (historicalFnbOrders.length > 0) {
         const allRawItems: FnbOrderItem[] = [];
         const itemsByOrderId = new Map<string, FnbOrderItem[]>();
-        for (const order of activeFnbOrders) {
+        for (const order of historicalFnbOrders) {
           const items = await AppDataSource.getRepository(FnbOrderItem).find({
             where: { fnbOrderId: order.id },
           });
@@ -445,7 +480,7 @@ export const bookingController = {
 
         // Keep each order separate so clients can distinguish food and drinks
         // paid at booking from items ordered during the session.
-        fnbOrdersWithItems = activeFnbOrders.map((order) => ({
+        fnbOrdersWithItems = historicalFnbOrders.map((order) => ({
           id: order.id,
           bookingId: order.bookingId,
           orderType: order.orderType,
@@ -456,11 +491,13 @@ export const bookingController = {
 
         // Retained temporarily for older clients that still expect a merged list.
         mergedFnbOrder = {
-          id: activeFnbOrders[0].id,
+          id: historicalFnbOrders[0].id,
           bookingId,
           orderType: 'MERGED',
-          totalAmount: activeFnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
-          status: 'CONFIRMED',
+          totalAmount: historicalFnbOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0),
+          status: historicalFnbOrders.every((order) => order.status === 'CANCELLED')
+            ? 'CANCELLED'
+            : 'CONFIRMED',
           items: fnbItems,
         };
       }
@@ -535,6 +572,9 @@ export const bookingController = {
             components,
             transactions,
             Number(booking.discountAmount) || 0,
+            booking.status === 'PENDING'
+              ? (booking.snapshot as PendingInitialPaymentSnapshot | null)
+              : undefined,
           ),
           payment_transactions: transactions.map((t) => ({
             id: t.id,
@@ -568,7 +608,7 @@ export const bookingController = {
                 approvedExtensionMinutes,
               }
             : null,
-          damage_breakdown: damageBreakdown,
+          damage_breakdown: role === UserRole.PROVIDER ? null : damageBreakdown,
         },
       });
     } catch (err) {
@@ -671,8 +711,24 @@ export const bookingController = {
     try {
       const bookingId = req.params.id;
       const body = CancelBookingSchema.parse(req.body);
-      await bookingService.cancelBooking(bookingId, req.user!.userId, req.user!.role, body.reason);
-      const refund = await processRefund(bookingId, req.user!.role);
+      const cancellation = await bookingService.cancelBooking(
+        bookingId,
+        req.user!.userId,
+        req.user!.role,
+        body.reason,
+      );
+      // A PENDING booking is only a free hold. Calling the refund service here
+      // used to try to calculate/refund a payment that never existed, which
+      // could turn a successful hold cancellation into a 500 response.
+      const refund = cancellation.requiresRefundProcessing
+        ? await processRefund(bookingId, req.user!.role)
+        : {
+            slotFeeRefund: 0,
+            rentalFeeRefund: 0,
+            depositRefund: 0,
+            fnbRefund: 0,
+            totalRefund: 0,
+          };
       res.json({ success: true, data: { bookingId, refund } });
     } catch (err) {
       next(err);

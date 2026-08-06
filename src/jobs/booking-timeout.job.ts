@@ -123,12 +123,19 @@ async function notifyOverdueSessions(): Promise<void> {
  */
 async function expireStaleExtensionProposals(): Promise<void> {
   const staleProposals = await AppDataSource.query<
-    { proposalId: string; sessionId: string; checkedInBy: string; customerId: string | null }[]
+    {
+      proposalId: string;
+      sessionId: string;
+      cafeId: string;
+      checkedInBy: string;
+      customerId: string | null;
+    }[]
   >(
     `SELECT
-       p.id AS "proposalId",
-       p.session_id AS "sessionId",
-       s.checked_in_by AS "checkedInBy",
+      p.id AS "proposalId",
+      p.session_id AS "sessionId",
+      s.cafe_id AS "cafeId",
+      s.checked_in_by AS "checkedInBy",
        b.customer_id AS "customerId"
      FROM extension_proposals p
      JOIN sessions s ON s.id = p.session_id
@@ -156,6 +163,12 @@ async function expireStaleExtensionProposals(): Promise<void> {
     if (proposal.customerId) {
       wsService.pushToUser(proposal.customerId, 'SESSION_EXTENSION_EXPIRED', eventData);
     }
+    wsService.pushToCafe(proposal.cafeId, 'SESSION_UPDATED', {
+      ...eventData,
+      sessionStatus: SessionStatus.ACTIVE,
+      action: 'EXTENSION_EXPIRED',
+      updatedAt: new Date().toISOString(),
+    });
     logger.info('BookingTimeout', 'expired unanswered session extension proposal', {
       proposalId: proposal.proposalId,
       sessionId: proposal.sessionId,
