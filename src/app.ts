@@ -26,9 +26,32 @@ const swaggerDocsCsp: express.RequestHandler = (_req, res, next) => {
 
 const app = express();
 
+// Whitelist CORS: đọc từ ALLOWED_ORIGINS (phân cách bởi dấu phẩy).
+// Ở dev (không set biến), mặc định cho phép localhost + mọi *.vercel.app.
+const rawOrigins = env.ALLOWED_ORIGINS ?? '';
+const allowedOrigins: string[] = rawOrigins
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const corsOptions: cors.CorsOptions = {
+  origin:
+    allowedOrigins.length > 0
+      ? (origin, callback) => {
+          // Cho phép request không có origin (mobile app, curl, Swagger UI)
+          if (!origin) return callback(null, true);
+          if (allowedOrigins.includes(origin)) return callback(null, true);
+          // Cho phép mọi subdomain *.vercel.app (preview deployments)
+          if (/^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin)) return callback(null, true);
+          callback(new Error(`CORS blocked: ${origin}`));
+        }
+      : true, // Nếu không set ALLOWED_ORIGINS → mở hoàn toàn (dev/test)
+  credentials: true,
+};
+
 app.set('trust proxy', 1);
 app.use(helmet());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(requestLogger);

@@ -112,6 +112,11 @@ export const env = {
   frontendUrl: getSafeFrontendUrl(),
   apiBaseUrl: (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
 
+  // Danh sách origin được phép gọi API, phân cách bởi dấu phẩy.
+  // Ví dụ: https://rcfield.vn,https://www.rcfield.vn,https://rcfield-fe.vercel.app
+  // Nếu bỏ trống → CORS mở hoàn toàn (chỉ dùng ở dev/test).
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS ?? '',
+
   facebook: {
     appId: process.env.FB_APP_ID ?? '',
     appSecret: process.env.FB_APP_SECRET ?? '',
