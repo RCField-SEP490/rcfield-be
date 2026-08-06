@@ -1684,8 +1684,3 @@ export const ConfirmCheckoutSchema = z.object({
 export const UpdateDamageItemsSchema = z.object({
   damageLineItems: z.array(DamageLineItemInputSchema).min(0),
 });
-
-export const EscalateDisputeSchema = z.object({
-  inspectionId: z.string().uuid('inspectionId phải là UUID hợp lệ'),
-  note: z.string().min(1, 'Vui lòng nhập mô tả tranh chấp'),
-});
