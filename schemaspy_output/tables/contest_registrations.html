@@ -117,6 +117,21 @@
                                     <td>gen_random_uuid()</td>
                                     <td>
                                         <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_audit_logs.registration_id references contest_registrations.id via contest_audit_logs_registration_id_fkey"><a href='contest_audit_logs.html'>contest_audit_logs</a><span class='relatedKey'>.registration_id</span></td>
+                                                <td class="constraint detail">contest_audit_logs_registration_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_match_participants.registration_id references contest_registrations.id via contest_match_participants_registration_id_fkey"><a href='contest_match_participants.html'>contest_match_participants</a><span class='relatedKey'>.registration_id</span></td>
+                                                <td class="constraint detail">contest_match_participants_registration_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="payment_transactions.contest_registration_id references contest_registrations.id via payment_transactions_contest_registration_id_fkey"><a href='payment_transactions.html'>payment_transactions</a><span class='relatedKey'>.contest_registration_id</span></td>
+                                                <td class="constraint detail">payment_transactions_contest_registration_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
                                         </table>
                                     </td>
                                     <td>
@@ -231,7 +246,7 @@
                                     <td></td>
                                 </tr>
                                 <tr>
-                                    <td><span id="status">status</span></td>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="status">status</span></td>
                                     <td>contest_registration_status_enum</td>
                                     <td>2147483647</td>
                                     <td title=''></td>
@@ -281,6 +296,330 @@
                                     </td>
                                     <td></td>
                                 </tr>
+                                <tr>
+                                    <td><span id="participant_role_snapshot">participant_role_snapshot</span></td>
+                                    <td>varchar</td>
+                                    <td>30</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;CUSTOMER&#39;::character varying</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="booking_id">booking_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.booking_id references bookings.id via contest_registrations_booking_id_fkey"><a href='bookings.html'>bookings</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_booking_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='indexedColumn' title='Indexed'><i class='fa fa-sitemap fa-rotate-120' style='padding-right: 5px;'></i><span id="check_in_code">check_in_code</span></td>
+                                    <td>varchar</td>
+                                    <td>64</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="checked_in_cafe_id">checked_in_cafe_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.checked_in_cafe_id references cafes.id via contest_registrations_checked_in_cafe_id_fkey"><a href='cafes.html'>cafes</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_checked_in_cafe_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="checked_in_by">checked_in_by</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.checked_in_by references users.id via contest_registrations_checked_in_by_fkey"><a href='users.html'>users</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_checked_in_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="checked_in_at">checked_in_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="cancelled_by">cancelled_by</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.cancelled_by references users.id via contest_registrations_cancelled_by_fkey"><a href='users.html'>users</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_cancelled_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="cancelled_at">cancelled_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="cancellation_reason">cancellation_reason</span></td>
+                                    <td>text</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="payment_status">payment_status</span></td>
+                                    <td>varchar</td>
+                                    <td>30</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;NOT_REQUIRED&#39;::character varying</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="entry_fee_amount">entry_fee_amount</span></td>
+                                    <td>numeric</td>
+                                    <td>15,2</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="entry_fee_due_at">entry_fee_due_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="entry_fee_marked_paid_by">entry_fee_marked_paid_by</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.entry_fee_marked_paid_by references users.id via contest_registrations_entry_fee_marked_paid_by_fkey"><a href='users.html'>users</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_entry_fee_marked_paid_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="entry_fee_marked_paid_at">entry_fee_marked_paid_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="metadata">metadata</span></td>
+                                    <td>jsonb</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;{}&#39;::jsonb</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="rental_catalog_id">rental_catalog_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.rental_catalog_id references vehicle_catalogs.id via contest_registrations_rental_catalog_id_fkey"><a href='vehicle_catalogs.html'>vehicle_catalogs</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_rental_catalog_id_fkey</td>
+                                                <td class="constraint detail"><span title='Null on delete:&#10;Foreign key to parent set to NULL when parent deleted'>N</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='foreignKey' title='Foreign Key'><i class='icon ion-key iconkey' style='padding-left: 5px;'></i><span id="rental_cafe_id">rental_cafe_id</span></td>
+                                    <td>uuid</td>
+                                    <td>2147483647</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                            <tr>
+                                                <td title="contest_registrations.rental_cafe_id references cafes.id via contest_registrations_rental_cafe_id_fkey"><a href='cafes.html'>cafes</a><span class='relatedKey'>.id</span></td>
+                                                <td class="constraint detail">contest_registrations_rental_cafe_id_fkey</td>
+                                                <td class="constraint detail"><span title='Null on delete:&#10;Foreign key to parent set to NULL when parent deleted'>N</span></td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -318,16 +657,52 @@
                                     <td>id</td>
                                 </tr>
                                 <tr>
+                                    <td title='Indexed'>idx_contest_registrations_booking_id</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>booking_id</td>
+                                </tr>
+                                <tr>
+                                    <td class='uniqueKey' title='Unique Key'><i class='icon ion-key iconkey'></i> idx_contest_registrations_check_in_code</td>
+                                    <td>Must be unique</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>check_in_code</td>
+                                </tr>
+                                <tr>
                                     <td title='Indexed'>idx_contest_registrations_contest_id</td>
                                     <td>Performance</td>
                                     <td><span title='Ascending'>Asc</span></td>
                                     <td>contest_id</td>
                                 </tr>
                                 <tr>
+                                    <td title='Indexed'>idx_contest_registrations_contest_status</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
+                                    <td>contest_id + status</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_contest_registrations_rental_catalog</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
+                                    <td>contest_id + rental_catalog_id</td>
+                                </tr>
+                                <tr>
                                     <td class='uniqueKey' title='Unique Key'><i class='icon ion-key iconkey'></i> idx_contest_registrations_unique</td>
                                     <td>Must be unique</td>
                                     <td><span title='Ascending'>Asc</span>/<span title='Ascending'>Asc</span></td>
                                     <td>contest_id + user_id</td>
+                                </tr>
+                                <tr>
+                                    <td title='Indexed'>idx_contest_registrations_user_id</td>
+                                    <td>Performance</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>user_id</td>
+                                </tr>
+                                <tr>
+                                    <td class='uniqueKey' title='Unique Key'><i class='icon ion-key iconkey'></i> uq_contest_registrations_check_in_code</td>
+                                    <td>Must be unique</td>
+                                    <td><span title='Ascending'>Asc</span></td>
+                                    <td>check_in_code</td>
                                 </tr>
                                 </tbody>
                             </table>
@@ -352,59 +727,88 @@
                                 <div class="tab-content no-padding">
                                     <div class="chart tab-pane active" id="oneDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="oneDegreeRelationshipsDiagram" name="oneDegreeRelationshipsDiagram">
-<area shape="rect" id="node1" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="553,136,1175,469">
-<area shape="rect" id="node2" href="contests.html" target="_top" title="contests" alt="" coords="295,5,461,211">
-<area shape="rect" id="node3" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="247,487,509,633">
-<area shape="rect" id="node4" href="users.html" target="_top" title="users" alt="" coords="5,188,203,393">
-<area shape="rect" id="node5" href="vehicles.html" target="_top" title="vehicles" alt="" coords="250,264,506,469">
+<area shape="rect" id="node1" href="bookings.html" target="_top" title="bookings" alt="" coords="959,5,1216,533">
+<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="263,667,592,1107">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,696,219,901">
+<area shape="rect" id="node4" href="contests.html" target="_top" title="contests" alt="" coords="644,268,907,708">
+<area shape="rect" id="node5" href="contest_audit_logs.html" target="_top" title="contest_audit_logs" alt="" coords="2018,507,2283,800">
+<area shape="rect" id="node6" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1260,587,1931,1419">
+<area shape="rect" id="node8" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="296,1124,559,1271">
+<area shape="rect" id="node9" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="636,1000,915,1147">
+<area shape="rect" id="node10" href="vehicles.html" target="_top" title="vehicles" alt="" coords="959,741,1215,947">
+<area shape="rect" id="node7" href="contest_match_participants.html" target="_top" title="contest_match_participants" alt="" coords="1975,817,2327,1023">
+<area shape="rect" id="node11" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="2001,60,2301,383">
 </map>
                                         <a name='diagram'><img id="oneDegreeImg" src="../diagrams/tables/contest_registrations.1degree.png" usemap="#oneDegreeRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>
                                     <div class="chart tab-pane " id="twodegreesDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="twoDegreesRelationshipsDiagram" name="twoDegreesRelationshipsDiagram">
-<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1368,919,1656,1007">
-<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="940,987,1112,1075">
-<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1124,141,1212">
-<area shape="rect" id="node6" href="cafes.html" target="_top" title="cafes" alt="" coords="265,987,417,1075">
-<area shape="rect" id="node7" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="557,1055,833,1143">
-<area shape="rect" id="node8" href="promotions.html" target="_top" title="promotions" alt="" coords="598,562,793,650">
-<area shape="rect" id="node9" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="588,914,803,1002">
-<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="1910,1182,2161,1270">
-<area shape="rect" id="node5" href="vehicles.html" target="_top" title="vehicles" alt="" coords="898,1356,1154,1562">
-<area shape="rect" id="node42" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="573,1392,817,1480">
-<area shape="rect" id="node10" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="551,456,840,544">
-<area shape="rect" id="node11" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="588,667,803,755">
-<area shape="rect" id="node12" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1201,1754,1823,2087">
-<area shape="rect" id="node13" href="contests.html" target="_top" title="contests" alt="" coords="612,1622,779,1710">
-<area shape="rect" id="node14" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="895,2074,1157,2162">
-<area shape="rect" id="node15" href="disputes.html" target="_top" title="disputes" alt="" coords="1429,192,1595,280">
-<area shape="rect" id="node16" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="1894,74,2177,162">
-<area shape="rect" id="node17" href="sessions.html" target="_top" title="sessions" alt="" coords="1429,814,1595,902">
-<area shape="rect" id="node18" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="235,882,447,970">
-<area shape="rect" id="node19" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="1941,179,2129,267">
-<area shape="rect" id="node20" href="incidents.html" target="_top" title="incidents" alt="" coords="1949,284,2122,372">
-<area shape="rect" id="node21" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="2775,1734,3036,1822">
-<area shape="rect" id="node22" href="inspections.html" target="_top" title="inspections" alt="" coords="2536,968,2731,1056">
-<area shape="rect" id="node23" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2248,1039,2492,1127">
-<area shape="rect" id="node35" href="session_participants.html" target="_top" title="session_participants" alt="" coords="1894,830,2177,918">
-<area shape="rect" id="node24" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="583,772,807,860">
-<area shape="rect" id="node25" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="1913,971,2158,1059">
-<area shape="rect" id="node26" href="notifications.html" target="_top" title="notifications" alt="" coords="237,1288,444,1376">
-<area shape="rect" id="node27" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="185,1394,496,1482">
-<area shape="rect" id="node28" href="payment_components.html" target="_top" title="payment_components" alt="" coords="1887,1076,2184,1164">
-<area shape="rect" id="node29" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="209,1551,473,1639">
-<area shape="rect" id="node30" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1381,562,1643,650">
-<area shape="rect" id="node31" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="216,1692,465,1780">
-<area shape="rect" id="node32" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="187,1798,494,1886">
-<area shape="rect" id="node33" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="226,1903,455,1991">
-<area shape="rect" id="node34" href="reviews.html" target="_top" title="reviews" alt="" coords="1433,1175,1591,1263">
-<area shape="rect" id="node36" href="shift_positions.html" target="_top" title="shift_positions" alt="" coords="228,2238,453,2326">
-<area shape="rect" id="node37" href="shift_time_presets.html" target="_top" title="shift_time_presets" alt="" coords="209,2132,472,2220">
-<area shape="rect" id="node38" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="540,2003,851,2091">
-<area shape="rect" id="node39" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="207,2343,475,2431">
-<area shape="rect" id="node40" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="599,2311,791,2399">
-<area shape="rect" id="node41" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="1915,1428,2156,1516">
-<area shape="rect" id="node43" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="1867,1534,2204,1622">
+<area shape="rect" id="node1" href="ai_analysis_logs.html" target="_top" title="ai_analysis_logs" alt="" coords="681,1283,920,1371">
+<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="370,1780,522,1868">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="53,1532,199,1620">
+<area shape="rect" id="node4" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1934,2111,2222,2199">
+<area shape="rect" id="node5" href="bookings.html" target="_top" title="bookings" alt="" coords="1457,2471,1629,2559">
+<area shape="rect" id="node8" href="contests.html" target="_top" title="contests" alt="" coords="717,596,884,684">
+<area shape="rect" id="node9" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="1033,2291,1309,2379">
+<area shape="rect" id="node10" href="promotions.html" target="_top" title="promotions" alt="" coords="1074,2805,1269,2893">
+<area shape="rect" id="node11" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="693,2665,908,2753">
+<area shape="rect" id="node12" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="669,753,932,841">
+<area shape="rect" id="node6" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="2508,2009,2759,2097">
+<area shape="rect" id="node7" href="vehicles.html" target="_top" title="vehicles" alt="" coords="1461,1904,1624,1992">
+<area shape="rect" id="node27" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="1049,1513,1293,1601">
+<area shape="rect" id="node18" href="track_types.html" target="_top" title="track_types" alt="" coords="348,753,544,841">
+<area shape="rect" id="node29" href="contest_templates.html" target="_top" title="contest_templates" alt="" coords="314,69,578,157">
+<area shape="rect" id="node30" href="contest_formats.html" target="_top" title="contest_formats" alt="" coords="5,120,247,208">
+<area shape="rect" id="node31" href="contest_types.html" target="_top" title="contest_types" alt="" coords="17,5,235,93">
+<area shape="rect" id="node32" href="packages.html" target="_top" title="packages" alt="" coords="713,2275,889,2363">
+<area shape="rect" id="node13" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="656,1388,945,1476">
+<area shape="rect" id="node14" href="cafe_holiday_overrides.html" target="_top" title="cafe_holiday_overrides" alt="" coords="1019,2415,1324,2503">
+<area shape="rect" id="node15" href="holiday_dates.html" target="_top" title="holiday_dates" alt="" coords="692,2452,909,2540">
+<area shape="rect" id="node16" href="cafe_images.html" target="_top" title="cafe_images" alt="" coords="699,1992,903,2080">
+<area shape="rect" id="node17" href="cafe_pricing_rules.html" target="_top" title="cafe_pricing_rules" alt="" coords="671,2097,930,2185">
+<area shape="rect" id="node19" href="contest_audit_logs.html" target="_top" title="contest_audit_logs" alt="" coords="2501,628,2766,716">
+<area shape="rect" id="node20" href="contest_matches.html" target="_top" title="contest_matches" alt="" coords="1047,703,1295,791">
+<area shape="rect" id="node21" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1743,841,2413,1673">
+<area shape="rect" id="node26" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="1411,1163,1674,1251">
+<area shape="rect" id="node22" href="contest_bans.html" target="_top" title="contest_bans" alt="" coords="1065,880,1277,968">
+<area shape="rect" id="node23" href="contest_cafes.html" target="_top" title="contest_cafes" alt="" coords="1063,1248,1280,1336">
+<area shape="rect" id="node24" href="contest_fee_orders.html" target="_top" title="contest_fee_orders" alt="" coords="1037,333,1305,421">
+<area shape="rect" id="node25" href="contest_match_participants.html" target="_top" title="contest_match_participants" alt="" coords="2457,805,2809,1011">
+<area shape="rect" id="node28" href="contest_staff_assignments.html" target="_top" title="contest_staff_assignments" alt="" coords="1000,2700,1343,2788">
+<area shape="rect" id="node33" href="disputes.html" target="_top" title="disputes" alt="" coords="1995,1691,2161,1779">
+<area shape="rect" id="node34" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="2492,3164,2775,3252">
+<area shape="rect" id="node35" href="sessions.html" target="_top" title="sessions" alt="" coords="1995,2541,2161,2629">
+<area shape="rect" id="node36" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="340,1885,552,1973">
+<area shape="rect" id="node37" href="featured_popups.html" target="_top" title="featured_popups" alt="" coords="1419,409,1667,497">
+<area shape="rect" id="node38" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="2539,2516,2727,2604">
+<area shape="rect" id="node39" href="incidents.html" target="_top" title="incidents" alt="" coords="2547,3269,2720,3357">
+<area shape="rect" id="node40" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="3380,641,3641,729">
+<area shape="rect" id="node41" href="inspections.html" target="_top" title="inspections" alt="" coords="3141,1109,3336,1197">
+<area shape="rect" id="node42" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2853,1972,3097,2060">
+<area shape="rect" id="node61" href="session_participants.html" target="_top" title="session_participants" alt="" coords="2492,2115,2775,2203">
+<area shape="rect" id="node43" href="kb_chunks.html" target="_top" title="kb_chunks" alt="" coords="1079,1763,1264,1851">
+<area shape="rect" id="node44" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="689,1529,913,1617">
+<area shape="rect" id="node45" href="menu_categories.html" target="_top" title="menu_categories" alt="" coords="676,1887,925,1975">
+<area shape="rect" id="node46" href="menu_items.html" target="_top" title="menu_items" alt="" coords="1071,1904,1272,1992">
+<area shape="rect" id="node47" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="2511,2621,2756,2709">
+<area shape="rect" id="node48" href="notifications.html" target="_top" title="notifications" alt="" coords="343,2277,549,2365">
+<area shape="rect" id="node49" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1957,2400,2199,2488">
+<area shape="rect" id="node50" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="291,2383,601,2471">
+<area shape="rect" id="node51" href="payment_components.html" target="_top" title="payment_components" alt="" coords="2485,2727,2782,2815">
+<area shape="rect" id="node52" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="314,2524,578,2612">
+<area shape="rect" id="node53" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="2483,2295,2783,2383">
+<area shape="rect" id="node54" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1947,2777,2209,2865">
+<area shape="rect" id="node55" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="321,2665,571,2753">
+<area shape="rect" id="node56" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="293,2771,599,2859">
+<area shape="rect" id="node57" href="push_tokens.html" target="_top" title="push_tokens" alt="" coords="343,2876,549,2964">
+<area shape="rect" id="node58" href="race_records.html" target="_top" title="race_records" alt="" coords="2871,696,3079,784">
+<area shape="rect" id="node59" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="331,3017,561,3105">
+<area shape="rect" id="node60" href="reviews.html" target="_top" title="reviews" alt="" coords="1999,2883,2157,2971">
+<area shape="rect" id="node62" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="645,283,956,371">
+<area shape="rect" id="node63" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="312,3247,580,3335">
+<area shape="rect" id="node64" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="2513,3375,2754,3463">
+<area shape="rect" id="node65" href="vehicle_catalog_images.html" target="_top" title="vehicle_catalog_images" alt="" coords="1387,1513,1699,1601">
+<area shape="rect" id="node66" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="2465,1868,2802,1956">
 </map>
                                         <a name='diagram'><img id="twodegreesDegreeImg" src="../diagrams/tables/contest_registrations.2degrees.png" usemap="#twoDegreesRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>

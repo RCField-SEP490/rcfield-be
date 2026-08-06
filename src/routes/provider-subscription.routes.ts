@@ -13,6 +13,9 @@ export const providerSubscriptionRouter = Router();
 providerSubscriptionRouter.use(authenticate, authorize(UserRole.PROVIDER));
 
 providerSubscriptionRouter.get('/me', providerOnboardingController.getProviderMe);
+// Không gắn requireActiveProvider: hồ sơ đang chờ duyệt hoặc bị từ chối vẫn phải
+// sửa được thông tin doanh nghiệp, đó chính là lúc họ cần sửa nhất.
+providerSubscriptionRouter.patch('/me', providerOnboardingController.updateProviderMe);
 
 // KYC routes — no requireActiveProvider (used by REJECTED/PENDING providers)
 const kycFields = kycUpload.fields([

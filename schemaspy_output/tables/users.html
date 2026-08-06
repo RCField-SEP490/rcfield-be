@@ -73,7 +73,7 @@
             <div class="content-wrapper">
                 <!-- Content Header (Page header) -->
                 <section class="content-header">
-                    <h1>users</h1><p><span id="recordNumber">5</span> rows</p><br />
+                    <h1>users</h1><p><span id="recordNumber">14</span> rows</p><br />
                 </section>
                 <!-- Main content -->
                 <section class="content">
@@ -118,6 +118,11 @@
                                     <td>
                                         <table border='0' cellspacing='0' cellpadding='0'>
                                             <tr>
+                                                <td title="ai_analysis_logs.provider_id references users.id via ai_analysis_logs_provider_id_fkey"><a href='ai_analysis_logs.html'>ai_analysis_logs</a><span class='relatedKey'>.provider_id</span></td>
+                                                <td class="constraint detail">ai_analysis_logs_provider_id_fkey</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
                                                 <td title="booking_participants.user_id references users.id via booking_participants_user_id_fkey"><a href='booking_participants.html'>booking_participants</a><span class='relatedKey'>.user_id</span></td>
                                                 <td class="constraint detail">booking_participants_user_id_fkey</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
@@ -138,13 +143,68 @@
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
-                                                <td title="cafe_closures.created_by references users.id via cafe_closures_created_by_fkey"><a href='cafe_closures.html'>cafe_closures</a><span class='relatedKey'>.created_by</span></td>
-                                                <td class="constraint detail">cafe_closures_created_by_fkey</td>
+                                                <td title="cafes.provider_id references users.id via cafes_provider_id_fkey"><a href='cafes.html'>cafes</a><span class='relatedKey'>.provider_id</span></td>
+                                                <td class="constraint detail">cafes_provider_id_fkey</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
-                                                <td title="cafes.provider_id references users.id via cafes_provider_id_fkey"><a href='cafes.html'>cafes</a><span class='relatedKey'>.provider_id</span></td>
-                                                <td class="constraint detail">cafes_provider_id_fkey</td>
+                                                <td title="contest_audit_logs.actor_id references users.id via contest_audit_logs_actor_id_fkey"><a href='contest_audit_logs.html'>contest_audit_logs</a><span class='relatedKey'>.actor_id</span></td>
+                                                <td class="constraint detail">contest_audit_logs_actor_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_bans.created_by references users.id via contest_bans_created_by_fkey"><a href='contest_bans.html'>contest_bans</a><span class='relatedKey'>.created_by</span></td>
+                                                <td class="constraint detail">contest_bans_created_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_bans.lifted_by references users.id via contest_bans_lifted_by_fkey"><a href='contest_bans.html'>contest_bans</a><span class='relatedKey'>.lifted_by</span></td>
+                                                <td class="constraint detail">contest_bans_lifted_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_bans.provider_id references users.id via contest_bans_provider_id_fkey"><a href='contest_bans.html'>contest_bans</a><span class='relatedKey'>.provider_id</span></td>
+                                                <td class="constraint detail">contest_bans_provider_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_bans.user_id references users.id via contest_bans_user_id_fkey"><a href='contest_bans.html'>contest_bans</a><span class='relatedKey'>.user_id</span></td>
+                                                <td class="constraint detail">contest_bans_user_id_fkey</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_fee_orders.provider_id references users.id via contest_fee_orders_provider_id_fkey"><a href='contest_fee_orders.html'>contest_fee_orders</a><span class='relatedKey'>.provider_id</span></td>
+                                                <td class="constraint detail">contest_fee_orders_provider_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_fee_orders.reviewed_by references users.id via contest_fee_orders_reviewed_by_fkey"><a href='contest_fee_orders.html'>contest_fee_orders</a><span class='relatedKey'>.reviewed_by</span></td>
+                                                <td class="constraint detail">contest_fee_orders_reviewed_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_matches.created_by references users.id via contest_matches_created_by_fkey"><a href='contest_matches.html'>contest_matches</a><span class='relatedKey'>.created_by</span></td>
+                                                <td class="constraint detail">contest_matches_created_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_matches.decided_by references users.id via contest_matches_decided_by_fkey"><a href='contest_matches.html'>contest_matches</a><span class='relatedKey'>.decided_by</span></td>
+                                                <td class="constraint detail">contest_matches_decided_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_registrations.cancelled_by references users.id via contest_registrations_cancelled_by_fkey"><a href='contest_registrations.html'>contest_registrations</a><span class='relatedKey'>.cancelled_by</span></td>
+                                                <td class="constraint detail">contest_registrations_cancelled_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_registrations.checked_in_by references users.id via contest_registrations_checked_in_by_fkey"><a href='contest_registrations.html'>contest_registrations</a><span class='relatedKey'>.checked_in_by</span></td>
+                                                <td class="constraint detail">contest_registrations_checked_in_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_registrations.entry_fee_marked_paid_by references users.id via contest_registrations_entry_fee_marked_paid_by_fkey"><a href='contest_registrations.html'>contest_registrations</a><span class='relatedKey'>.entry_fee_marked_paid_by</span></td>
+                                                <td class="constraint detail">contest_registrations_entry_fee_marked_paid_by_fkey</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
@@ -153,8 +213,23 @@
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
+                                                <td title="contest_staff_assignments.assigned_by references users.id via contest_staff_assignments_assigned_by_fkey"><a href='contest_staff_assignments.html'>contest_staff_assignments</a><span class='relatedKey'>.assigned_by</span></td>
+                                                <td class="constraint detail">contest_staff_assignments_assigned_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contest_staff_assignments.staff_id references users.id via contest_staff_assignments_staff_id_fkey"><a href='contest_staff_assignments.html'>contest_staff_assignments</a><span class='relatedKey'>.staff_id</span></td>
+                                                <td class="constraint detail">contest_staff_assignments_staff_id_fkey</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
                                                 <td title="contests.created_by references users.id via contests_created_by_fkey"><a href='contests.html'>contests</a><span class='relatedKey'>.created_by</span></td>
                                                 <td class="constraint detail">contests_created_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="contests.provider_id references users.id via fk_contests_provider_id"><a href='contests.html'>contests</a><span class='relatedKey'>.provider_id</span></td>
+                                                <td class="constraint detail">fk_contests_provider_id</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
@@ -190,6 +265,16 @@
                                             <tr>
                                                 <td title="feature_flags.enabled_by references users.id via feature_flags_enabled_by_fkey"><a href='feature_flags.html'>feature_flags</a><span class='relatedKey'>.enabled_by</span></td>
                                                 <td class="constraint detail">feature_flags_enabled_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="featured_popups.created_by references users.id via featured_popups_created_by_fkey"><a href='featured_popups.html'>featured_popups</a><span class='relatedKey'>.created_by</span></td>
+                                                <td class="constraint detail">featured_popups_created_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="featured_popups.updated_by references users.id via featured_popups_updated_by_fkey"><a href='featured_popups.html'>featured_popups</a><span class='relatedKey'>.updated_by</span></td>
+                                                <td class="constraint detail">featured_popups_updated_by_fkey</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
@@ -278,6 +363,26 @@
                                                 <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
                                             </tr>
                                             <tr>
+                                                <td title="push_tokens.user_id references users.id via FK_push_tokens_user"><a href='push_tokens.html'>push_tokens</a><span class='relatedKey'>.user_id</span></td>
+                                                <td class="constraint detail">FK_push_tokens_user</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="race_records.provider_id references users.id via race_records_provider_id_fkey"><a href='race_records.html'>race_records</a><span class='relatedKey'>.provider_id</span></td>
+                                                <td class="constraint detail">race_records_provider_id_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="race_records.user_id references users.id via race_records_user_id_fkey"><a href='race_records.html'>race_records</a><span class='relatedKey'>.user_id</span></td>
+                                                <td class="constraint detail">race_records_user_id_fkey</td>
+                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
+                                            </tr>
+                                            <tr>
+                                                <td title="race_records.verified_by references users.id via race_records_verified_by_fkey"><a href='race_records.html'>race_records</a><span class='relatedKey'>.verified_by</span></td>
+                                                <td class="constraint detail">race_records_verified_by_fkey</td>
+                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
+                                            </tr>
+                                            <tr>
                                                 <td title="refresh_tokens.user_id references users.id via refresh_tokens_user_id_fkey"><a href='refresh_tokens.html'>refresh_tokens</a><span class='relatedKey'>.user_id</span></td>
                                                 <td class="constraint detail">refresh_tokens_user_id_fkey</td>
                                                 <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
@@ -303,16 +408,6 @@
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
-                                                <td title="shift_positions.provider_id references users.id via shift_positions_provider_id_fkey"><a href='shift_positions.html'>shift_positions</a><span class='relatedKey'>.provider_id</span></td>
-                                                <td class="constraint detail">shift_positions_provider_id_fkey</td>
-                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
-                                            </tr>
-                                            <tr>
-                                                <td title="shift_time_presets.provider_id references users.id via fk_shift_time_presets_provider"><a href='shift_time_presets.html'>shift_time_presets</a><span class='relatedKey'>.provider_id</span></td>
-                                                <td class="constraint detail">fk_shift_time_presets_provider</td>
-                                                <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
-                                            </tr>
-                                            <tr>
                                                 <td title="staff_cafe_assignments.assigned_by references users.id via staff_cafe_assignments_assigned_by_fkey"><a href='staff_cafe_assignments.html'>staff_cafe_assignments</a><span class='relatedKey'>.assigned_by</span></td>
                                                 <td class="constraint detail">staff_cafe_assignments_assigned_by_fkey</td>
                                                 <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
@@ -326,16 +421,6 @@
                                                 <td title="staff_invite_tokens.user_id references users.id via staff_invite_tokens_user_id_fkey"><a href='staff_invite_tokens.html'>staff_invite_tokens</a><span class='relatedKey'>.user_id</span></td>
                                                 <td class="constraint detail">staff_invite_tokens_user_id_fkey</td>
                                                 <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
-                                            </tr>
-                                            <tr>
-                                                <td title="staff_shifts.provider_id references users.id via staff_shifts_provider_id_fkey"><a href='staff_shifts.html'>staff_shifts</a><span class='relatedKey'>.provider_id</span></td>
-                                                <td class="constraint detail">staff_shifts_provider_id_fkey</td>
-                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
-                                            </tr>
-                                            <tr>
-                                                <td title="staff_shifts.staff_id references users.id via staff_shifts_staff_id_fkey"><a href='staff_shifts.html'>staff_shifts</a><span class='relatedKey'>.staff_id</span></td>
-                                                <td class="constraint detail">staff_shifts_staff_id_fkey</td>
-                                                <td class="constraint detail"><span title='Restrict delete:&#10;Parent cannot be deleted if children exist'>R</span></td>
                                             </tr>
                                             <tr>
                                                 <td title="subscriptions.customer_id references users.id via subscriptions_customer_id_fkey"><a href='subscriptions.html'>subscriptions</a><span class='relatedKey'>.customer_id</span></td>
@@ -586,6 +671,57 @@
                                     </td>
                                     <td></td>
                                 </tr>
+                                <tr>
+                                    <td><span id="last_active_at">last_active_at</span></td>
+                                    <td>timestamptz</td>
+                                    <td>35,6</td>
+                                    <td title='nullable'>√</td>
+                                    <td title=''></td>
+                                    <td>null</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="favorite_cafe_ids">favorite_cafe_ids</span></td>
+                                    <td>_uuid</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;{}&#39;::uuid[]</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td><span id="racing_profile">racing_profile</span></td>
+                                    <td>jsonb</td>
+                                    <td>2147483647</td>
+                                    <td title=''></td>
+                                    <td title=''></td>
+                                    <td>&#39;{}&#39;::jsonb</td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td>
+                                        <table border='0' cellspacing='0' cellpadding='0'>
+                                        </table>
+                                    </td>
+                                    <td></td>
+                                </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -635,6 +771,18 @@
                                     <td>google_id</td>
                                 </tr>
                                 <tr>
+                                    <td title='Indexed'>idx_users_racing_profile_handle</td>
+                                    <td>Performance</td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                                <tr>
+                                    <td class='uniqueKey' title='Unique Key'><i class='icon ion-key iconkey'></i> idx_users_racing_profile_handle_unique</td>
+                                    <td>Must be unique</td>
+                                    <td></td>
+                                    <td></td>
+                                </tr>
+                                <tr>
                                     <td title='Indexed'>idx_users_role</td>
                                     <td>Performance</td>
                                     <td><span title='Ascending'>Asc</span></td>
@@ -663,106 +811,124 @@
                                 <div class="tab-content no-padding">
                                     <div class="chart tab-pane active" id="oneDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="oneDegreeRelationshipsDiagram" name="oneDegreeRelationshipsDiagram">
-<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1576,477,1864,653">
-<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="1257,1621,1515,2091">
-<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,2212,468,2692">
-<area shape="rect" id="node4" href="cafes.html" target="_top" title="cafes" alt="" coords="512,1795,841,2147">
-<area shape="rect" id="node5" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="895,2131,1186,2395">
-<area shape="rect" id="node6" href="promotions.html" target="_top" title="promotions" alt="" coords="908,887,1173,1121">
-<area shape="rect" id="node7" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="933,1908,1148,2113">
-<area shape="rect" id="node8" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="896,1139,1185,1373">
-<area shape="rect" id="node9" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="933,1391,1148,1596">
-<area shape="rect" id="node10" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1240,372,1532,607">
-<area shape="rect" id="node11" href="contests.html" target="_top" title="contests" alt="" coords="957,248,1124,453">
-<area shape="rect" id="node12" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="909,507,1172,653">
-<area shape="rect" id="node13" href="disputes.html" target="_top" title="disputes" alt="" coords="1614,140,1826,375">
-<area shape="rect" id="node14" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="1935,5,2218,211">
-<area shape="rect" id="node15" href="sessions.html" target="_top" title="sessions" alt="" coords="1597,2453,1843,2717">
-<area shape="rect" id="node16" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="571,1477,783,1741">
-<area shape="rect" id="node17" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="1983,888,2171,1123">
-<area shape="rect" id="node18" href="incidents.html" target="_top" title="incidents" alt="" coords="1961,2668,2192,2903">
-<area shape="rect" id="node19" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="2289,4208,2551,4384">
-<area shape="rect" id="node20" href="inspections.html" target="_top" title="inspections" alt="" coords="1939,4035,2215,4240">
-<area shape="rect" id="node21" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="929,1613,1153,1819">
-<area shape="rect" id="node22" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="1954,1563,2199,1768">
-<area shape="rect" id="node23" href="notifications.html" target="_top" title="notifications" alt="" coords="573,2380,780,2556">
-<area shape="rect" id="node24" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="521,2573,832,2749">
-<area shape="rect" id="node25" href="payment_components.html" target="_top" title="payment_components" alt="" coords="1928,2260,2225,2524">
-<area shape="rect" id="node26" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="545,2803,809,3008">
-<area shape="rect" id="node27" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1589,857,1851,1063">
-<area shape="rect" id="node28" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="550,3061,803,3208">
-<area shape="rect" id="node29" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="523,3225,830,3460">
-<area shape="rect" id="node30" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="562,3477,791,3653">
-<area shape="rect" id="node31" href="reviews.html" target="_top" title="reviews" alt="" coords="1637,2136,1803,2400">
-<area shape="rect" id="node32" href="session_participants.html" target="_top" title="session_participants" alt="" coords="1935,543,2218,748">
-<area shape="rect" id="node33" href="shift_positions.html" target="_top" title="shift_positions" alt="" coords="564,4001,789,4148">
-<area shape="rect" id="node34" href="shift_time_presets.html" target="_top" title="shift_time_presets" alt="" coords="545,3779,808,3984">
-<area shape="rect" id="node35" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="885,3579,1196,3784">
-<area shape="rect" id="node36" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="543,4201,811,4348">
-<area shape="rect" id="node37" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="945,3872,1137,4136">
-<area shape="rect" id="node38" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="1956,3351,2197,3585">
-<area shape="rect" id="node39" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="1908,4257,2245,4492">
+<area shape="rect" id="node1" href="ai_analysis_logs.html" target="_top" title="ai_analysis_logs" alt="" coords="937,1013,1176,1219">
+<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="528,2147,857,2587">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,3025,484,3593">
+<area shape="rect" id="node4" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1652,5,1940,181">
+<area shape="rect" id="node5" href="bookings.html" target="_top" title="bookings" alt="" coords="1299,1813,1556,2341">
+<area shape="rect" id="node6" href="contests.html" target="_top" title="contests" alt="" coords="925,2892,1188,3332">
+<area shape="rect" id="node7" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="911,2395,1202,2659">
+<area shape="rect" id="node8" href="promotions.html" target="_top" title="promotions" alt="" coords="924,1783,1189,2047">
+<area shape="rect" id="node9" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="949,2136,1164,2341">
+<area shape="rect" id="node10" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="912,1236,1201,1471">
+<area shape="rect" id="node11" href="contest_audit_logs.html" target="_top" title="contest_audit_logs" alt="" coords="2029,1540,2295,1833">
+<area shape="rect" id="node12" href="contest_matches.html" target="_top" title="contest_matches" alt="" coords="1303,2836,1551,3217">
+<area shape="rect" id="node13" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1643,667,1949,1165">
+<area shape="rect" id="node16" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="1296,784,1559,931">
+<area shape="rect" id="node14" href="contest_bans.html" target="_top" title="contest_bans" alt="" coords="1321,379,1533,731">
+<area shape="rect" id="node15" href="contest_fee_orders.html" target="_top" title="contest_fee_orders" alt="" coords="1293,3673,1561,3937">
+<area shape="rect" id="node17" href="contest_staff_assignments.html" target="_top" title="contest_staff_assignments" alt="" coords="1256,3271,1599,3476">
+<area shape="rect" id="node18" href="disputes.html" target="_top" title="disputes" alt="" coords="1690,271,1902,505">
+<area shape="rect" id="node19" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="2021,424,2303,629">
+<area shape="rect" id="node20" href="sessions.html" target="_top" title="sessions" alt="" coords="1673,3041,1919,3305">
+<area shape="rect" id="node21" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="587,3104,799,3368">
+<area shape="rect" id="node22" href="featured_popups.html" target="_top" title="featured_popups" alt="" coords="1671,3361,1921,3743">
+<area shape="rect" id="node23" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="2068,2075,2256,2309">
+<area shape="rect" id="node24" href="incidents.html" target="_top" title="incidents" alt="" coords="2047,4629,2277,4864">
+<area shape="rect" id="node25" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="2375,5344,2636,5520">
+<area shape="rect" id="node26" href="inspections.html" target="_top" title="inspections" alt="" coords="2024,5039,2300,5244">
+<area shape="rect" id="node27" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="945,1488,1169,1693">
+<area shape="rect" id="node28" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="2039,2587,2285,2792">
+<area shape="rect" id="node29" href="notifications.html" target="_top" title="notifications" alt="" coords="589,3745,796,3921">
+<area shape="rect" id="node30" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="537,3939,848,4115">
+<area shape="rect" id="node31" href="payment_components.html" target="_top" title="payment_components" alt="" coords="2013,2812,2311,3076">
+<area shape="rect" id="node32" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="561,4168,825,4373">
+<area shape="rect" id="node33" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1665,1255,1927,1460">
+<area shape="rect" id="node34" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="566,4427,819,4603">
+<area shape="rect" id="node35" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="539,4620,846,4855">
+<area shape="rect" id="node36" href="push_tokens.html" target="_top" title="push_tokens" alt="" coords="590,4872,795,5077">
+<area shape="rect" id="node37" href="race_records.html" target="_top" title="race_records" alt="" coords="1995,3107,2329,3605">
+<area shape="rect" id="node38" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="578,5203,807,5379">
+<area shape="rect" id="node39" href="reviews.html" target="_top" title="reviews" alt="" coords="1706,2260,1886,2553">
+<area shape="rect" id="node40" href="session_participants.html" target="_top" title="session_participants" alt="" coords="2021,71,2303,276">
+<area shape="rect" id="node41" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="901,5245,1212,5451">
+<area shape="rect" id="node42" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="559,5540,827,5687">
+<area shape="rect" id="node43" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="2041,5264,2283,5499">
+<area shape="rect" id="node44" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="1993,5521,2331,5756">
 </map>
                                         <a name='diagram'><img id="oneDegreeImg" src="../diagrams/tables/users.1degree.png" usemap="#oneDegreeRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>
                                     <div class="chart tab-pane " id="twodegreesDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="twoDegreesRelationshipsDiagram" name="twoDegreesRelationshipsDiagram">
-<area shape="rect" id="node1" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1907,576,2195,664">
-<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="1631,1746,1803,1834">
-<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1471,468,1951">
-<area shape="rect" id="node6" href="cafes.html" target="_top" title="cafes" alt="" coords="591,1338,743,1426">
-<area shape="rect" id="node7" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="1236,1548,1512,1636">
-<area shape="rect" id="node8" href="promotions.html" target="_top" title="promotions" alt="" coords="1277,1051,1471,1139">
-<area shape="rect" id="node9" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="915,2042,1129,2130">
-<area shape="rect" id="node10" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="1243,1759,1505,1847">
-<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="2282,663,2533,751">
-<area shape="rect" id="node5" href="vehicles.html" target="_top" title="vehicles" alt="" coords="1293,467,1455,555">
-<area shape="rect" id="node55" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="900,980,1144,1068">
-<area shape="rect" id="node21" href="packages.html" target="_top" title="packages" alt="" coords="934,1546,1110,1634">
-<area shape="rect" id="node11" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="877,664,1167,752">
-<area shape="rect" id="node12" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="915,770,1129,858">
-<area shape="rect" id="node13" href="cafe_holiday_overrides.html" target="_top" title="cafe_holiday_overrides" alt="" coords="1221,1654,1527,1742">
-<area shape="rect" id="node14" href="holiday_dates.html" target="_top" title="holiday_dates" alt="" coords="913,1687,1131,1775">
-<area shape="rect" id="node15" href="cafe_images.html" target="_top" title="cafe_images" alt="" coords="920,1230,1124,1318">
-<area shape="rect" id="node16" href="cafe_pricing_rules.html" target="_top" title="cafe_pricing_rules" alt="" coords="893,1335,1151,1423">
-<area shape="rect" id="node17" href="cafe_widget_configs.html" target="_top" title="cafe_widget_configs" alt="" coords="882,1440,1162,1528">
-<area shape="rect" id="node18" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1571,363,1863,451">
-<area shape="rect" id="node19" href="contests.html" target="_top" title="contests" alt="" coords="939,399,1105,487">
-<area shape="rect" id="node20" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="1243,170,1505,258">
-<area shape="rect" id="node22" href="disputes.html" target="_top" title="disputes" alt="" coords="1967,247,2134,335">
-<area shape="rect" id="node23" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="2266,67,2549,155">
-<area shape="rect" id="node24" href="sessions.html" target="_top" title="sessions" alt="" coords="1967,1848,2134,1936">
-<area shape="rect" id="node25" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="561,840,773,1104">
-<area shape="rect" id="node26" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="2313,1163,2501,1251">
-<area shape="rect" id="node27" href="incidents.html" target="_top" title="incidents" alt="" coords="2321,2924,2494,3012">
-<area shape="rect" id="node28" href="inspection_checklists.html" target="_top" title="inspection_checklists" alt="" coords="3147,1082,3437,1170">
-<area shape="rect" id="node29" href="inspections.html" target="_top" title="inspections" alt="" coords="2908,1084,3103,1172">
-<area shape="rect" id="node31" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2620,608,2864,696">
-<area shape="rect" id="node30" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="3161,1830,3423,1918">
-<area shape="rect" id="node48" href="session_participants.html" target="_top" title="session_participants" alt="" coords="2266,558,2549,646">
-<area shape="rect" id="node32" href="kb_chunks.html" target="_top" title="kb_chunks" alt="" coords="1281,1156,1467,1244">
-<area shape="rect" id="node33" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="910,875,1134,963">
-<area shape="rect" id="node34" href="menu_items.html" target="_top" title="menu_items" alt="" coords="921,1900,1123,1988">
-<area shape="rect" id="node35" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="2285,1807,2530,1895">
-<area shape="rect" id="node36" href="notifications.html" target="_top" title="notifications" alt="" coords="564,1583,771,1759">
-<area shape="rect" id="node37" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1929,1743,2172,1831">
-<area shape="rect" id="node38" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="512,1776,823,1952">
-<area shape="rect" id="node39" href="payment_components.html" target="_top" title="payment_components" alt="" coords="2259,1919,2556,2007">
-<area shape="rect" id="node40" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="535,3171,799,3376">
-<area shape="rect" id="node41" href="subscription_plans.html" target="_top" title="subscription_plans" alt="" coords="104,3344,369,3432">
-<area shape="rect" id="node42" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="2257,1630,2557,1718">
-<area shape="rect" id="node43" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1919,1051,2182,1139">
-<area shape="rect" id="node44" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="541,2042,794,2188">
-<area shape="rect" id="node45" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="514,3394,821,3628">
-<area shape="rect" id="node46" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="553,2206,782,2382">
-<area shape="rect" id="node47" href="reviews.html" target="_top" title="reviews" alt="" coords="1971,2112,2130,2200">
-<area shape="rect" id="node49" href="shift_positions.html" target="_top" title="shift_positions" alt="" coords="555,2487,780,2575">
-<area shape="rect" id="node50" href="shift_time_presets.html" target="_top" title="shift_time_presets" alt="" coords="536,2592,799,2798">
-<area shape="rect" id="node51" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="867,2359,1177,2447">
-<area shape="rect" id="node52" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="533,2867,801,3014">
-<area shape="rect" id="node53" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="926,2644,1118,2732">
-<area shape="rect" id="node54" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="2287,3030,2528,3118">
-<area shape="rect" id="node56" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="2239,399,2576,487">
+<area shape="rect" id="node1" href="ai_analysis_logs.html" target="_top" title="ai_analysis_logs" alt="" coords="919,1043,1157,1131">
+<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="607,1731,759,1819">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1617,484,2185">
+<area shape="rect" id="node4" href="booking_participants.html" target="_top" title="booking_participants" alt="" coords="1933,1029,2221,1117">
+<area shape="rect" id="node5" href="bookings.html" target="_top" title="bookings" alt="" coords="1669,781,1841,869">
+<area shape="rect" id="node8" href="contests.html" target="_top" title="contests" alt="" coords="955,2791,1121,2879">
+<area shape="rect" id="node9" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="1271,1541,1547,1629">
+<area shape="rect" id="node10" href="promotions.html" target="_top" title="promotions" alt="" coords="1311,585,1506,673">
+<area shape="rect" id="node11" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="931,673,1145,761">
+<area shape="rect" id="node12" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="907,2107,1169,2195">
+<area shape="rect" id="node6" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="2317,1169,2568,1257">
+<area shape="rect" id="node7" href="vehicles.html" target="_top" title="vehicles" alt="" coords="1674,1358,1837,1446">
+<area shape="rect" id="node28" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="1287,2051,1531,2139">
+<area shape="rect" id="node18" href="track_types.html" target="_top" title="track_types" alt="" coords="585,2045,781,2133">
+<area shape="rect" id="node30" href="contest_templates.html" target="_top" title="contest_templates" alt="" coords="551,3902,815,3990">
+<area shape="rect" id="node31" href="contest_formats.html" target="_top" title="contest_formats" alt="" coords="124,3838,365,3926">
+<area shape="rect" id="node32" href="contest_types.html" target="_top" title="contest_types" alt="" coords="135,3953,354,4041">
+<area shape="rect" id="node33" href="packages.html" target="_top" title="packages" alt="" coords="950,1647,1126,1735">
+<area shape="rect" id="node13" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="893,2566,1183,2654">
+<area shape="rect" id="node14" href="cafe_holiday_overrides.html" target="_top" title="cafe_holiday_overrides" alt="" coords="1256,1874,1561,1962">
+<area shape="rect" id="node15" href="holiday_dates.html" target="_top" title="holiday_dates" alt="" coords="929,1930,1147,2018">
+<area shape="rect" id="node16" href="cafe_images.html" target="_top" title="cafe_images" alt="" coords="936,2337,1140,2425">
+<area shape="rect" id="node17" href="cafe_pricing_rules.html" target="_top" title="cafe_pricing_rules" alt="" coords="909,1753,1167,1841">
+<area shape="rect" id="node19" href="contest_audit_logs.html" target="_top" title="contest_audit_logs" alt="" coords="2310,2633,2575,2721">
+<area shape="rect" id="node20" href="contest_matches.html" target="_top" title="contest_matches" alt="" coords="1285,2373,1533,2461">
+<area shape="rect" id="node21" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1931,2478,2223,2566">
+<area shape="rect" id="node27" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="1624,2265,1887,2353">
+<area shape="rect" id="node22" href="contest_bans.html" target="_top" title="contest_bans" alt="" coords="1303,3106,1515,3194">
+<area shape="rect" id="node23" href="contest_cafes.html" target="_top" title="contest_cafes" alt="" coords="1300,2614,1517,2702">
+<area shape="rect" id="node24" href="contest_fee_orders.html" target="_top" title="contest_fee_orders" alt="" coords="1275,3211,1543,3299">
+<area shape="rect" id="node25" href="contest_fee_plans.html" target="_top" title="contest_fee_plans" alt="" coords="909,3271,1167,3359">
+<area shape="rect" id="node26" href="contest_match_participants.html" target="_top" title="contest_match_participants" alt="" coords="2267,2441,2619,2529">
+<area shape="rect" id="node29" href="contest_staff_assignments.html" target="_top" title="contest_staff_assignments" alt="" coords="1237,991,1580,1079">
+<area shape="rect" id="node34" href="damage_line_items.html" target="_top" title="damage_line_items" alt="" coords="3200,298,3469,386">
+<area shape="rect" id="node35" href="inspections.html" target="_top" title="inspections" alt="" coords="2951,354,3145,442">
+<area shape="rect" id="node38" href="sessions.html" target="_top" title="sessions" alt="" coords="1993,638,2160,726">
+<area shape="rect" id="node45" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2663,1062,2907,1150">
+<area shape="rect" id="node36" href="disputes.html" target="_top" title="disputes" alt="" coords="1993,215,2160,303">
+<area shape="rect" id="node37" href="extension_proposals.html" target="_top" title="extension_proposals" alt="" coords="2301,111,2584,199">
+<area shape="rect" id="node39" href="feature_flags.html" target="_top" title="feature_flags" alt="" coords="577,2290,789,2554">
+<area shape="rect" id="node40" href="featured_popups.html" target="_top" title="featured_popups" alt="" coords="1631,2873,1879,2961">
+<area shape="rect" id="node41" href="fnb_orders.html" target="_top" title="fnb_orders" alt="" coords="2349,434,2537,522">
+<area shape="rect" id="node42" href="incidents.html" target="_top" title="incidents" alt="" coords="2356,217,2529,305">
+<area shape="rect" id="node43" href="inspection_checklists.html" target="_top" title="inspection_checklists" alt="" coords="3189,403,3480,491">
+<area shape="rect" id="node44" href="inspection_photos.html" target="_top" title="inspection_photos" alt="" coords="3204,130,3465,218">
+<area shape="rect" id="node65" href="session_participants.html" target="_top" title="session_participants" alt="" coords="2301,958,2584,1046">
+<area shape="rect" id="node46" href="kb_chunks.html" target="_top" title="kb_chunks" alt="" coords="1316,1201,1501,1289">
+<area shape="rect" id="node47" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="926,1185,1150,1273">
+<area shape="rect" id="node48" href="menu_categories.html" target="_top" title="menu_categories" alt="" coords="913,1434,1163,1522">
+<area shape="rect" id="node49" href="menu_items.html" target="_top" title="menu_items" alt="" coords="1308,1434,1509,1522">
+<area shape="rect" id="node50" href="notification_logs.html" target="_top" title="notification_logs" alt="" coords="2320,637,2565,725">
+<area shape="rect" id="node51" href="notifications.html" target="_top" title="notifications" alt="" coords="580,2571,787,2747">
+<area shape="rect" id="node52" href="package_usages.html" target="_top" title="package_usages" alt="" coords="1955,851,2198,939">
+<area shape="rect" id="node53" href="password_reset_tokens.html" target="_top" title="password_reset_tokens" alt="" coords="528,2765,839,2941">
+<area shape="rect" id="node54" href="payment_components.html" target="_top" title="payment_components" alt="" coords="2294,778,2591,866">
+<area shape="rect" id="node55" href="payment_requests.html" target="_top" title="payment_requests" alt="" coords="551,3391,815,3597">
+<area shape="rect" id="node56" href="subscription_plans.html" target="_top" title="subscription_plans" alt="" coords="112,3565,377,3653">
+<area shape="rect" id="node57" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="2293,1278,2593,1366">
+<area shape="rect" id="node58" href="promotion_usages.html" target="_top" title="promotion_usages" alt="" coords="1945,461,2208,549">
+<area shape="rect" id="node59" href="provider_profiles.html" target="_top" title="provider_profiles" alt="" coords="557,2958,810,3134">
+<area shape="rect" id="node60" href="provider_subscriptions.html" target="_top" title="provider_subscriptions" alt="" coords="530,3614,837,3849">
+<area shape="rect" id="node61" href="push_tokens.html" target="_top" title="push_tokens" alt="" coords="581,991,786,1197">
+<area shape="rect" id="node62" href="race_records.html" target="_top" title="race_records" alt="" coords="2681,2443,2889,2531">
+<area shape="rect" id="node63" href="refresh_tokens.html" target="_top" title="refresh_tokens" alt="" coords="569,1214,798,1390">
+<area shape="rect" id="node64" href="reviews.html" target="_top" title="reviews" alt="" coords="1997,1803,2156,1891">
+<area shape="rect" id="node66" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="883,778,1193,866">
+<area shape="rect" id="node67" href="staff_invite_tokens.html" target="_top" title="staff_invite_tokens" alt="" coords="549,1459,817,1606">
+<area shape="rect" id="node68" href="trust_score_logs.html" target="_top" title="trust_score_logs" alt="" coords="2322,325,2563,413">
+<area shape="rect" id="node69" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="2274,1063,2611,1151">
 </map>
                                         <a name='diagram'><img id="twodegreesDegreeImg" src="../diagrams/tables/users.2degrees.png" usemap="#twoDegreesRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>

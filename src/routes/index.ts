@@ -5,6 +5,7 @@ import { systemRouter } from './system.routes';
 import { fbChannelRouter } from './fb-channel.routes';
 import { fbWebhookRouter } from './fb-webhook.routes';
 import { providerOnboardingRouter } from './provider-onboarding.routes';
+import { businessLookupRouter } from './business-lookup.routes';
 import { adminProviderRouter } from './admin-provider.routes';
 import { adminPaymentRequestRouter } from './admin-payment-request.routes';
 import { notificationRouter } from './notification.routes';
@@ -109,6 +110,7 @@ router.get('/track-types', async (_req, res, next) => {
 router.use('/auth', authRouter);
 router.use('/auth/staff-invite', staffInviteRouter);
 router.use('/auth', providerOnboardingRouter);
+router.use('/business-lookup', businessLookupRouter);
 router.use('/admin/providers', adminProviderRouter);
 router.use('/admin/payment-requests', adminPaymentRequestRouter);
 router.use('/admin/subscription-plans', adminSubscriptionPlanRouter);

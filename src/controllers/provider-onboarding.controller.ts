@@ -9,8 +9,14 @@ import {
   ProviderStatus,
   UserRole,
 } from '../types';
-import { RegisterProviderSchema, AdminRejectSchema, AdminProviderQuerySchema } from '../validate';
+import {
+  RegisterProviderSchema,
+  AdminRejectSchema,
+  AdminProviderQuerySchema,
+  UpdateProviderProfileSchema,
+} from '../validate';
 import * as providerOnboardingService from '../services/provider-onboarding.service';
+import { lookupBusinessByTaxCode } from '../services/tax-lookup.service';
 import { AppDataSource } from '../config/database';
 import { Cafe } from '../models/cafe.entity';
 import { env } from '../config/env';
@@ -188,6 +194,32 @@ export const providerOnboardingController = {
         return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
       }
       const data = await providerOnboardingService.getProviderDetail(req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/business-lookup/:taxCode
+  async lookupBusiness(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const outcome = await lookupBusinessByTaxCode(req.params.taxCode);
+      // Luôn 200: "không tìm thấy" là một câu trả lời hợp lệ của việc tra cứu,
+      // không phải lỗi của người gọi. Form đọc `status` để quyết định.
+      res.json({ success: true, data: outcome });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // PATCH /api/v1/provider/me  [auth]
+  async updateProviderMe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== UserRole.PROVIDER) {
+        return next(new AppError('Forbidden', 403, 'FORBIDDEN'));
+      }
+      const body = UpdateProviderProfileSchema.parse(req.body);
+      const data = await providerOnboardingService.updateProviderProfile(req.user.userId, body);
       res.json({ success: true, data });
     } catch (err) {
       next(err);

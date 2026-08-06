@@ -1172,10 +1172,35 @@ export const RegisterProviderSchema = z.object({
   phone: z.string().min(9).max(20).optional(),
   business_name: z.string().min(2).max(255),
   business_description: z.string().max(1000).optional(),
+  // Mã số thuế Việt Nam: 10 số, hoặc 13 số khi có mã đơn vị phụ thuộc (dạng
+  // 0123456789-001). Nhận cả khi người dùng gõ kèm dấu cách rồi tự chuẩn hoá.
+  tax_code: z
+    .string()
+    .trim()
+    .transform((value) => value.replace(/\s+/g, ''))
+    .pipe(z.string().regex(/^\d{10}(-\d{3})?$/, 'Mã số thuế phải là 10 số, hoặc 10 số kèm -001')),
+  business_email: z.string().trim().email('Email doanh nghiệp không hợp lệ').max(255),
   business_type: z.enum(['INDIVIDUAL', 'BUSINESS'], {
     errorMap: () => ({ message: 'business_type phải là INDIVIDUAL hoặc BUSINESS' }),
   }),
 });
+
+/** Provider tự sửa hồ sơ doanh nghiệp của mình. */
+export const UpdateProviderProfileSchema = z
+  .object({
+    business_name: z.string().min(2).max(255).optional(),
+    business_description: z.string().max(1000).nullable().optional(),
+    tax_code: z
+      .string()
+      .trim()
+      .transform((value) => value.replace(/\s+/g, ''))
+      .pipe(z.string().regex(/^\d{10}(-\d{3})?$/, 'Mã số thuế phải là 10 số, hoặc 10 số kèm -001'))
+      .optional(),
+    business_email: z.string().trim().email('Email doanh nghiệp không hợp lệ').max(255).optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'Không có thông tin nào để cập nhật',
+  });
 
 export const SubmitPaymentRequestSchema = z.object({
   plan_id: z.string().uuid('plan_id phải là UUID hợp lệ'),
