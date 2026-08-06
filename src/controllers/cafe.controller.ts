@@ -378,7 +378,6 @@ export const cafeController = {
             catalog_name: catalog.name,
             tier: catalog.tier,
             rental_fee_per_hour: Number(catalog.hourlyRate),
-            security_deposit: Number(catalog.securityDeposit),
           };
         }),
       );

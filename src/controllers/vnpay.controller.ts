@@ -1,10 +1,12 @@
 import { Response, NextFunction } from 'express';
 import { env } from '../config/env';
+import { AppDataSource } from '../config/database';
 import { AppError, AuthRequest } from '../types';
 import { CreateVnpayPaymentSchema } from '../validate';
 import { createPaymentUrl, verifyVnpayParams } from '../services/vnpay.service';
 import { processConfirmation } from '../services/payment.service';
 import { logger } from '../config/logger';
+import { PaymentTransaction } from '../models/payment-transaction.entity';
 
 function getClientIp(req: AuthRequest): string {
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -102,6 +104,7 @@ function getRequestHostname(req: AuthRequest): string {
 function buildFrontendResultUrl(input: {
   status: 'success' | 'failed';
   txnRef?: string;
+  bookingId?: string;
   responseCode?: string;
   reason?: string;
   alreadyConfirmed?: boolean;
@@ -109,6 +112,7 @@ function buildFrontendResultUrl(input: {
   const target = new URL('/payment/result', env.frontendUrl);
   target.searchParams.set('status', input.status);
   if (input.txnRef) target.searchParams.set('txn_ref', input.txnRef);
+  if (input.bookingId) target.searchParams.set('booking_id', input.bookingId);
   if (input.responseCode) target.searchParams.set('response_code', input.responseCode);
   if (input.reason) target.searchParams.set('reason', input.reason);
   if (input.alreadyConfirmed) target.searchParams.set('already_confirmed', '1');
@@ -128,6 +132,7 @@ function sendPaymentResult(
     title: string;
     message: string;
     txnRef?: string;
+    bookingId?: string;
     responseCode?: string;
     alreadyConfirmed?: boolean;
   },
@@ -147,6 +152,7 @@ function appendPaymentParams(
   input: {
     status: 'success' | 'failed';
     txnRef?: string;
+    bookingId?: string;
     responseCode?: string;
     reason?: string;
   },
@@ -154,9 +160,19 @@ function appendPaymentParams(
   const separator = redirectUrl.includes('?') ? '&' : '?';
   const params = new URLSearchParams({ status: input.status });
   if (input.txnRef) params.set('txn_ref', input.txnRef);
+  if (input.bookingId) params.set('booking_id', input.bookingId);
   if (input.responseCode) params.set('response_code', input.responseCode);
   if (input.reason) params.set('reason', input.reason);
   return `${redirectUrl}${separator}${params.toString()}`;
+}
+
+async function getBookingIdForTransaction(txnRef?: string): Promise<string | undefined> {
+  if (!txnRef) return undefined;
+  const transaction = await AppDataSource.getRepository(PaymentTransaction).findOne({
+    where: { txnRef },
+    select: { bookingId: true },
+  });
+  return transaction?.bookingId ?? undefined;
 }
 
 function normalizeMobileRedirectUrl(redirectUrl: string): string {
@@ -265,15 +281,17 @@ export async function handleVnpayReturn(
 ): Promise<void> {
   try {
     const result = await processConfirmation(req.query as Record<string, unknown>);
+    const verified = verifyVnpayParams(req.query);
+    const bookingId = await getBookingIdForTransaction(verified.txnRef);
 
     const mobileRedirect = req.query.mobile_redirect as string | undefined;
     if (mobileRedirect) {
       const isSuccess = result.rspCode === '00' || result.rspCode === '02';
       const status = isSuccess ? 'success' : 'failed';
-      const verified = verifyVnpayParams(req.query);
       const redirectUrl = appendPaymentParams(normalizeMobileRedirectUrl(mobileRedirect), {
         status,
         txnRef: verified.txnRef,
+        bookingId,
         responseCode: isSuccess ? undefined : result.rspCode,
       });
 
@@ -290,33 +308,33 @@ export async function handleVnpayReturn(
     }
 
     if (result.rspCode === '00') {
-      const verified = verifyVnpayParams(req.query);
       sendPaymentResult(req, res, {
         status: 'success',
         title: 'Thanh toán thành công',
         message:
           'Giao dịch VNPay đã được xác nhận. Ứng dụng sẽ cập nhật trạng thái khi bạn quay lại.',
         txnRef: verified.txnRef,
+        bookingId,
       });
       return;
     } else if (result.rspCode === '02') {
-      const verified = verifyVnpayParams(req.query);
       sendPaymentResult(req, res, {
         status: 'success',
         title: 'Thanh toán đã được xác nhận',
         message: 'Giao dịch này đã được xử lý trước đó. Bạn có thể quay lại ứng dụng.',
         txnRef: verified.txnRef,
+        bookingId,
         alreadyConfirmed: true,
       });
       return;
     }
 
-    const verified = verifyVnpayParams(req.query);
     sendPaymentResult(req, res, {
       status: 'failed',
       title: 'Thanh toán chưa hoàn tất',
       message: result.message || 'VNPay chưa xác nhận giao dịch này.',
       txnRef: verified.txnRef,
+      bookingId,
       responseCode: result.rspCode,
     });
   } catch (err) {

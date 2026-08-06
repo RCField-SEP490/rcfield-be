@@ -1,5 +1,6 @@
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
+import { randomUUID } from 'node:crypto';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -50,13 +51,14 @@ import { assertBookingNotBlockedByContest } from './contest-lock.service';
 import { writeContestAudit } from './contest.helpers';
 import { sendContestRegistrationStatusNotification } from './contest/registration-side-effects';
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
+import { wsService } from './websocket.service';
 import type { Promotion } from '../models/promotion.entity';
 import type { CafeOperatingHours } from '../types';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
 const VALID_TRANSITIONS: Record<BookingStatus, string[]> = {
-  [BookingStatus.PENDING]: ['PAYMENT_CONFIRMED', 'PAYMENT_TIMEOUT'],
+  [BookingStatus.PENDING]: ['PAYMENT_CONFIRMED', 'PAYMENT_TIMEOUT', 'HOLD_CANCELLED'],
   [BookingStatus.CONFIRMED]: ['CUSTOMER_CANCEL', 'PROVIDER_CANCEL', 'NO_SHOW', 'COMPLETE'],
   [BookingStatus.AWAITING_PAYMENT]: ['PAYMENT_SETTLED'],
   [BookingStatus.CANCELLED]: [],
@@ -236,6 +238,7 @@ function eventToStatus(event: string): BookingStatus {
     case 'PAYMENT_CONFIRMED':
       return BookingStatus.CONFIRMED;
     case 'PAYMENT_TIMEOUT':
+    case 'HOLD_CANCELLED':
     case 'CUSTOMER_CANCEL':
     case 'PROVIDER_CANCEL':
       return BookingStatus.CANCELLED;
@@ -246,6 +249,44 @@ function eventToStatus(event: string): BookingStatus {
       return BookingStatus.COMPLETED;
     default:
       throw new AppError(`Unknown booking event: ${event}`, 400, 'INVALID_BOOKING_EVENT');
+  }
+}
+
+/**
+ * Operational screens must refresh from the API after a booking changes. The
+ * event deliberately contains no price or inspection data: it is a signal for
+ * the staff assigned to this cafe and its provider to refetch data they are
+ * already authorised to view.
+ */
+export async function broadcastBookingUpdated(
+  booking: Booking,
+  status: BookingStatus,
+  action: string,
+): Promise<void> {
+  try {
+    const payload = {
+      bookingId: booking.id,
+      cafeId: booking.cafeId,
+      status,
+      action,
+      updatedAt: new Date().toISOString(),
+    };
+    wsService.pushToCafe(booking.cafeId, 'BOOKING_UPDATED', payload);
+
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId'],
+    });
+    if (cafe?.providerId) {
+      wsService.pushToUser(cafe.providerId, 'BOOKING_UPDATED', payload);
+    }
+  } catch (error) {
+    logger.error('BookingService', 'failed to broadcast booking update', {
+      bookingId: booking.id,
+      status,
+      action,
+      error,
+    });
   }
 }
 
@@ -315,7 +356,12 @@ async function acquireVehicleLock(
   bookingId: string,
 ): Promise<boolean> {
   const key = vehicleLockKey(vehicleId, slotStart);
-  const result = await redis.set(key, bookingId, 'EX', env.platform.slotLockTtlSeconds, 'NX');
+  // The cache lock must never expire before the durable PENDING hold does.
+  const holdTtlSeconds = Math.max(
+    env.platform.slotLockTtlSeconds,
+    env.platform.paymentWindowMinutes * 60,
+  );
+  const result = await redis.set(key, bookingId, 'EX', holdTtlSeconds, 'NX');
   return result === 'OK';
 }
 
@@ -323,6 +369,62 @@ type VehicleSlotLock = {
   vehicleId: string;
   slotStart: Date;
 };
+
+const ACQUIRE_ALL_VEHICLE_LOCKS_LUA = `
+  for index = 1, #KEYS do
+    if redis.call('EXISTS', KEYS[index]) == 1 then return 0 end
+  end
+  for index = 1, #KEYS do
+    redis.call('SET', KEYS[index], ARGV[1], 'EX', ARGV[2])
+  end
+  return 1
+`;
+
+const RELEASE_OWNED_VEHICLE_LOCK_LUA = `
+  if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+  end
+  return 0
+`;
+
+/**
+ * Acquires every vehicle × atomic-slot key together. This prevents a partial
+ * multi-slot reservation from being visible to another checkout attempt.
+ */
+async function acquireVehicleSlotLocks(
+  locks: VehicleSlotLock[],
+  bookingId: string,
+): Promise<boolean> {
+  if (locks.length === 0) return true;
+  const keys = locks.map(({ vehicleId, slotStart }) => vehicleLockKey(vehicleId, slotStart));
+  const holdTtlSeconds = Math.max(
+    env.platform.slotLockTtlSeconds,
+    env.platform.paymentWindowMinutes * 60,
+  );
+
+  // The production Redis client supports EVAL. The small in-memory test Redis
+  // intentionally falls back to the same rollback-safe behavior.
+  if (typeof (redis as unknown as { eval?: unknown }).eval === 'function') {
+    const result = await redis.eval(
+      ACQUIRE_ALL_VEHICLE_LOCKS_LUA,
+      keys.length,
+      ...keys,
+      bookingId,
+      String(holdTtlSeconds),
+    );
+    return Number(result) === 1;
+  }
+
+  const acquired: VehicleSlotLock[] = [];
+  for (const lock of locks) {
+    if (!(await acquireVehicleLock(lock.vehicleId, lock.slotStart, bookingId))) {
+      await releaseVehicleSlotLocks(acquired, bookingId);
+      return false;
+    }
+    acquired.push(lock);
+  }
+  return true;
+}
 
 function getSlotStarts(slotStart: Date, slotEnd: Date, slotDurationMinutes: number): Date[] {
   const slotStarts: Date[] = [];
@@ -333,10 +435,50 @@ function getSlotStarts(slotStart: Date, slotEnd: Date, slotDurationMinutes: numb
   return slotStarts;
 }
 
-async function releaseVehicleSlotLocks(locks: VehicleSlotLock[]): Promise<void> {
-  const keys = locks.map(({ vehicleId, slotStart }) => vehicleLockKey(vehicleId, slotStart));
-  if (keys.length > 0) {
-    await redis.del(keys);
+async function releaseVehicleSlotLocks(
+  locks: VehicleSlotLock[],
+  expectedOwner?: string,
+): Promise<void> {
+  await Promise.all(
+    locks.map(async ({ vehicleId, slotStart }) => {
+      const key = vehicleLockKey(vehicleId, slotStart);
+      // A timed-out reservation must never delete a lock acquired later by a
+      // different booking. New booking holds use their booking UUID as value.
+      if (expectedOwner && typeof (redis as unknown as { eval?: unknown }).eval === 'function') {
+        await redis.eval(RELEASE_OWNED_VEHICLE_LOCK_LUA, 1, key, expectedOwner);
+        return;
+      }
+      if (expectedOwner && (await redis.get(key)) !== expectedOwner) return;
+      await redis.del(key);
+    }),
+  );
+}
+
+/** Durable availability check. Redis prevents concurrent checkout races; this
+ * query remains the source of truth after cache expiry or a worker restart. */
+async function assertRentalVehiclesAvailable(
+  vehicleIds: string[],
+  slotStart: Date,
+  slotEnd: Date,
+): Promise<void> {
+  if (vehicleIds.length === 0) return;
+  const conflicting = await AppDataSource.getRepository(BookingVehicle)
+    .createQueryBuilder('booking_vehicle')
+    .innerJoin(Booking, 'booking', 'booking.id = booking_vehicle.booking_id')
+    .where('booking_vehicle.vehicle_id IN (:...vehicleIds)', { vehicleIds })
+    .andWhere('booking.slot_start < :slotEnd', { slotEnd })
+    .andWhere('booking.slot_end > :slotStart', { slotStart })
+    .andWhere(
+      `(booking.status = :confirmedStatus
+        OR (booking.status = :pendingStatus AND booking.payment_expires_at > NOW()))`,
+      { confirmedStatus: BookingStatus.CONFIRMED, pendingStatus: BookingStatus.PENDING },
+    )
+    .getExists();
+
+  if (conflicting) {
+    // Keep the established 409 contract for an occupied atomic slot whether
+    // it was discovered from Redis or from the durable booking record.
+    throw new AppError('A selected vehicle is already booked for this slot', 409, 'SLOT_LOCKED');
   }
 }
 
@@ -412,6 +554,7 @@ export async function transition(bookingId: string, event: string): Promise<Book
     const vehicleIds = vehicles.map((v) => v.vehicleId);
     await releaseVehicleSlotLocks(
       slotStarts.flatMap((slotStart) => vehicleIds.map((vehicleId) => ({ vehicleId, slotStart }))),
+      booking.id,
     );
     if (booking.playMode === BookingMode.BYOC) {
       const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
@@ -472,6 +615,9 @@ export async function transition(bookingId: string, event: string): Promise<Book
   }
 
   booking.status = newStatus;
+  if (event !== 'PAYMENT_CONFIRMED') {
+    await broadcastBookingUpdated(booking, newStatus, event);
+  }
   return booking;
 }
 
@@ -519,7 +665,6 @@ export interface BookingBreakdown {
   slot_fee_multiplier: number;
   pricing_rule_label: string | null;
   rental_fee: number;
-  security_deposit: number;
   fnb_total: number;
   discount: number;
   total: number;
@@ -595,7 +740,6 @@ export async function createBooking(
           slot_fee_multiplier: 1,
           pricing_rule_label: null,
           rental_fee: 0,
-          security_deposit: 0,
           fnb_total: 0,
           discount: Number(existingBooking.discountAmount),
           total: Number(
@@ -687,13 +831,16 @@ export async function createBooking(
     : rawSlotFee;
 
   let rentalFeeTotal = 0;
-  const depositTotal = 0;
   const vehiclePricings: Array<{
     vehicleId: string;
     hourlyRate: number;
     rentalFee: number;
-    securityDeposit: number;
     damageMultiplier: number;
+    catalogName: string;
+    tier: string;
+    identifier: string | null;
+    color: string | null;
+    coverImageUrl: string | null;
   }> = [];
 
   if (body.play_mode === BookingMode.RENTAL) {
@@ -736,10 +883,20 @@ export async function createBooking(
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        securityDeposit: 0,
         damageMultiplier: Number(catalog.damageMultiplier),
+        catalogName: catalog.name,
+        tier: catalog.tier,
+        identifier: vehicle.identifier,
+        color: vehicle.color,
+        coverImageUrl: vehicle.distinctiveImageUrl ?? catalog.coverImageUrl,
       });
     }
+
+    const selectedVehicleIds = vehiclePricings.map((vehicle) => vehicle.vehicleId);
+    if (new Set(selectedVehicleIds).size !== selectedVehicleIds.length) {
+      throw new AppError('A vehicle can only be selected once', 400, 'DUPLICATE_VEHICLE');
+    }
+    await assertRentalVehiclesAvailable(selectedVehicleIds, slotStart, slotEnd);
   }
 
   // Resolve track config (required for new bookings; optional for legacy compat)
@@ -870,7 +1027,7 @@ export async function createBooking(
     }
   }
 
-  const totalAmount = slotFee + rentalFeeTotal + depositTotal + fnbTotal;
+  const totalAmount = slotFee + rentalFeeTotal + fnbTotal;
 
   // Promo code validation — discount applies to slot_fee + rental_fee only
   let discountAmount = 0;
@@ -891,23 +1048,25 @@ export async function createBooking(
   const discountedTotal = Math.max(0, totalAmount - discountAmount);
 
   const paymentExpiresAt = new Date(Date.now() + env.platform.paymentWindowMinutes * 60 * 1000);
+  // The ID is allocated before taking Redis locks, so a later timeout/cancel
+  // can release only locks owned by this booking.
+  const bookingId = randomUUID();
 
   // Acquire Redis slot locks for RENTAL vehicles
-  const lockedVehicleSlots: VehicleSlotLock[] = [];
+  const lockedVehicleSlots: VehicleSlotLock[] = vehiclePricings
+    .flatMap(({ vehicleId }) => slotStarts.map((slotStart) => ({ vehicleId, slotStart })))
+    .sort((left, right) => {
+      const byVehicle = left.vehicleId.localeCompare(right.vehicleId);
+      return byVehicle || left.slotStart.getTime() - right.slotStart.getTime();
+    });
   if (body.play_mode === BookingMode.RENTAL) {
-    for (const { vehicleId } of vehiclePricings) {
-      for (const rangeSlotStart of slotStarts) {
-        const locked = await acquireVehicleLock(vehicleId, rangeSlotStart, 'pending');
-        if (!locked) {
-          await releaseVehicleSlotLocks(lockedVehicleSlots);
-          throw new AppError(
-            `Vehicle ${vehicleId} is already locked for this slot`,
-            409,
-            'SLOT_LOCKED',
-          );
-        }
-        lockedVehicleSlots.push({ vehicleId, slotStart: rangeSlotStart });
-      }
+    const locked = await acquireVehicleSlotLocks(lockedVehicleSlots, bookingId);
+    if (!locked) {
+      throw new AppError(
+        'A selected vehicle is currently being reserved for this slot',
+        409,
+        'SLOT_LOCKED',
+      );
     }
   }
 
@@ -943,6 +1102,18 @@ export async function createBooking(
       // Freeze dynamic pricing at booking creation time (snapshot-first, immutable)
       snapshot.slot_fee_multiplier = slotMultiplier;
       snapshot.pricing_rule_label = pricingLabel;
+      // The payment hold is a quoted offer. Persist every chargeable amount now
+      // so both the customer and the later checkout use the same price even if
+      // a cafe changes its rates while the hold is active.
+      snapshot.slot_fee_total = slotFee;
+      snapshot.vehicles = vehiclePricings.map((vehicle) => ({
+        vehicle_id: vehicle.vehicleId,
+        rental_fee: vehicle.rentalFee,
+      }));
+      snapshot.fnb_total = fnbTotal;
+      snapshot.discount_amount = discountAmount;
+      snapshot.total_charged = discountedTotal;
+      snapshot.captured_at = new Date().toISOString();
 
       if (appliedPromotion) {
         snapshot.promotion_applied = {
@@ -957,6 +1128,7 @@ export async function createBooking(
       }
 
       const newBooking = em.create(Booking, {
+        id: bookingId,
         customerId,
         cafeId: body.cafe_id,
         trackTypeId,
@@ -1004,7 +1176,14 @@ export async function createBooking(
           vehicleId: vp.vehicleId,
           hourlyRateSnapshot: vp.hourlyRate,
           rentalFeeSnapshot: vp.rentalFee,
-          securityDepositSnapshot: vp.securityDeposit,
+          catalogNameSnapshot: vp.catalogName,
+          tierSnapshot: vp.tier,
+          identifierSnapshot: vp.identifier,
+          colorSnapshot: vp.color,
+          coverImageUrlSnapshot: vp.coverImageUrl,
+          // Retained as a legacy non-null database column until the schema
+          // migration is deployed. New bookings must never charge a deposit.
+          securityDepositSnapshot: 0,
           damageMultiplierSnapshot: vp.damageMultiplier,
         });
         await em.save(bv);
@@ -1039,18 +1218,6 @@ export async function createBooking(
       return newBooking;
     });
 
-    // Update slot locks with actual booking ID
-    if (body.play_mode === BookingMode.RENTAL) {
-      for (const { vehicleId, slotStart: lockedSlotStart } of lockedVehicleSlots) {
-        await redis.set(
-          vehicleLockKey(vehicleId, lockedSlotStart),
-          booking.id,
-          'EX',
-          env.platform.slotLockTtlSeconds,
-        );
-      }
-    }
-
     if (body.play_mode === BookingMode.BYOC) {
       await Promise.all(
         lockedByocSlotStarts.map((lockedSlotStart) =>
@@ -1073,7 +1240,6 @@ export async function createBooking(
         slot_fee_multiplier: slotMultiplier,
         pricing_rule_label: pricingLabel,
         rental_fee: rentalFeeTotal,
-        security_deposit: depositTotal,
         fnb_total: fnbTotal,
         discount: discountAmount,
         total: discountedTotal,
@@ -1081,7 +1247,7 @@ export async function createBooking(
     };
   } catch (err) {
     // Release locks on transaction failure
-    await releaseVehicleSlotLocks(lockedVehicleSlots);
+    await releaseVehicleSlotLocks(lockedVehicleSlots, bookingId);
     if (body.play_mode === BookingMode.BYOC) {
       await Promise.all(
         lockedByocSlotStarts.map((lockedSlotStart) =>
@@ -1100,16 +1266,28 @@ export async function cancelBooking(
   cancelledBy: string,
   role: UserRole,
   reason?: string,
-): Promise<{ refund_amount: number }> {
+): Promise<{ refund_amount: number; requiresRefundProcessing: boolean }> {
   const repo = AppDataSource.getRepository(Booking);
   const booking = await repo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-  if (booking.status !== BookingStatus.CONFIRMED) {
-    throw new AppError('Only CONFIRMED bookings can be cancelled', 400, 'BOOKING_NOT_CONFIRMED');
+  if (![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
+    throw new AppError(
+      'Booking cannot be cancelled in its current state',
+      400,
+      'BOOKING_NOT_CANCELLABLE',
+    );
   }
 
   if (role === UserRole.CUSTOMER && booking.customerId !== cancelledBy) {
     throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+  }
+  if (role === UserRole.PROVIDER) {
+    const ownsCafe = await AppDataSource.getRepository(Cafe).exist({
+      where: { id: booking.cafeId, providerId: cancelledBy },
+    });
+    if (!ownsCafe) {
+      throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
+    }
   }
 
   await repo.update(bookingId, {
@@ -1127,6 +1305,7 @@ export async function cancelBooking(
     slotStarts.flatMap((slotStart) =>
       vehicles.map((vehicle) => ({ vehicleId: vehicle.vehicleId, slotStart })),
     ),
+    booking.id,
   );
   if (booking.playMode === BookingMode.BYOC) {
     const participantCount = await AppDataSource.getRepository(BookingParticipant).count({
@@ -1153,6 +1332,13 @@ export async function cancelBooking(
         `contest registration sync failed bookingId=${bookingId}: ${(err as Error).message}`,
       );
     }
+  }
+
+  // A PENDING booking is only a hold: no payment has succeeded and package
+  // slots/promotion usage have not been committed, so there is nothing to refund.
+  if (booking.status === BookingStatus.PENDING) {
+    await broadcastBookingUpdated(booking, BookingStatus.CANCELLED, 'HOLD_CANCELLED');
+    return { refund_amount: 0, requiresRefundProcessing: false };
   }
 
   // Slot refund: only if package was used AND cancellation is before slot_start (D5 from research.md)
@@ -1182,8 +1368,14 @@ export async function cancelBooking(
     }
   }
 
+  await broadcastBookingUpdated(
+    booking,
+    BookingStatus.CANCELLED,
+    role === UserRole.CUSTOMER ? 'CUSTOMER_CANCEL' : 'PROVIDER_CANCEL',
+  );
+
   // Return placeholder — PaymentService.processRefund handles actual amount
-  return { refund_amount: 0 };
+  return { refund_amount: 0, requiresRefundProcessing: true };
 }
 
 /**
@@ -1428,13 +1620,16 @@ export async function createWalkInBooking(
   const slotFee = baseSlotFeeRate * slotCount * playerCount;
 
   let rentalFeeTotal = 0;
-  let depositTotal = 0;
   const vehiclePricings: Array<{
     vehicleId: string;
     hourlyRate: number;
     rentalFee: number;
-    securityDeposit: number;
     damageMultiplier: number;
+    catalogName: string;
+    tier: string;
+    identifier: string | null;
+    color: string | null;
+    coverImageUrl: string | null;
   }> = [];
 
   if (body.play_mode === BookingMode.RENTAL) {
@@ -1484,15 +1679,24 @@ export async function createWalkInBooking(
       const hourlyRate = Number(catalog.hourlyRate);
       const rentalFee = hourlyRate * (slotMinutes / 60);
       rentalFeeTotal += rentalFee;
-      depositTotal += 0;
       vehiclePricings.push({
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        securityDeposit: 0,
         damageMultiplier: Number(catalog.damageMultiplier),
+        catalogName: catalog.name,
+        tier: catalog.tier,
+        identifier: vehicle.identifier,
+        color: vehicle.color,
+        coverImageUrl: vehicle.distinctiveImageUrl ?? catalog.coverImageUrl,
       });
     }
+
+    const selectedVehicleIds = vehiclePricings.map((vehicle) => vehicle.vehicleId);
+    if (new Set(selectedVehicleIds).size !== selectedVehicleIds.length) {
+      throw new AppError('A vehicle can only be selected once', 400, 'DUPLICATE_VEHICLE');
+    }
+    await assertRentalVehiclesAvailable(selectedVehicleIds, slotStart, slotEnd);
   }
 
   if (body.play_mode === BookingMode.BYOC) {
@@ -1524,24 +1728,24 @@ export async function createWalkInBooking(
     }
   }
 
-  const totalAmount = slotFee + rentalFeeTotal + depositTotal;
+  const totalAmount = slotFee + rentalFeeTotal;
+  const bookingId = randomUUID();
 
   // Acquire Redis slot locks for RENTAL vehicles
-  const lockedVehicleSlots: VehicleSlotLock[] = [];
+  const lockedVehicleSlots: VehicleSlotLock[] = vehiclePricings
+    .flatMap(({ vehicleId }) => slotStarts.map((slotStart) => ({ vehicleId, slotStart })))
+    .sort((left, right) => {
+      const byVehicle = left.vehicleId.localeCompare(right.vehicleId);
+      return byVehicle || left.slotStart.getTime() - right.slotStart.getTime();
+    });
   if (body.play_mode === BookingMode.RENTAL) {
-    for (const { vehicleId } of vehiclePricings) {
-      for (const rangeSlotStart of slotStarts) {
-        const locked = await acquireVehicleLock(vehicleId, rangeSlotStart, 'pending');
-        if (!locked) {
-          await releaseVehicleSlotLocks(lockedVehicleSlots);
-          throw new AppError(
-            `Vehicle ${vehicleId} is already locked for this slot`,
-            409,
-            'SLOT_LOCKED',
-          );
-        }
-        lockedVehicleSlots.push({ vehicleId, slotStart: rangeSlotStart });
-      }
+    const locked = await acquireVehicleSlotLocks(lockedVehicleSlots, bookingId);
+    if (!locked) {
+      throw new AppError(
+        'A selected vehicle is currently being reserved for this slot',
+        409,
+        'SLOT_LOCKED',
+      );
     }
   }
 
@@ -1561,6 +1765,7 @@ export async function createWalkInBooking(
       };
 
       const newBooking = em.create(Booking, {
+        id: bookingId,
         customerId: customer.id,
         cafeId,
         trackTypeId: trackConfig.trackTypeId,
@@ -1607,7 +1812,12 @@ export async function createWalkInBooking(
           vehicleId: vp.vehicleId,
           hourlyRateSnapshot: vp.hourlyRate,
           rentalFeeSnapshot: vp.rentalFee,
-          securityDepositSnapshot: vp.securityDeposit,
+          catalogNameSnapshot: vp.catalogName,
+          tierSnapshot: vp.tier,
+          identifierSnapshot: vp.identifier,
+          colorSnapshot: vp.color,
+          coverImageUrlSnapshot: vp.coverImageUrl,
+          securityDepositSnapshot: 0,
           damageMultiplierSnapshot: vp.damageMultiplier,
         });
         await em.save(bv);
@@ -1633,17 +1843,6 @@ export async function createWalkInBooking(
           status: PaymentComponentStatus.DISBURSED,
         });
         await em.save(rfComponent);
-
-        if (Number(bv.securityDepositSnapshot) > 0) {
-          const sdComponent = em.create(PaymentComponent, {
-            bookingId: newBooking.id,
-            bookingVehicleId: bv.id,
-            type: PaymentComponentType.SECURITY_DEPOSIT,
-            amount: Number(bv.securityDepositSnapshot),
-            status: PaymentComponentStatus.DISBURSED,
-          });
-          await em.save(sdComponent);
-        }
       }
 
       // Create Payment Transaction as SUCCESS
@@ -1667,18 +1866,6 @@ export async function createWalkInBooking(
 
       return newBooking;
     });
-
-    // Update slot locks in redis with actual booking ID
-    if (body.play_mode === BookingMode.RENTAL) {
-      for (const { vehicleId, slotStart: lockedSlotStart } of lockedVehicleSlots) {
-        await redis.set(
-          vehicleLockKey(vehicleId, lockedSlotStart),
-          booking.id,
-          'EX',
-          env.platform.slotLockTtlSeconds,
-        );
-      }
-    }
 
     if (body.play_mode === BookingMode.BYOC) {
       await Promise.all(
@@ -1704,7 +1891,7 @@ export async function createWalkInBooking(
     };
   } catch (err) {
     // Release locks on transaction failure
-    await releaseVehicleSlotLocks(lockedVehicleSlots);
+    await releaseVehicleSlotLocks(lockedVehicleSlots, bookingId);
     if (body.play_mode === BookingMode.BYOC) {
       await Promise.all(
         lockedByocSlotStarts.map((lockedSlotStart) =>

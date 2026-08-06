@@ -93,4 +93,57 @@ describe('buildBookingFinancialSummary', () => {
     expect(summary.totalPaidAmount).toBe(365_000);
     expect(summary.isSettled).toBe(false);
   });
+
+  it('classifies a contest entry fee collected in checkout as prepaid', () => {
+    const summary = buildBookingFinancialSummary(
+      [
+        component('slot', PaymentComponentType.SLOT_FEE, 50_000, PaymentComponentStatus.HELD),
+        component(
+          'entry-fee',
+          PaymentComponentType.CONTEST_ENTRY_FEE,
+          150_000,
+          PaymentComponentStatus.HELD,
+        ),
+      ],
+      [
+        payment('initial-payment', 200_000, {
+          components: [
+            { id: 'slot', type: PaymentComponentType.SLOT_FEE, amount: 50_000 },
+            {
+              id: 'entry-fee',
+              type: PaymentComponentType.CONTEST_ENTRY_FEE,
+              amount: 150_000,
+            },
+          ],
+        }),
+      ],
+    );
+
+    expect(summary.prepaidLines.map((line) => line.label)).toEqual([
+      'Phí lịch chơi',
+      'Phí tham gia giải đấu',
+    ]);
+    expect(summary.prepaidServiceTotal).toBe(200_000);
+    expect(summary.prepaidPaidAmount).toBe(200_000);
+    expect(summary.additionalLines).toEqual([]);
+  });
+
+  it('shows a pending booking hold as unpaid from its frozen checkout snapshot', () => {
+    const summary = buildBookingFinancialSummary([], [], 10_000, {
+      slot_fee_total: 50_000,
+      vehicles: [{ rental_fee: 115_000 }],
+      fnb_total: 10_000,
+    });
+
+    expect(summary.prepaidLines.map((line) => [line.label, line.status, line.amount])).toEqual([
+      ['Phí lịch chơi', PaymentComponentStatus.PENDING, 50_000],
+      ['Phí thuê xe', PaymentComponentStatus.PENDING, 115_000],
+      ['Đồ ăn & thức uống đặt trước', PaymentComponentStatus.PENDING, 10_000],
+    ]);
+    expect(summary.prepaidServiceTotal).toBe(175_000);
+    expect(summary.prepaidPaidAmount).toBe(0);
+    expect(summary.prepaidOutstandingAmount).toBe(165_000);
+    expect(summary.outstandingAmount).toBe(165_000);
+    expect(summary.isSettled).toBe(false);
+  });
 });

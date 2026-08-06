@@ -14,6 +14,10 @@ describe('BookingService.canTransition', () => {
     expect(canTransition(BookingStatus.PENDING, 'PAYMENT_TIMEOUT')).toBe(true);
   });
 
+  it('PENDING → CANCELLED via HOLD_CANCELLED is valid', () => {
+    expect(canTransition(BookingStatus.PENDING, 'HOLD_CANCELLED')).toBe(true);
+  });
+
   it('CONFIRMED → CANCELLED via CUSTOMER_CANCEL is valid', () => {
     expect(canTransition(BookingStatus.CONFIRMED, 'CUSTOMER_CANCEL')).toBe(true);
   });
