@@ -963,6 +963,18 @@ export async function createContestEntryPaymentUrl(
     throw new AppError('Entry fee đã được xử lý', 409, 'ENTRY_FEE_ALREADY_SETTLED');
   }
 
+  // Registrations created before the catalog-choice flow may still have their
+  // entry fee frozen inside a linked booking. Keep that legacy payment path
+  // isolated: creating a contest-only transaction here would charge twice.
+  // New registrations have no bookingId and always use the contest fee flow.
+  if (registration.bookingId) {
+    throw new AppError(
+      'Lệ phí giải đã được gộp vào thanh toán đơn đặt. Vui lòng thanh toán đơn đặt để hoàn tất.',
+      409,
+      'ENTRY_FEE_INCLUDED_IN_BOOKING',
+    );
+  }
+
   const existingTxn = await AppDataSource.getRepository(PaymentTransaction).findOne({
     where: {
       contestRegistrationId: registration.id,

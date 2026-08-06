@@ -45,7 +45,7 @@ async function seedSession(opts: { sessionStatus: string }) {
 }
 
 describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm — customerConfirmInspection', () => {
-  it('cho phép staff tạo biên bản CHECK_IN mới sau khi khách dispute, khách xác nhận lại thì session ACTIVE', async () => {
+  it('bắt đầu phiên ngay khi staff hoàn tất bàn giao và cho phép lập lại biên bản sau khi khách báo sai lệch', async () => {
     const { customerToken, staffToken, session } = await seedSession({
       sessionStatus: 'CHECKED_IN',
     });
@@ -56,6 +56,12 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
       .send({ type: 'CHECK_IN', photos: rentalInspectionPhotos })
       .expect(201);
     const firstInspectionId = firstRes.body.data.inspectionId;
+
+    const [startedSession] = await AppDataSource.query<{ status: string }[]>(
+      `SELECT status FROM sessions WHERE id = $1`,
+      [session.id],
+    );
+    expect(startedSession.status).toBe('ACTIVE');
 
     // Customer disputes the first handover inspection.
     await request(app)
@@ -73,7 +79,8 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
     const secondInspectionId = secondRes.body.data.inspectionId;
     expect(secondInspectionId).not.toBe(firstInspectionId);
 
-    // Customer confirms the new inspection → session goes ACTIVE.
+    // Customer acknowledges the new inspection. The session was already ACTIVE
+    // when staff completed physical handover.
     await request(app)
       .post(`/api/v1/sessions/${session.id}/inspections/${secondInspectionId}/confirm`)
       .set('Authorization', `Bearer ${customerToken}`)
@@ -111,7 +118,7 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
     expect(inspections[0].id).toBe(firstRes.body.data.inspectionId);
   });
 
-  it('từ chối xác nhận CHECK_IN khi session không ở trạng thái CHECKED_IN', async () => {
+  it('cho phép khách xem và xác nhận biên bản CHECK_IN khi phiên đã ACTIVE', async () => {
     const { customerToken, staffToken, session } = await seedSession({
       sessionStatus: 'ACTIVE',
     });
@@ -122,15 +129,19 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
       .send({ type: 'CHECK_IN', photos: rentalInspectionPhotos })
       .expect(201);
 
-    const res = await request(app)
+    await request(app)
       .post(
         `/api/v1/sessions/${session.id}/inspections/${inspectionRes.body.data.inspectionId}/confirm`,
       )
       .set('Authorization', `Bearer ${customerToken}`)
       .send({ agreed: true })
-      .expect(400);
+      .expect(200);
 
-    expect(res.body.code).toBe('INVALID_SESSION_STATE');
+    const [sessionAfter] = await AppDataSource.query<{ status: string }[]>(
+      `SELECT status FROM sessions WHERE id = $1`,
+      [session.id],
+    );
+    expect(sessionAfter.status).toBe('ACTIVE');
   });
 
   it('từ chối xác nhận CHECK_OUT khi session không ở trạng thái CHECKING_OUT', async () => {
