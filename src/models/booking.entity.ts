@@ -85,6 +85,9 @@ export class Booking {
   @Column({ name: 'review_dismissed_at', type: 'timestamptz', nullable: true })
   reviewDismissedAt: Date | null;
 
+  @Column({ name: 'review_snoozed_until', type: 'timestamptz', nullable: true })
+  reviewSnoozedUntil: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

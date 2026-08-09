@@ -43,10 +43,6 @@ staffRouter.patch('/maintenance-logs/:id/status', staffController.updateMaintena
 
 // Client Simulators
 staffRouter.post(
-  '/sessions/:sessionId/simulate-check-in-response',
-  staffController.simulateClientCheckIn,
-);
-staffRouter.post(
   '/sessions/:sessionId/simulate-check-out-response',
   staffController.simulateClientCheckOut,
 );

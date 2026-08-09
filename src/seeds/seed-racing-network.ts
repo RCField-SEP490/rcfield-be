@@ -121,15 +121,14 @@ async function ensureDriftTrackType() {
 async function ensureCafe(
   providerId: string,
   cafe: (typeof DEMO_CAFES)[number],
+  trackTypeId: string,
 ): Promise<{ id: string; slug: string; name: string }> {
   const [existing] = await AppDataSource.query<{ id: string; slug: string; name: string }[]>(
     `SELECT id, slug, name FROM cafes WHERE slug = $1 LIMIT 1`,
     [cafe.slug],
   );
 
-  if (existing) {
-    return existing;
-  }
+  if (existing) return existing;
 
   const [created] = await AppDataSource.query<{ id: string; slug: string; name: string }[]>(
     `INSERT INTO cafes
@@ -138,7 +137,7 @@ async function ensureCafe(
         max_concurrent_bookings, min_booking_notice_minutes, byoc_capacity)
      VALUES
        ($1, $2, $3, $4, $5, 'ACTIVE', $6, $7, $8,
-        $9, '{DRIFT}', 60, 70000, 6, 30, 4)
+        $9, $10, 60, 70000, 6, 30, 4)
      RETURNING id, slug, name`,
     [
       providerId,
@@ -158,6 +157,7 @@ async function ensureCafe(
         sat: { open: '09:00', close: '22:00' },
         sun: { open: '09:00', close: '22:00' },
       }),
+      [trackTypeId],
     ],
   );
 
@@ -165,7 +165,25 @@ async function ensureCafe(
   return created;
 }
 
-async function ensureVehicleForCafe(cafeId: string, cafeSlug: string) {
+async function ensureTrackConfig(cafeId: string, trackTypeId: string): Promise<void> {
+  const [existing] = await AppDataSource.query<{ id: string }[]>(
+    `SELECT id
+       FROM cafe_track_configs
+      WHERE cafe_id = $1 AND track_type_id = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [cafeId, trackTypeId],
+  );
+  if (existing) return;
+
+  await AppDataSource.query(
+    `INSERT INTO cafe_track_configs
+       (cafe_id, track_type_id, max_concurrent, byoc_capacity, is_active)
+     VALUES ($1, $2, 6, 4, TRUE)`,
+    [cafeId, trackTypeId],
+  );
+}
+
+async function ensureVehicleForCafe(cafeId: string, cafeSlug: string, trackTypeId: string) {
   const [existingVehicle] = await AppDataSource.query<{ id: string }[]>(
     `SELECT id FROM vehicles WHERE cafe_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
     [cafeId],
@@ -178,12 +196,13 @@ async function ensureVehicleForCafe(cafeId: string, cafeSlug: string) {
     `INSERT INTO vehicle_catalogs
        (cafe_id, name, description, tier, hourly_rate, security_deposit, damage_multiplier, compatible_track_types)
      VALUES
-       ($1, $2, $3, 'STANDARD', 85000, 200000, 1.0, '{DRIFT}')
+       ($1, $2, $3, 'STANDARD', 85000, 0, 1.0, $4)
      RETURNING id`,
     [
       cafeId,
       `Demo Drift Spec - ${cafeSlug}`,
       `${RACING_SEED_TAG} xe demo để tạo completed play và leaderboard thật.`,
+      [trackTypeId],
     ],
   );
 
@@ -329,7 +348,7 @@ async function createCompletedPlay(params: {
     `INSERT INTO booking_vehicles
        (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
      VALUES
-       ($1, $2, 85000, 200000, 1.0)
+       ($1, $2, 85000, 0, 1.0)
      RETURNING id`,
     [booking.id, params.vehicleId],
   );
@@ -405,8 +424,9 @@ async function seedCompletedPlayHistory(params: {
 
   const demoCafeRows: Array<{ id: string; slug: string; name: string }> = [];
   for (const cafe of DEMO_CAFES) {
-    const cafeRow = await ensureCafe(params.providerId, cafe);
-    await ensureVehicleForCafe(cafeRow.id, cafeRow.slug);
+    const cafeRow = await ensureCafe(params.providerId, cafe, params.trackTypeId);
+    await ensureTrackConfig(cafeRow.id, params.trackTypeId);
+    await ensureVehicleForCafe(cafeRow.id, cafeRow.slug, params.trackTypeId);
     demoCafeRows.push(cafeRow);
   }
 

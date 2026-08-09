@@ -28,7 +28,9 @@ export class CustomerPackage {
   @Column({ name: 'slots_total', type: 'int' })
   slotsTotal: number;
 
-  @Column({ name: 'slots_remaining', type: 'int' })
+  // Decimal credit keeps the 12–24h cancellation policy fair for a package
+  // booking that consumes an odd number of slots.
+  @Column({ name: 'slots_remaining', type: 'numeric', precision: 10, scale: 2 })
   slotsRemaining: number;
 
   @Column({ name: 'expires_at', type: 'timestamptz' })

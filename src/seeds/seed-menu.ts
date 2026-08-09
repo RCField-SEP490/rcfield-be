@@ -235,6 +235,16 @@ const comboSeeds: Record<string, ComboSeed[]> = {
         { itemName: 'Khoai tây chiên bơ tỏi', quantity: 1 },
       ],
     },
+    {
+      name: 'Combo Khởi động',
+      description: 'Nước cam ép kèm snack vị bò cay, đủ nhẹ để bắt đầu một lượt chạy.',
+      price: 42000,
+      imageUrl: '/images/menu/arena-combo-khoi-dong.png',
+      components: [
+        { itemName: 'Nước cam ép', variantName: 'M', quantity: 1 },
+        { itemName: 'Snack vị bò cay', quantity: 1 },
+      ],
+    },
   ],
   'rc-drift-club-sai-gon': [
     {
@@ -255,6 +265,16 @@ const comboSeeds: Record<string, ComboSeed[]> = {
       components: [
         { itemName: 'Trà đào cam sả', variantName: 'M', quantity: 1 },
         { itemName: 'Hột vịt lộn (2 trứng)', quantity: 1 },
+      ],
+    },
+    {
+      name: 'Combo Drift nhẹ',
+      description: 'Trà đào cam sả size M kèm bánh tráng trộn, phù hợp trước giờ vào sân.',
+      price: 48000,
+      imageUrl: '/images/menu/drift-combo-drift-nhe.png',
+      components: [
+        { itemName: 'Trà đào cam sả', variantName: 'M', quantity: 1 },
+        { itemName: 'Bánh tráng trộn', quantity: 1 },
       ],
     },
   ],

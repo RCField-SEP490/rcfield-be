@@ -36,6 +36,63 @@ export async function createNotification(
   });
 }
 
+/**
+ * A completed booking can reach reconciliation through more than one checkout
+ * path. Persist one review request per booking and only push in-app/mobile
+ * after the insert actually succeeds.
+ */
+export async function createBookingReviewRequestNotification(
+  userId: string,
+  bookingId: string,
+): Promise<boolean> {
+  const title = 'Đánh giá trải nghiệm của bạn';
+  const message = 'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.';
+  const data = {
+    bookingId,
+    reviewRequestKey: bookingId,
+    route: `/customer/bookings?reviewBookingId=${bookingId}`,
+  };
+
+  // Include legacy rows (which predate reviewRequestKey) in the check so a
+  // deployment during an in-flight checkout does not notify the customer a
+  // second time for the same booking.
+  const existing = await AppDataSource.query<{ exists: boolean }[]>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM notifications
+       WHERE user_id = $1
+         AND type = $2
+         AND data ->> 'bookingId' = $3
+     ) AS "exists"`,
+    [userId, NotificationType.BOOKING_REVIEW_REQUEST, bookingId],
+  );
+  if (existing[0]?.exists) return false;
+
+  const inserted = await AppDataSource.query<{ id: string }[]>(
+    `INSERT INTO notifications (user_id, type, title, message, data)
+     VALUES ($1, $2, $3, $4, $5::jsonb)
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
+    [userId, NotificationType.BOOKING_REVIEW_REQUEST, title, message, JSON.stringify(data)],
+  );
+
+  if (!inserted[0]?.id) return false;
+
+  void sendExpoPushToUser(userId, {
+    title,
+    body: message,
+    data: {
+      type: NotificationType.BOOKING_REVIEW_REQUEST,
+      notificationId: inserted[0].id,
+      ...data,
+    },
+  }).catch((error) => {
+    logger.error('PushNotification', 'Failed to send push notification', error);
+  });
+
+  return true;
+}
+
 export async function registerPushToken(
   userId: string,
   data: {
