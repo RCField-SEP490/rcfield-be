@@ -1,4 +1,5 @@
 import { AppDataSource } from '../config/database';
+import { In } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -16,12 +17,14 @@ import {
   AppError,
   BookingSource,
   BookingStatus,
+  FnbOrderStatus,
   FnbOrderType,
   PaymentComponentStatus,
   PaymentComponentType,
   PaymentTransactionStatus,
   PaymentTransactionSubjectType,
   PaymentTransactionType,
+  SessionStatus,
   UserRole,
   NotificationType,
   ContestEntryFeePaymentStatus,
@@ -49,7 +52,7 @@ async function pushBookingNew(booking: Booking): Promise<void> {
   try {
     const cafe = await AppDataSource.getRepository(Cafe).findOne({
       where: { id: booking.cafeId },
-      select: ['providerId', 'name'],
+      select: ['name'],
     });
     if (!cafe) return;
     const payload = {
@@ -57,7 +60,6 @@ async function pushBookingNew(booking: Booking): Promise<void> {
       cafeName: cafe.name,
       slotStart: booking.slotStart,
     };
-    wsService.pushToUser(cafe.providerId, 'booking.new', payload);
     wsService.pushToCafe(booking.cafeId, 'NEW_BOOKING', payload);
   } catch (err) {
     logger.error('PaymentService', 'pushBookingNew failed', err);
@@ -79,14 +81,6 @@ async function pushBookingPaymentUpdated(booking: Booking): Promise<void> {
       updatedAt: new Date().toISOString(),
     };
     wsService.pushToCafe(booking.cafeId, 'BOOKING_PAYMENT_UPDATED', payload);
-
-    const cafe = await AppDataSource.getRepository(Cafe).findOne({
-      where: { id: booking.cafeId },
-      select: ['providerId'],
-    });
-    if (cafe?.providerId) {
-      wsService.pushToUser(cafe.providerId, 'BOOKING_UPDATED', payload);
-    }
   } catch (error) {
     logger.error('PaymentService', 'pushBookingPaymentUpdated failed', {
       bookingId: booking.id,
@@ -130,6 +124,34 @@ export interface RefundBreakdown {
   depositRefund: number;
   fnbRefund: number;
   totalRefund: number;
+}
+
+/**
+ * Promotions discount only the slot and vehicle-rental subtotal. Allocate that
+ * discount before applying any cancellation percentage so a refund can never
+ * exceed the amount the customer actually paid for those services.
+ */
+export function getNetRefundablePrepaidAmounts(snapshot: RefundSnapshot): {
+  slotFee: number;
+  rentalFee: number;
+  fnbFee: number;
+} {
+  const grossSlotFee = Math.max(0, Number(snapshot.slot_fee_total ?? 0));
+  const grossRentalFee = snapshot.vehicles.reduce(
+    (sum, vehicle) => sum + Math.max(0, Number(vehicle.rental_fee ?? 0)),
+    0,
+  );
+  const eligibleSubtotal = grossSlotFee + grossRentalFee;
+  const discount = Math.min(Math.max(0, Number(snapshot.discount_amount ?? 0)), eligibleSubtotal);
+  const slotDiscount =
+    eligibleSubtotal > 0 ? Math.round((discount * grossSlotFee) / eligibleSubtotal) : 0;
+  const rentalDiscount = discount - slotDiscount;
+
+  return {
+    slotFee: Math.max(0, grossSlotFee - slotDiscount),
+    rentalFee: Math.max(0, grossRentalFee - rentalDiscount),
+    fnbFee: Math.max(0, Number(snapshot.fnb_total ?? 0)),
+  };
 }
 
 /**
@@ -192,26 +214,26 @@ export function calculateRefundAmounts(
   slotStart: Date,
   isNoShow = false,
 ): RefundBreakdown {
-  const totalRentalFee = snapshot.vehicles.reduce((sum, v) => sum + v.rental_fee, 0);
+  const { slotFee, rentalFee, fnbFee } = getNetRefundablePrepaidAmounts(snapshot);
   // R3: no-show — 0% slot, 100% rental. There is no vehicle deposit.
   if (isNoShow) {
     return {
       slotFeeRefund: 0,
-      rentalFeeRefund: totalRentalFee,
+      rentalFeeRefund: rentalFee,
       depositRefund: 0,
-      fnbRefund: snapshot.fnb_total,
-      totalRefund: totalRentalFee + snapshot.fnb_total,
+      fnbRefund: fnbFee,
+      totalRefund: rentalFee + fnbFee,
     };
   }
 
   // R2: provider cancellation — always 100% regardless of timing
   if (role === UserRole.PROVIDER) {
-    const total = snapshot.slot_fee_total + totalRentalFee + snapshot.fnb_total;
+    const total = slotFee + rentalFee + fnbFee;
     return {
-      slotFeeRefund: snapshot.slot_fee_total,
-      rentalFeeRefund: totalRentalFee,
+      slotFeeRefund: slotFee,
+      rentalFeeRefund: rentalFee,
       depositRefund: 0,
-      fnbRefund: snapshot.fnb_total,
+      fnbRefund: fnbFee,
       totalRefund: total,
     };
   }
@@ -221,19 +243,138 @@ export function calculateRefundAmounts(
 
   let slotFeeRefund: number;
   if (hoursBeforeSlot > 24) {
-    slotFeeRefund = snapshot.slot_fee_total; // 100%
+    slotFeeRefund = slotFee; // 100% of the amount actually collected
   } else if (hoursBeforeSlot >= 12) {
-    slotFeeRefund = Math.round(snapshot.slot_fee_total * 0.5); // 50%
+    slotFeeRefund = Math.round(slotFee * 0.5); // 50% of the amount actually collected
   } else {
     slotFeeRefund = 0; // 0%
   }
 
   return {
     slotFeeRefund,
-    rentalFeeRefund: totalRentalFee,
+    rentalFeeRefund: rentalFee,
     depositRefund: 0,
-    fnbRefund: snapshot.fnb_total,
-    totalRefund: slotFeeRefund + totalRentalFee + snapshot.fnb_total,
+    fnbRefund: fnbFee,
+    totalRefund: slotFeeRefund + rentalFee + fnbFee,
+  };
+}
+
+/** A served pre-order is consumed and must not be refunded. */
+export function calculateRefundablePreorderAmount(
+  snapshotFnbTotal: number,
+  servedPreorderAmount: number,
+): number {
+  return Math.max(
+    0,
+    Number(snapshotFnbTotal ?? 0) - Math.max(0, Number(servedPreorderAmount ?? 0)),
+  );
+}
+
+async function getRefundablePreorderAmount(
+  bookingId: string,
+  snapshotFnbTotal: number,
+): Promise<number> {
+  const deliveredPreorders = await AppDataSource.getRepository(FnbOrder).find({
+    where: {
+      bookingId,
+      orderType: FnbOrderType.PRE_ORDER,
+      status: FnbOrderStatus.DELIVERED,
+    },
+    select: ['totalAmount'],
+  });
+  const servedAmount = deliveredPreorders.reduce(
+    (sum, order) => sum + Number(order.totalAmount),
+    0,
+  );
+  return calculateRefundablePreorderAmount(snapshotFnbTotal, servedAmount);
+}
+
+export interface CancellationQuote {
+  canCancel: boolean;
+  reason?: string;
+  refund: RefundBreakdown;
+}
+
+/**
+ * Server-authoritative cancellation preview. The UI uses this before asking for
+ * confirmation so it cannot present gross prices or already-served F&B as a
+ * refundable amount.
+ */
+export async function getCancellationQuote(
+  bookingId: string,
+  requesterId: string,
+  role: UserRole,
+): Promise<CancellationQuote> {
+  const booking = await AppDataSource.getRepository(Booking).findOne({ where: { id: bookingId } });
+  if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  if (role === UserRole.CUSTOMER && booking.customerId !== requesterId) {
+    throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+  }
+  if (role === UserRole.PROVIDER) {
+    const ownsCafe = await AppDataSource.getRepository(Cafe).exist({
+      where: { id: booking.cafeId, providerId: requesterId },
+    });
+    if (!ownsCafe) throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
+  }
+
+  const emptyRefund: RefundBreakdown = {
+    slotFeeRefund: 0,
+    rentalFeeRefund: 0,
+    depositRefund: 0,
+    fnbRefund: 0,
+    totalRefund: 0,
+  };
+  if (![BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(booking.status)) {
+    return {
+      canCancel: false,
+      reason: 'Đơn không còn ở trạng thái có thể hủy.',
+      refund: emptyRefund,
+    };
+  }
+
+  const hasOperationalSession = await AppDataSource.getRepository(Session).exist({
+    where: {
+      bookingId,
+      status: In([
+        SessionStatus.CHECKED_IN,
+        SessionStatus.ACTIVE,
+        SessionStatus.EXTENDING,
+        SessionStatus.CHECKING_OUT,
+        SessionStatus.COMPLETED,
+      ]),
+    },
+  });
+  if (hasOperationalSession) {
+    return {
+      canCancel: false,
+      reason: 'Phiên chơi đã bắt đầu hoặc đang bàn giao xe; hãy xử lý qua luồng vận hành tại quầy.',
+      refund: emptyRefund,
+    };
+  }
+
+  if (booking.status === BookingStatus.PENDING) return { canCancel: true, refund: emptyRefund };
+
+  const successfulPayment = await AppDataSource.getRepository(PaymentTransaction).exist({
+    where: {
+      bookingId,
+      type: PaymentTransactionType.PAYMENT,
+      status: PaymentTransactionStatus.SUCCESS,
+    },
+  });
+  const snapshot = booking.snapshot as unknown as BookingSnapshot | null;
+  if (!successfulPayment || !snapshot) return { canCancel: true, refund: emptyRefund };
+
+  const calculatedRefund = calculateRefundAmounts(snapshot, role, booking.slotStart);
+  const refundableFnbAmount = await getRefundablePreorderAmount(bookingId, snapshot.fnb_total);
+  const fnbRefund = Math.min(calculatedRefund.fnbRefund, refundableFnbAmount);
+  return {
+    canCancel: true,
+    refund: {
+      ...calculatedRefund,
+      fnbRefund,
+      totalRefund: calculatedRefund.slotFeeRefund + calculatedRefund.rentalFeeRefund + fnbRefund,
+    },
   };
 }
 
@@ -896,7 +1037,7 @@ export async function processConfirmationResult(
               bookingId: tx.bookingId,
               sessionId: session.id,
               totalCounterBill: tx.amount,
-              route: `/staff/session/${session.id}`,
+              route: `/staff/sessions/${session.id}`,
             },
           );
           wsService.pushToUser(session.checkedInBy, 'CUSTOMER_PAYMENT_CONFIRMED', {
@@ -1097,7 +1238,7 @@ export async function processMockConfirmation(
               bookingId: tx.bookingId,
               sessionId: session.id,
               totalCounterBill: tx.amount,
-              route: `/staff/session/${session.id}`,
+              route: `/staff/sessions/${session.id}`,
             },
           );
           wsService.pushToUser(session.checkedInBy, 'CUSTOMER_PAYMENT_CONFIRMED', {
@@ -1368,7 +1509,19 @@ export async function processRefund(
     return { slotFeeRefund: 0, rentalFeeRefund: 0, depositRefund: 0, fnbRefund: 0, totalRefund: 0 };
   }
 
-  const refund = calculateRefundAmounts(snapshot, cancelledByRole, booking.slotStart, isNoShow);
+  const calculatedRefund = calculateRefundAmounts(
+    snapshot,
+    cancelledByRole,
+    booking.slotStart,
+    isNoShow,
+  );
+  const refundableFnbAmount = await getRefundablePreorderAmount(bookingId, snapshot.fnb_total);
+  const fnbRefund = Math.min(calculatedRefund.fnbRefund, refundableFnbAmount);
+  const refund: RefundBreakdown = {
+    ...calculatedRefund,
+    fnbRefund,
+    totalRefund: calculatedRefund.slotFeeRefund + calculatedRefund.rentalFeeRefund + fnbRefund,
+  };
   if (refund.totalRefund <= 0) {
     return refund;
   }
@@ -1428,23 +1581,72 @@ export async function processRefund(
   return refund;
 }
 
-export async function confirmRefund(bookingId: string): Promise<void> {
-  const compRepo = AppDataSource.getRepository(PaymentComponent);
+export type ManualRefundMethod = 'CASH' | 'BANK_TRANSFER';
 
-  const pendingComps = await compRepo.find({
-    where: { bookingId, status: PaymentComponentStatus.PENDING_REFUND },
+export interface ConfirmRefundInput {
+  method: ManualRefundMethod;
+}
+
+export async function confirmRefund(
+  bookingId: string,
+  staffUserId: string,
+  confirmation: ConfirmRefundInput,
+): Promise<void> {
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: bookingId },
+    select: ['id', 'cafeId', 'customerId'],
   });
+  if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
-  if (pendingComps.length === 0) {
-    throw new AppError(
-      'Không có khoản hoàn tiền nào đang chờ xử lý cho đơn hàng này',
-      400,
-      'NO_PENDING_REFUND',
-    );
+  const [assignment] = await AppDataSource.query<{ exists: boolean }[]>(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM staff_cafe_assignments assignment
+       JOIN users staff ON staff.id = assignment.staff_id
+       WHERE assignment.staff_id = $1
+         AND assignment.cafe_id = $2
+         AND staff.is_active = true
+         AND staff.deleted_at IS NULL
+     ) AS "exists"`,
+    [staffUserId, booking.cafeId],
+  );
+  if (!assignment?.exists) {
+    throw new AppError('Bạn không thuộc cơ sở của đơn đặt này', 403, 'BOOKING_CAFE_FORBIDDEN');
   }
 
   const now = new Date();
   await AppDataSource.transaction(async (em) => {
+    const pendingComps = await em
+      .getRepository(PaymentComponent)
+      .createQueryBuilder('component')
+      .setLock('pessimistic_write')
+      .where('component.booking_id = :bookingId', { bookingId })
+      .andWhere('component.status = :status', { status: PaymentComponentStatus.PENDING_REFUND })
+      .getMany();
+    if (pendingComps.length === 0) {
+      throw new AppError(
+        'Không có khoản hoàn tiền nào đang chờ xử lý cho đơn hàng này',
+        400,
+        'NO_PENDING_REFUND',
+      );
+    }
+
+    const pendingTx = await em.findOne(PaymentTransaction, {
+      where: {
+        bookingId,
+        type: PaymentTransactionType.REFUND,
+        status: PaymentTransactionStatus.PENDING,
+      },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!pendingTx) {
+      throw new AppError(
+        'Không tìm thấy giao dịch hoàn tiền đang chờ xử lý',
+        409,
+        'REFUND_TRANSACTION_NOT_FOUND',
+      );
+    }
+
     // 1. Update all PENDING_REFUND components to REFUNDED
     for (const comp of pendingComps) {
       comp.status = PaymentComponentStatus.REFUNDED;
@@ -1452,32 +1654,33 @@ export async function confirmRefund(bookingId: string): Promise<void> {
       await em.save(comp);
     }
 
-    // 2. Update the PENDING REFUND transaction to SUCCESS
-    const pendingTx = await em.findOne(PaymentTransaction, {
-      where: {
-        bookingId,
-        type: PaymentTransactionType.REFUND,
-        status: PaymentTransactionStatus.PENDING,
-      },
-    });
-
-    if (pendingTx) {
-      pendingTx.status = PaymentTransactionStatus.SUCCESS;
-      pendingTx.updatedAt = now;
-      if (pendingTx.rawResponse) {
-        pendingTx.rawResponse = {
-          ...(pendingTx.rawResponse as Record<string, unknown>),
-          confirmedAt: now.toISOString(),
-          manualRefund: true,
-        };
-      } else {
-        pendingTx.rawResponse = { confirmedAt: now.toISOString(), manualRefund: true };
-      }
-      await em.save(pendingTx);
-    }
+    // 2. Update the PENDING REFUND transaction with an auditable handoff record.
+    pendingTx.status = PaymentTransactionStatus.SUCCESS;
+    pendingTx.updatedAt = now;
+    pendingTx.rawResponse = {
+      ...((pendingTx.rawResponse ?? {}) as Record<string, unknown>),
+      auditAction: 'MANUAL_REFUND_CONFIRMED',
+      confirmedAt: now.toISOString(),
+      confirmedBy: staffUserId,
+      manualRefund: true,
+      method: confirmation.method,
+      amount: Number(pendingTx.amount),
+    };
+    await em.save(pendingTx);
   });
 
-  logger.info('PaymentService', `manual refund confirmed for bookingId=${bookingId}`);
+  const payload = {
+    bookingId,
+    cafeId: booking.cafeId,
+    action: 'REFUND_CONFIRMED',
+    updatedAt: now.toISOString(),
+  };
+  wsService.pushToCafe(booking.cafeId, 'BOOKING_PAYMENT_UPDATED', payload);
+  wsService.pushToUser(booking.customerId, 'BOOKING_PAYMENT_UPDATED', payload);
+  logger.info('PaymentService', `manual refund confirmed for bookingId=${bookingId}`, {
+    staffUserId,
+    method: confirmation.method,
+  });
 }
 
 export async function createCheckoutAdditionalPaymentUrl(

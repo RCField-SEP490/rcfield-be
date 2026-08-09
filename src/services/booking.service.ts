@@ -272,14 +272,6 @@ export async function broadcastBookingUpdated(
       updatedAt: new Date().toISOString(),
     };
     wsService.pushToCafe(booking.cafeId, 'BOOKING_UPDATED', payload);
-
-    const cafe = await AppDataSource.getRepository(Cafe).findOne({
-      where: { id: booking.cafeId },
-      select: ['providerId'],
-    });
-    if (cafe?.providerId) {
-      wsService.pushToUser(cafe.providerId, 'BOOKING_UPDATED', payload);
-    }
   } catch (error) {
     logger.error('BookingService', 'failed to broadcast booking update', {
       bookingId: booking.id,
@@ -1278,6 +1270,29 @@ export async function cancelBooking(
     );
   }
 
+  // Once staff has begun handover or a play session exists, the booking has
+  // entered an operational flow. It must be closed through check-out/incident
+  // handling, never through the pre-session cancellation policy.
+  const inProgressSession = await AppDataSource.getRepository(Session).exist({
+    where: {
+      bookingId,
+      status: In([
+        SessionStatus.CHECKED_IN,
+        SessionStatus.ACTIVE,
+        SessionStatus.EXTENDING,
+        SessionStatus.CHECKING_OUT,
+        SessionStatus.COMPLETED,
+      ]),
+    },
+  });
+  if (inProgressSession) {
+    throw new AppError(
+      'Phiên chơi đã bắt đầu hoặc đang bàn giao xe; không thể hủy theo chính sách đặt lịch',
+      409,
+      'BOOKING_SESSION_IN_PROGRESS',
+    );
+  }
+
   if (role === UserRole.CUSTOMER && booking.customerId !== cancelledBy) {
     throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
   }
@@ -1341,24 +1356,26 @@ export async function cancelBooking(
     return { refund_amount: 0, requiresRefundProcessing: false };
   }
 
-  // Slot refund: only if package was used AND cancellation is before slot_start (D5 from research.md)
+  // Package credits follow the same cancellation windows as cash slot fees.
+  // Decimal credits preserve a fair 50% refund even when a booking used an odd
+  // number of slots.
   const snapshotData = booking.snapshot as {
     package_used?: { customer_package_id: string; slots_used: number };
   } | null;
-  if (snapshotData?.package_used && booking.slotStart > new Date()) {
+  const packageRefundRatio = getPackageCreditRefundRatio(role, booking.slotStart);
+  const packageSlotsToRefund = snapshotData?.package_used
+    ? snapshotData.package_used.slots_used * packageRefundRatio
+    : 0;
+  if (snapshotData?.package_used && packageSlotsToRefund > 0) {
     const qr = AppDataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
     try {
-      await refundSlots(
-        snapshotData.package_used.customer_package_id,
-        snapshotData.package_used.slots_used,
-        qr,
-      );
+      await refundSlots(snapshotData.package_used.customer_package_id, packageSlotsToRefund, qr);
       await qr.commitTransaction();
       logger.info(
         'BookingService',
-        `slot refund applied bookingId=${bookingId} slots=${snapshotData.package_used.slots_used}`,
+        `slot credit refund applied bookingId=${bookingId} slots=${packageSlotsToRefund}`,
       );
     } catch (err) {
       await qr.rollbackTransaction();
@@ -1376,6 +1393,23 @@ export async function cancelBooking(
 
   // Return placeholder — PaymentService.processRefund handles actual amount
   return { refund_amount: 0, requiresRefundProcessing: true };
+}
+
+/**
+ * Package credits follow the customer cancellation windows for the slot fee.
+ * Credits are never restored after the scheduled session has begun, even when
+ * the cafe performs the cancellation, because the operational flow owns that
+ * outcome from that point onward.
+ */
+export function getPackageCreditRefundRatio(
+  role: UserRole,
+  slotStart: Date,
+  now = new Date(),
+): number {
+  const hoursBeforeSlot = (slotStart.getTime() - now.getTime()) / (1000 * 60 * 60);
+  if (hoursBeforeSlot <= 0) return 0;
+  if (role === UserRole.PROVIDER || hoursBeforeSlot > 24) return 1;
+  return hoursBeforeSlot >= 12 ? 0.5 : 0;
 }
 
 /**
@@ -1425,18 +1459,33 @@ export async function cancelContestRegistrationOnBookingCancel(
 
 // ── listCafeBookings ──────────────────────────────────────────────────────────
 export interface ListCafeBookingsQuery {
-  date: string;
+  date?: string;
+  from?: string;
+  to?: string;
   status?: BookingStatus;
   page: number;
   limit: number;
 }
 
+export interface CafeBookingListSummary {
+  totalBookings: number;
+  pendingPaymentCount: number;
+  awaitingAdditionalPaymentCount: number;
+  confirmedBookingCount: number;
+  activeSessionCount: number;
+}
+
 export async function listCafeBookings(
   cafeId: string,
   query: ListCafeBookingsQuery,
-): Promise<{ data: CafeBookingListItem[]; total: number; page: number; limit: number }> {
-  const dayStart = new Date(`${query.date}T00:00:00+07:00`);
-  const dayEnd = new Date(`${query.date}T23:59:59+07:00`);
+): Promise<{
+  data: CafeBookingListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  summary: CafeBookingListSummary;
+}> {
+  const period = resolveCafeBookingListPeriod(query);
 
   let qb = AppDataSource.createQueryBuilder(Booking, 'b')
     .innerJoin('users', 'u', 'u.id = b.customer_id')
@@ -1456,19 +1505,83 @@ export async function listCafeBookings(
       's.status AS "sessionStatus"',
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
-    .andWhere('b.slot_start >= :dayStart', { dayStart })
-    .andWhere('b.slot_start <= :dayEnd', { dayEnd })
     .andWhere('b.deleted_at IS NULL')
-    .orderBy('b.slot_start', 'ASC')
+    .orderBy('b.slot_start', period ? 'ASC' : 'DESC')
     .skip((query.page - 1) * query.limit)
     .take(query.limit);
+
+  if (period) {
+    qb = qb
+      .andWhere('b.slot_start >= :periodStart', { periodStart: period.start })
+      .andWhere('b.slot_start <= :periodEnd', { periodEnd: period.end });
+  }
 
   if (query.status) {
     qb = qb.andWhere('b.status = :status', { status: query.status });
   }
 
-  const [raw, total] = await Promise.all([qb.getRawMany<CafeBookingListItem>(), qb.getCount()]);
-  return { data: raw, total, page: query.page, limit: query.limit };
+  const summaryConditions = ['b.cafe_id = $1', 'b.deleted_at IS NULL'];
+  const summaryParams: unknown[] = [cafeId];
+  if (period) {
+    summaryParams.push(period.start, period.end);
+    summaryConditions.push(`b.slot_start >= $${summaryParams.length - 1}::timestamptz`);
+    summaryConditions.push(`b.slot_start <= $${summaryParams.length}::timestamptz`);
+  }
+
+  const [raw, total, summaryRows] = await Promise.all([
+    qb.getRawMany<CafeBookingListItem>(),
+    qb.getCount(),
+    AppDataSource.query<
+      Array<{
+        totalBookings: number | string;
+        pendingPaymentCount: number | string;
+        awaitingAdditionalPaymentCount: number | string;
+        confirmedBookingCount: number | string;
+        activeSessionCount: number | string;
+      }>
+    >(
+      `SELECT
+        COUNT(DISTINCT b.id)::int AS "totalBookings",
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'PENDING')::int AS "pendingPaymentCount",
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'AWAITING_PAYMENT')::int AS "awaitingAdditionalPaymentCount",
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'CONFIRMED')::int AS "confirmedBookingCount",
+        COUNT(DISTINCT b.id) FILTER (WHERE s.status IN ('ACTIVE', 'EXTENDING', 'CHECKING_OUT'))::int AS "activeSessionCount"
+       FROM bookings b
+       LEFT JOIN sessions s ON s.booking_id = b.id
+       WHERE ${summaryConditions.join('\n         AND ')}`,
+      summaryParams,
+    ),
+  ]);
+  const summaryRow = summaryRows[0];
+  const summary: CafeBookingListSummary = {
+    totalBookings: Number(summaryRow?.totalBookings ?? 0),
+    pendingPaymentCount: Number(summaryRow?.pendingPaymentCount ?? 0),
+    awaitingAdditionalPaymentCount: Number(summaryRow?.awaitingAdditionalPaymentCount ?? 0),
+    confirmedBookingCount: Number(summaryRow?.confirmedBookingCount ?? 0),
+    activeSessionCount: Number(summaryRow?.activeSessionCount ?? 0),
+  };
+
+  return { data: raw, total, page: query.page, limit: query.limit, summary };
+}
+
+function resolveCafeBookingListPeriod(
+  query: ListCafeBookingsQuery,
+): { start: Date; end: Date } | null {
+  if (query.date) {
+    return {
+      start: new Date(`${query.date}T00:00:00+07:00`),
+      end: new Date(`${query.date}T23:59:59+07:00`),
+    };
+  }
+
+  if (query.from && query.to) {
+    return {
+      start: new Date(`${query.from}T00:00:00+07:00`),
+      end: new Date(`${query.to}T23:59:59+07:00`),
+    };
+  }
+
+  return null;
 }
 
 export interface CafeBookingListItem {

@@ -25,6 +25,7 @@ import {
   createCheckoutUrl,
   mockConfirmPayment,
   processRefund,
+  getCancellationQuote,
   createPaymentComponents,
   createCheckoutAdditionalPaymentUrl,
 } from '../services/payment.service';
@@ -701,6 +702,16 @@ export const bookingController = {
       });
 
       res.json({ success: true, data, total, page: query.page, limit: query.limit });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/bookings/:id/cancellation-quote  [auth CUSTOMER, PROVIDER]
+  async getCancellationQuote(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const data = await getCancellationQuote(req.params.id, req.user!.userId, req.user!.role);
+      res.json({ success: true, data });
     } catch (err) {
       next(err);
     }
