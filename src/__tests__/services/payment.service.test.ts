@@ -1,4 +1,8 @@
-import { calculateRefundAmounts } from '../../services/payment.service';
+import {
+  calculateRefundAmounts,
+  calculateRefundablePreorderAmount,
+  getNetRefundablePrepaidAmounts,
+} from '../../services/payment.service';
 import { UserRole } from '../../types';
 
 interface BookingSnapshot {
@@ -79,6 +83,36 @@ describe('R2 — Provider cancellation (always 100%)', () => {
   });
 });
 
+describe('Promotion-safe refunds', () => {
+  it('allocates the promotion across slot and rental before refunding', () => {
+    const snapshot = makeSnapshot({ discount_amount: 100000, total_charged: 400000 });
+    const net = getNetRefundablePrepaidAmounts(snapshot);
+    const result = calculateRefundAmounts(
+      snapshot,
+      UserRole.CUSTOMER,
+      new Date(Date.now() + 30 * 60 * 60 * 1000),
+    );
+
+    expect(net.slotFee).toBe(240000);
+    expect(net.rentalFee).toBe(160000);
+    expect(result.totalRefund).toBe(400000);
+    expect(result.totalRefund).toBeLessThanOrEqual(snapshot.total_charged);
+  });
+
+  it('applies the 12–24h slot penalty to the discounted slot amount', () => {
+    const snapshot = makeSnapshot({ discount_amount: 100000, total_charged: 400000 });
+    const result = calculateRefundAmounts(
+      snapshot,
+      UserRole.CUSTOMER,
+      new Date(Date.now() + 18 * 60 * 60 * 1000),
+    );
+
+    expect(result.slotFeeRefund).toBe(120000);
+    expect(result.rentalFeeRefund).toBe(160000);
+    expect(result.totalRefund).toBe(280000);
+  });
+});
+
 describe('R3 — No-show / payment timeout', () => {
   it('refunds 0% slot_fee + 100% rental; no deposit is refunded', () => {
     const snapshot = makeSnapshot();
@@ -88,6 +122,16 @@ describe('R3 — No-show / payment timeout', () => {
     expect(result.rentalFeeRefund).toBe(200000);
     expect(result.depositRefund).toBe(0);
     expect(result.totalRefund).toBe(200000);
+  });
+});
+
+describe('F&B refund eligibility', () => {
+  it('excludes the amount of a pre-order that has already been served', () => {
+    expect(calculateRefundablePreorderAmount(55000, 25000)).toBe(30000);
+  });
+
+  it('never returns a negative refund when served amount exceeds the stored snapshot', () => {
+    expect(calculateRefundablePreorderAmount(55000, 60000)).toBe(0);
   });
 });
 
