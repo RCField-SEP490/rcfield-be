@@ -1581,6 +1581,7 @@ export async function listCafeBookings(
       'u.full_name AS "customerName"',
       'u.phone AS "customerPhone"',
       's.status AS "sessionStatus"',
+      "(SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS \"hasPendingRefund\"",
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.deleted_at IS NULL')
@@ -1675,6 +1676,7 @@ export interface CafeBookingListItem {
   customerName: string;
   customerPhone: string | null;
   sessionStatus?: string | null;
+  hasPendingRefund?: boolean;
 }
 
 async function cancelPendingFnbOrders(bookingId: string): Promise<void> {
