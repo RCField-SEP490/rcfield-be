@@ -187,6 +187,7 @@ export interface TodayBookingItem {
   participantDetails: { name: string; phone?: string; isBooker: boolean }[];
   plannedVehicles: string[];
   sessions: any[];
+  hasPendingRefund?: boolean;
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
