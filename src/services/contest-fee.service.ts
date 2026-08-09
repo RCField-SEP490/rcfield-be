@@ -318,6 +318,7 @@ async function notifyProvider(
     await createNotification(order.providerId, NotificationType.SYSTEM, title, message, {
       contest_id: order.contestId,
       contest_fee_order_id: order.id,
+      route: `/provider/contests/${order.contestId}/overview`,
     });
   } catch (error) {
     logger.error('ContestFee', `Không gửi được thông báo cho đơn ${order.id}`, error);
