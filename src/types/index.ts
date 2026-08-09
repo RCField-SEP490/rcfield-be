@@ -461,6 +461,7 @@ export enum NotificationType {
   CONTEST_REGISTRATION_CANCELLED = 'CONTEST_REGISTRATION_CANCELLED',
   CONTEST_CHECKIN_CONFIRMED = 'CONTEST_CHECKIN_CONFIRMED',
   CONTEST_REMINDER = 'CONTEST_REMINDER',
+  BOOKING_CANCELLED = 'BOOKING_CANCELLED',
 }
 
 // ── Review ────────────────────────────────────────────────────────────────────

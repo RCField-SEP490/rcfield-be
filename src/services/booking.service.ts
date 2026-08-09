@@ -52,6 +52,7 @@ import { writeContestAudit } from './contest.helpers';
 import { sendContestRegistrationStatusNotification } from './contest/registration-side-effects';
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { wsService } from './websocket.service';
+import { createNotification } from './notification.service';
 import type { Promotion } from '../models/promotion.entity';
 import type { CafeOperatingHours } from '../types';
 
@@ -1335,6 +1336,83 @@ export async function cancelBooking(
 
   await cancelPendingFnbOrders(bookingId);
   logger.info('BookingService', `cancelled bookingId=${bookingId} by ${role}`);
+
+  // ── Gửi thông báo hủy đơn ──
+  try {
+    const bookingCode = booking.id.substring(0, 8).toUpperCase();
+    const staffAssignments = await AppDataSource.query<{ staff_id: string }[]>(
+      `SELECT staff_id FROM staff_cafe_assignments WHERE cafe_id = $1`,
+      [booking.cafeId],
+    );
+
+    if (role === UserRole.PROVIDER || role === UserRole.STAFF) {
+      // 1. Gửi thông báo cho Khách hàng
+      const customerTitle = 'Đơn đặt lịch bị hủy';
+      const customerMessage = `Đơn đặt lịch #${bookingCode} của bạn đã bị hủy bởi nhà cung cấp.`;
+      const customerRoute = `/customer/bookings/${booking.id}`;
+
+      await createNotification(
+        booking.customerId,
+        NotificationType.BOOKING_CANCELLED,
+        customerTitle,
+        customerMessage,
+        { bookingId: booking.id, route: customerRoute },
+      );
+
+      wsService.pushToUser(booking.customerId, 'BOOKING_CANCELLED', {
+        bookingId: booking.id,
+        title: customerTitle,
+        message: customerMessage,
+        route: customerRoute,
+      });
+
+      // 2. Gửi thông báo cho Staff (lưu DB & WebSocket)
+      const staffTitle = 'Đơn đặt lịch bị hủy';
+      const staffMessage = `Đơn đặt lịch #${bookingCode} tại cơ sở vừa bị hủy bởi nhà cung cấp.`;
+
+      for (const assignment of staffAssignments) {
+        await createNotification(
+          assignment.staff_id,
+          NotificationType.BOOKING_CANCELLED,
+          staffTitle,
+          staffMessage,
+          { bookingId: booking.id, route: `/staff/bookings/${booking.id}` },
+        );
+      }
+
+      wsService.pushToCafe(booking.cafeId, 'BOOKING_CANCELLED_OPERATIONAL', {
+        bookingId: booking.id,
+        title: staffTitle,
+        message: staffMessage,
+        routeStaff: `/staff/bookings/${booking.id}`,
+        routeProvider: '/provider/bookings',
+      });
+    } else if (role === UserRole.CUSTOMER) {
+      // Khách tự hủy: chỉ gửi cho Staff của cơ sở
+      const staffTitle = 'Khách hàng hủy đặt lịch';
+      const staffMessage = `Đơn đặt lịch #${bookingCode} tại cơ sở vừa bị khách hàng chủ động hủy.`;
+
+      for (const assignment of staffAssignments) {
+        await createNotification(
+          assignment.staff_id,
+          NotificationType.BOOKING_CANCELLED,
+          staffTitle,
+          staffMessage,
+          { bookingId: booking.id, route: `/staff/bookings/${booking.id}` },
+        );
+      }
+
+      wsService.pushToCafe(booking.cafeId, 'BOOKING_CANCELLED_OPERATIONAL', {
+        bookingId: booking.id,
+        title: staffTitle,
+        message: staffMessage,
+        routeStaff: `/staff/bookings/${booking.id}`,
+        routeProvider: '/provider/bookings',
+      });
+    }
+  } catch (notifErr) {
+    logger.error('BookingService', 'Lỗi khi gửi thông báo hủy đơn', notifErr);
+  }
 
   // Mirror the cancellation to the linked contest registration (contest rental
   // bookings). Never blocks the booking cancel: failures are logged only.
