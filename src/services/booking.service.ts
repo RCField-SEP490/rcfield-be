@@ -1507,8 +1507,8 @@ export async function listCafeBookings(
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.deleted_at IS NULL')
     .orderBy('b.slot_start', period ? 'ASC' : 'DESC')
-    .skip((query.page - 1) * query.limit)
-    .take(query.limit);
+    .offset((query.page - 1) * query.limit)
+    .limit(query.limit);
 
   if (period) {
     qb = qb
