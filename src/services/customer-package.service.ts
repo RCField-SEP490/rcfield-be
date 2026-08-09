@@ -280,7 +280,7 @@ export async function deductSlots(
   if (!result.length)
     throw new AppError('CustomerPackage not found', 404, 'CUSTOMER_PACKAGE_NOT_FOUND');
 
-  const current = result[0].slots_remaining;
+  const current = Number(result[0].slots_remaining);
   if (current < slotsUsed) {
     throw new AppError('Package has insufficient slots', 400, 'PACKAGE_INSUFFICIENT_SLOTS');
   }
@@ -318,7 +318,7 @@ export async function refundSlots(
     throw new AppError('CustomerPackage not found', 404, 'CUSTOMER_PACKAGE_NOT_FOUND');
 
   const cp = result[0];
-  const newRemaining = cp.slots_remaining + slotsUsed;
+  const newRemaining = Number(cp.slots_remaining) + slotsUsed;
   // Restore to ACTIVE if was EXHAUSTED (valid per spec FR-015)
   const newStatus =
     cp.status === CustomerPackageStatus.EXHAUSTED ? CustomerPackageStatus.ACTIVE : cp.status;

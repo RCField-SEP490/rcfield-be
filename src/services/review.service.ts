@@ -4,6 +4,7 @@ import { Booking } from '../models/booking.entity';
 import { AppError, BookingMode, BookingStatus, ReviewStatus, UserRole } from '../types';
 
 const REVIEW_WINDOW_DAYS = 5;
+const REVIEW_REMINDER_SNOOZE_HOURS = 24;
 
 // ── US1: Submit review ────────────────────────────────────────────────────────
 
@@ -75,6 +76,43 @@ export async function dismissReview(customerId: string, bookingId: string): Prom
   await bookingRepo.save(booking);
 }
 
+/**
+ * Keeps a review eligible, but delays the reminder. This is intentionally
+ * separate from dismissReview so existing, permanently dismissed reminders
+ * remain backward compatible while the current UX can offer “Để sau”.
+ */
+export async function snoozeReviewReminder(customerId: string, bookingId: string): Promise<void> {
+  const bookingRepo = AppDataSource.getRepository(Booking);
+  const reviewRepo = AppDataSource.getRepository(Review);
+
+  const booking = await bookingRepo.findOne({ where: { id: bookingId } });
+  if (!booking || booking.customerId !== customerId) {
+    throw new AppError('Booking không tồn tại hoặc bạn không có quyền', 404, 'BOOKING_NOT_FOUND');
+  }
+
+  if (
+    booking.status !== BookingStatus.COMPLETED ||
+    !booking.completedAt ||
+    booking.reviewDismissedAt
+  ) {
+    throw new AppError('Đơn đặt này không còn đủ điều kiện đánh giá', 400, 'REVIEW_NOT_AVAILABLE');
+  }
+
+  const deadline = new Date(booking.completedAt);
+  deadline.setDate(deadline.getDate() + REVIEW_WINDOW_DAYS);
+  if (new Date() > deadline) {
+    throw new AppError('Thời hạn đánh giá đã hết (5 ngày)', 400, 'REVIEW_PERIOD_EXPIRED');
+  }
+
+  const existingReview = await reviewRepo.findOne({ where: { bookingId } });
+  if (existingReview) {
+    throw new AppError('Booking này đã được đánh giá', 409, 'ALREADY_REVIEWED');
+  }
+
+  booking.reviewSnoozedUntil = new Date(Date.now() + REVIEW_REMINDER_SNOOZE_HOURS * 60 * 60 * 1000);
+  await bookingRepo.save(booking);
+}
+
 // ── US1: Get pending reviews ──────────────────────────────────────────────────
 
 export interface PendingReviewItem {
@@ -87,7 +125,10 @@ export interface PendingReviewItem {
   completedAt: Date;
 }
 
-export async function getPendingReviews(customerId: string): Promise<PendingReviewItem[]> {
+export async function getPendingReviews(
+  customerId: string,
+  includeSnoozed = false,
+): Promise<PendingReviewItem[]> {
   const deadline = new Date();
   deadline.setDate(deadline.getDate() - REVIEW_WINDOW_DAYS);
 
@@ -107,6 +148,8 @@ export async function getPendingReviews(customerId: string): Promise<PendingRevi
        AND b.completed_at IS NOT NULL
        AND b.completed_at > $2
        AND b.review_dismissed_at IS NULL
+       ${includeSnoozed ? '' : 'AND (b.review_snoozed_until IS NULL OR b.review_snoozed_until <= NOW())'}
+       AND b.source <> 'STAFF_MANUAL'
        AND NOT EXISTS (
          SELECT 1 FROM reviews r WHERE r.booking_id = b.id
        )
