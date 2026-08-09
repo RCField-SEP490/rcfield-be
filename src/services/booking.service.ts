@@ -265,6 +265,10 @@ export async function broadcastBookingUpdated(
   action: string,
 ): Promise<void> {
   try {
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId'],
+    });
     const payload = {
       bookingId: booking.id,
       cafeId: booking.cafeId,
@@ -273,6 +277,9 @@ export async function broadcastBookingUpdated(
       updatedAt: new Date().toISOString(),
     };
     wsService.pushToCafe(booking.cafeId, 'BOOKING_UPDATED', payload);
+    if (cafe?.providerId) {
+      wsService.pushToUser(cafe.providerId, 'BOOKING_UPDATED', payload);
+    }
   } catch (error) {
     logger.error('BookingService', 'failed to broadcast booking update', {
       bookingId: booking.id,
@@ -1344,6 +1351,10 @@ export async function cancelBooking(
       `SELECT staff_id FROM staff_cafe_assignments WHERE cafe_id = $1`,
       [booking.cafeId],
     );
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId'],
+    });
 
     if (role === UserRole.PROVIDER || role === UserRole.STAFF) {
       // 1. Gửi thông báo cho Khách hàng
@@ -1386,7 +1397,18 @@ export async function cancelBooking(
         message: staffMessage,
         routeStaff: `/staff/bookings/${booking.id}`,
         routeProvider: '/provider/bookings',
+        cancelledBy,
       });
+      if (cafe?.providerId) {
+        wsService.pushToUser(cafe.providerId, 'BOOKING_CANCELLED_OPERATIONAL', {
+          bookingId: booking.id,
+          title: staffTitle,
+          message: staffMessage,
+          routeStaff: `/staff/bookings/${booking.id}`,
+          routeProvider: '/provider/bookings',
+          cancelledBy,
+        });
+      }
     } else if (role === UserRole.CUSTOMER) {
       // Khách tự hủy: chỉ gửi cho Staff của cơ sở
       const staffTitle = 'Khách hàng hủy đặt lịch';
@@ -1408,7 +1430,18 @@ export async function cancelBooking(
         message: staffMessage,
         routeStaff: `/staff/bookings/${booking.id}`,
         routeProvider: '/provider/bookings',
+        cancelledBy,
       });
+      if (cafe?.providerId) {
+        wsService.pushToUser(cafe.providerId, 'BOOKING_CANCELLED_OPERATIONAL', {
+          bookingId: booking.id,
+          title: staffTitle,
+          message: staffMessage,
+          routeStaff: `/staff/bookings/${booking.id}`,
+          routeProvider: '/provider/bookings',
+          cancelledBy,
+        });
+      }
     }
   } catch (notifErr) {
     logger.error('BookingService', 'Lỗi khi gửi thông báo hủy đơn', notifErr);
