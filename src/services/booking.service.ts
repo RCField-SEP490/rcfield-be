@@ -52,6 +52,7 @@ import { writeContestAudit } from './contest.helpers';
 import { sendContestRegistrationStatusNotification } from './contest/registration-side-effects';
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { wsService } from './websocket.service';
+import { createNotification } from './notification.service';
 import type { Promotion } from '../models/promotion.entity';
 import type { CafeOperatingHours } from '../types';
 
@@ -264,6 +265,10 @@ export async function broadcastBookingUpdated(
   action: string,
 ): Promise<void> {
   try {
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId'],
+    });
     const payload = {
       bookingId: booking.id,
       cafeId: booking.cafeId,
@@ -272,6 +277,9 @@ export async function broadcastBookingUpdated(
       updatedAt: new Date().toISOString(),
     };
     wsService.pushToCafe(booking.cafeId, 'BOOKING_UPDATED', payload);
+    if (cafe?.providerId) {
+      wsService.pushToUser(cafe.providerId, 'BOOKING_UPDATED', payload);
+    }
   } catch (error) {
     logger.error('BookingService', 'failed to broadcast booking update', {
       bookingId: booking.id,
@@ -1336,6 +1344,109 @@ export async function cancelBooking(
   await cancelPendingFnbOrders(bookingId);
   logger.info('BookingService', `cancelled bookingId=${bookingId} by ${role}`);
 
+  // ── Gửi thông báo hủy đơn ──
+  try {
+    const bookingCode = booking.id.substring(0, 8).toUpperCase();
+    const staffAssignments = await AppDataSource.query<{ staff_id: string }[]>(
+      `SELECT staff_id FROM staff_cafe_assignments WHERE cafe_id = $1`,
+      [booking.cafeId],
+    );
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId'],
+    });
+
+    if (role === UserRole.PROVIDER || role === UserRole.STAFF) {
+      // 1. Gửi thông báo cho Khách hàng
+      const customerTitle = 'Đơn đặt lịch bị hủy';
+      const customerMessage = `Đơn đặt lịch #${bookingCode} của bạn đã bị hủy bởi nhà cung cấp.`;
+      const customerRoute = `/customer/bookings/${booking.id}`;
+
+      await createNotification(
+        booking.customerId,
+        NotificationType.BOOKING_CANCELLED,
+        customerTitle,
+        customerMessage,
+        { bookingId: booking.id, route: customerRoute },
+      );
+
+      wsService.pushToUser(booking.customerId, 'BOOKING_CANCELLED', {
+        bookingId: booking.id,
+        title: customerTitle,
+        message: customerMessage,
+        route: customerRoute,
+      });
+
+      // 2. Gửi thông báo cho Staff (lưu DB & WebSocket)
+      const staffTitle = 'Đơn đặt lịch bị hủy';
+      const staffMessage = `Đơn đặt lịch #${bookingCode} tại cơ sở vừa bị hủy bởi nhà cung cấp.`;
+
+      for (const assignment of staffAssignments) {
+        await createNotification(
+          assignment.staff_id,
+          NotificationType.BOOKING_CANCELLED,
+          staffTitle,
+          staffMessage,
+          { bookingId: booking.id, route: `/staff/bookings/${booking.id}` },
+        );
+      }
+
+      wsService.pushToCafe(booking.cafeId, 'BOOKING_CANCELLED_OPERATIONAL', {
+        bookingId: booking.id,
+        title: staffTitle,
+        message: staffMessage,
+        routeStaff: `/staff/bookings/${booking.id}`,
+        routeProvider: '/provider/bookings',
+        cancelledBy,
+      });
+      if (cafe?.providerId) {
+        wsService.pushToUser(cafe.providerId, 'BOOKING_CANCELLED_OPERATIONAL', {
+          bookingId: booking.id,
+          title: staffTitle,
+          message: staffMessage,
+          routeStaff: `/staff/bookings/${booking.id}`,
+          routeProvider: '/provider/bookings',
+          cancelledBy,
+        });
+      }
+    } else if (role === UserRole.CUSTOMER) {
+      // Khách tự hủy: chỉ gửi cho Staff của cơ sở
+      const staffTitle = 'Khách hàng hủy đặt lịch';
+      const staffMessage = `Đơn đặt lịch #${bookingCode} tại cơ sở vừa bị khách hàng chủ động hủy.`;
+
+      for (const assignment of staffAssignments) {
+        await createNotification(
+          assignment.staff_id,
+          NotificationType.BOOKING_CANCELLED,
+          staffTitle,
+          staffMessage,
+          { bookingId: booking.id, route: `/staff/bookings/${booking.id}` },
+        );
+      }
+
+      wsService.pushToCafe(booking.cafeId, 'BOOKING_CANCELLED_OPERATIONAL', {
+        bookingId: booking.id,
+        title: staffTitle,
+        message: staffMessage,
+        routeStaff: `/staff/bookings/${booking.id}`,
+        routeProvider: '/provider/bookings',
+        cancelledBy,
+      });
+      if (cafe?.providerId) {
+        wsService.pushToUser(cafe.providerId, 'BOOKING_CANCELLED_OPERATIONAL', {
+          bookingId: booking.id,
+          title: staffTitle,
+          message: staffMessage,
+          routeStaff: `/staff/bookings/${booking.id}`,
+          routeProvider: '/provider/bookings',
+          cancelledBy,
+        });
+      }
+    }
+  } catch (notifErr) {
+    logger.error('BookingService', 'Lỗi khi gửi thông báo hủy đơn', notifErr);
+  }
+
   // Mirror the cancellation to the linked contest registration (contest rental
   // bookings). Never blocks the booking cancel: failures are logged only.
   if (booking.contestId) {
@@ -1503,12 +1614,13 @@ export async function listCafeBookings(
       'u.full_name AS "customerName"',
       'u.phone AS "customerPhone"',
       's.status AS "sessionStatus"',
+      "(SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS \"hasPendingRefund\"",
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
     .andWhere('b.deleted_at IS NULL')
     .orderBy('b.slot_start', period ? 'ASC' : 'DESC')
-    .skip((query.page - 1) * query.limit)
-    .take(query.limit);
+    .offset((query.page - 1) * query.limit)
+    .limit(query.limit);
 
   if (period) {
     qb = qb
@@ -1597,6 +1709,7 @@ export interface CafeBookingListItem {
   customerName: string;
   customerPhone: string | null;
   sessionStatus?: string | null;
+  hasPendingRefund?: boolean;
 }
 
 async function cancelPendingFnbOrders(bookingId: string): Promise<void> {

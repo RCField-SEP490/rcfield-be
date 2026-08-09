@@ -52,7 +52,7 @@ async function pushBookingNew(booking: Booking): Promise<void> {
   try {
     const cafe = await AppDataSource.getRepository(Cafe).findOne({
       where: { id: booking.cafeId },
-      select: ['name'],
+      select: ['name', 'providerId'],
     });
     if (!cafe) return;
     const payload = {
@@ -61,6 +61,9 @@ async function pushBookingNew(booking: Booking): Promise<void> {
       slotStart: booking.slotStart,
     };
     wsService.pushToCafe(booking.cafeId, 'NEW_BOOKING', payload);
+    if (cafe.providerId) {
+      wsService.pushToUser(cafe.providerId, 'NEW_BOOKING', payload);
+    }
   } catch (err) {
     logger.error('PaymentService', 'pushBookingNew failed', err);
   }
@@ -73,6 +76,10 @@ async function pushBookingPaymentUpdated(booking: Booking): Promise<void> {
       where: { bookingId: booking.id },
       select: ['id'],
     });
+    const cafe = await AppDataSource.getRepository(Cafe).findOne({
+      where: { id: booking.cafeId },
+      select: ['providerId'],
+    });
     const payload = {
       bookingId: booking.id,
       cafeId: booking.cafeId,
@@ -81,6 +88,9 @@ async function pushBookingPaymentUpdated(booking: Booking): Promise<void> {
       updatedAt: new Date().toISOString(),
     };
     wsService.pushToCafe(booking.cafeId, 'BOOKING_PAYMENT_UPDATED', payload);
+    if (cafe?.providerId) {
+      wsService.pushToUser(cafe.providerId, 'BOOKING_PAYMENT_UPDATED', payload);
+    }
   } catch (error) {
     logger.error('PaymentService', 'pushBookingPaymentUpdated failed', {
       bookingId: booking.id,

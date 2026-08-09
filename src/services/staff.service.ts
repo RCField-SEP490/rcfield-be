@@ -187,6 +187,7 @@ export interface TodayBookingItem {
   participantDetails: { name: string; phone?: string; isBooker: boolean }[];
   plannedVehicles: string[];
   sessions: any[];
+  hasPendingRefund?: boolean;
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -590,7 +591,8 @@ export async function getBookingsByDate(
        c.name AS cafe_name,
        c.address AS cafe_address,
        c.phone AS cafe_phone,
-       tt.name AS track_name
+       tt.name AS track_name,
+       (SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS "hasPendingRefund"
      FROM bookings b
      JOIN cafes c ON c.id = b.cafe_id
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
@@ -718,6 +720,7 @@ export async function getBookingsByDate(
       participantDetails,
       plannedVehicles,
       sessions: sessionsList,
+      hasPendingRefund: row.hasPendingRefund,
     });
   }
 
