@@ -19,13 +19,13 @@ import {
 export function getRegistrationStatusLabel(status: ContestRegistrationStatus) {
   switch (status) {
     case ContestRegistrationStatus.PENDING:
-      return 'Cho duyet';
+      return 'Chờ duyệt';
     case ContestRegistrationStatus.CONFIRMED:
-      return 'Da duyet';
+      return 'Đã duyệt';
     case ContestRegistrationStatus.CHECKED_IN:
-      return 'Da check-in';
+      return 'Đã điểm danh';
     case ContestRegistrationStatus.CANCELLED:
-      return 'Da huy';
+      return 'Đã huỷ';
     default:
       return status;
   }
@@ -34,15 +34,15 @@ export function getRegistrationStatusLabel(status: ContestRegistrationStatus) {
 export function getPaymentStatusLabel(status: ContestEntryFeePaymentStatus) {
   switch (status) {
     case ContestEntryFeePaymentStatus.NOT_REQUIRED:
-      return 'Khong can thanh toan';
+      return 'Không thu phí';
     case ContestEntryFeePaymentStatus.PENDING_PAYMENT:
-      return 'Cho thanh toan';
+      return 'Chờ thanh toán';
     case ContestEntryFeePaymentStatus.PENDING_REVIEW:
-      return 'Cho xac nhan';
+      return 'Chờ xác nhận';
     case ContestEntryFeePaymentStatus.WAIVED:
-      return 'Da mien phi';
+      return 'Đã miễn phí';
     case ContestEntryFeePaymentStatus.MARKED_PAID:
-      return 'Da ghi nhan thanh toan';
+      return 'Đã thu tiền';
     default:
       return status;
   }

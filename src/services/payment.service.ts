@@ -653,8 +653,8 @@ async function markContestEntryFeePaidOnBookingSuccess(booking: Booking): Promis
       await sendContestRegistrationStatusNotification(
         registration,
         NotificationType.CONTEST_REGISTRATION_APPROVED,
-        'Phi tham gia giai dau da duoc thanh toan',
-        'Phi tham gia giai dau cua ban da duoc thanh toan cung voi booking thue xe.',
+        'Đã thanh toán lệ phí giải đấu',
+        'Lệ phí giải đấu của bạn đã được thanh toán cùng với phiếu thuê xe.',
       );
     }
   } catch (err) {

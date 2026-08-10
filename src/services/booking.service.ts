@@ -1226,8 +1226,8 @@ export async function cancelContestRegistrationOnBookingCancel(
   await sendContestRegistrationStatusNotification(
     registration,
     NotificationType.CONTEST_REGISTRATION_CANCELLED,
-    'Dang ky giai dau da duoc huy',
-    'Dang ky cua ban da duoc huy do booking da bi huy.',
+    'Đăng ký giải đấu đã bị huỷ',
+    'Đăng ký của bạn bị huỷ do phiếu thuê xe kèm theo đã bị huỷ.',
   );
 }
 

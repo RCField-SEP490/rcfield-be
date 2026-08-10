@@ -48,6 +48,8 @@ type SendContestReminderEmailInput = {
   contestName: string;
   contestId: string;
   hostBranchName: string | null;
+  /** Có địa chỉ thì email kèm được link chỉ đường — thứ cần nhất khi sắp phải đi. */
+  hostBranchAddress: string | null;
   startsAt: Date;
   reminderLabel: string;
   checkInCode: string | null;
@@ -64,6 +66,36 @@ function formatContestDateTime(value: Date): string {
     minute: '2-digit',
     timeZone: 'Asia/Ho_Chi_Minh',
   });
+}
+
+/**
+ * Tên giải và tên chi nhánh do provider tự đặt, nên có thể chứa `<`, `&`.
+ * Nhét thẳng vào HTML thì nhẹ là vỡ layout, nặng là chèn được thẻ vào email.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Giờ và ngày tách riêng, để email nhắc lịch cho giờ cỡ chữ lớn hơn ngày. */
+function formatContestTimeParts(value: Date): { time: string; date: string } {
+  return {
+    time: value.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }),
+    date: value.toLocaleDateString('vi-VN', {
+      weekday: 'long',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }),
+  };
 }
 
 class EmailService {
@@ -675,62 +707,121 @@ class EmailService {
     });
   }
 
+  /**
+   * Email nhắc lịch trước giờ thi đấu.
+   *
+   * Thiết kế quanh hoàn cảnh đọc: người ta mở email này trên điện thoại, thường
+   * là lúc đang chuẩn bị đi. Nên ba thứ được đẩy lên trên cùng và làm to —
+   * CÒN BAO LÂU, MẤY GIỜ, MÃ ĐIỂM DANH — còn phần dặn dò xuống dưới.
+   *
+   * Bản cũ nhét mã điểm danh vào một ô bảng cỡ 13px lẫn giữa các dòng khác,
+   * trong khi đây đúng là email được mở ra ở quầy để đọc mã cho nhân viên.
+   */
   async sendContestReminder(input: SendContestReminderEmailInput): Promise<void> {
-    const startsAtLabel = formatContestDateTime(input.startsAt);
+    const { time, date } = formatContestTimeParts(input.startsAt);
+    const contestName = escapeHtml(input.contestName);
+    const customerName = escapeHtml(input.customerName);
+    const branchName = input.hostBranchName ? escapeHtml(input.hostBranchName) : null;
+    const branchAddress = input.hostBranchAddress ? escapeHtml(input.hostBranchAddress) : null;
+    const countdown = escapeHtml(input.reminderLabel);
+    const contestUrl = `${env.frontendUrl}/contests/${input.contestId}`;
+    const mapsUrl = input.hostBranchAddress
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(input.hostBranchAddress)}`
+      : null;
+
+    // Dòng xem trước trong hộp thư. Không đặt thì Gmail lấy tạm chữ đầu của
+    // phần đầu email, tức là hiện mỗi chữ "RCField".
+    const preheader = `${input.reminderLabel} nữa là ${input.contestName} bắt đầu — ${time} ${date}.`;
+
+    const textContent = [
+      `Xin chào ${input.customerName},`,
+      `${input.reminderLabel} nữa là ${input.contestName} bắt đầu.`,
+      `Thời gian: ${time} - ${date}`,
+      branchName ? `Địa điểm: ${input.hostBranchName}` : null,
+      branchAddress ? `Địa chỉ: ${input.hostBranchAddress}` : null,
+      input.checkInCode ? `Mã điểm danh: ${input.checkInCode}` : null,
+      `Xem sơ đồ đấu và kết quả: ${contestUrl}`,
+      `Không điểm danh đúng giờ thì bạn có thể bị xử thua vắng mặt.`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
     await this.brevoSend({
       sender: { email: env.email.fromEmail, name: env.email.fromName },
       to: [{ email: input.to, name: input.customerName }],
-      subject: `Nhắc lịch thi đấu ${input.contestName} | RCField`,
+      subject: `${input.reminderLabel} nữa: ${input.contestName} | RCField`,
+      textContent,
       htmlContent: `
-        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
-          <div style="background:#111827;padding:24px 32px">
-            <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
-          </div>
-          <div style="padding:32px">
-            <h2 style="margin:0 0 8px">Sắp đến giờ thi đấu</h2>
-            <p style="color:#6b7280;margin:0 0 24px">
-              Xin chào <strong>${input.customerName}</strong>, ${input.reminderLabel.toLowerCase()} đến giờ bắt đầu
-              <strong>${input.contestName}</strong>.
-            </p>
+        <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preheader)}</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f3f2;padding:24px 12px">
+          <tr><td align="center">
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;color:#1c1b1b">
 
-            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
-              <tr>
-                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giải đấu</td>
-                <td style="padding:8px 0;font-size:13px;font-weight:600">${input.contestName}</td>
-              </tr>
-              <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chi nhánh</td>
-                <td style="padding:8px 0;font-size:13px">${input.hostBranchName ?? 'Đang cập nhật'}</td>
-              </tr>
-              <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Bắt đầu</td>
-                <td style="padding:8px 0;font-size:13px">${startsAtLabel}</td>
-              </tr>
+              <tr><td style="background:#1c1b1b;padding:20px 32px">
+                <span style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.01em">RCField</span>
+              </td></tr>
+
+              <tr><td style="padding:32px 32px 8px">
+                <span style="display:inline-block;background:#fff1e7;color:#c2410c;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:6px 12px;border-radius:999px">
+                  ${countdown} nữa
+                </span>
+                <h1 style="margin:16px 0 4px;font-size:24px;line-height:1.25;font-weight:800">${contestName}</h1>
+                <p style="margin:0;color:#5d5f5f;font-size:14px">Xin chào ${customerName}, sắp tới giờ thi đấu của bạn.</p>
+              </td></tr>
+
+              <tr><td style="padding:24px 32px 0">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e2e1;border-radius:12px">
+                  <tr><td style="padding:20px">
+                    <p style="margin:0 0 2px;color:#747878;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Bắt đầu</p>
+                    <p style="margin:0;font-size:28px;font-weight:800;line-height:1.1">${time}</p>
+                    <p style="margin:2px 0 0;color:#5d5f5f;font-size:14px">${date}</p>
+                    ${
+                      branchName
+                        ? `<p style="margin:14px 0 0;padding-top:14px;border-top:1px solid #f0eded;color:#747878;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Địa điểm</p>
+                           <p style="margin:2px 0 0;font-size:15px;font-weight:700">${branchName}</p>
+                           ${branchAddress ? `<p style="margin:2px 0 0;color:#5d5f5f;font-size:13px">${branchAddress}</p>` : ''}
+                           ${mapsUrl ? `<a href="${mapsUrl}" style="display:inline-block;margin-top:8px;color:#c2410c;font-size:13px;font-weight:700;text-decoration:none">Xem đường đi &rarr;</a>` : ''}`
+                        : ''
+                    }
+                  </td></tr>
+                </table>
+              </td></tr>
+
               ${
                 input.checkInCode
-                  ? `<tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Mã check-in</td>
-                <td style="padding:8px 0;font-size:13px;font-weight:700">${input.checkInCode}</td>
-              </tr>`
+                  ? `<tr><td style="padding:16px 32px 0">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fcf8f8;border:1px solid #e5e2e1;border-radius:12px">
+                  <tr><td align="center" style="padding:20px">
+                    <p style="margin:0 0 2px;color:#747878;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Mã điểm danh</p>
+                    <p style="margin:0;font-size:32px;font-weight:800;letter-spacing:0.18em">${escapeHtml(input.checkInCode)}</p>
+                    <p style="margin:6px 0 0;color:#747878;font-size:12px">Đọc mã này cho nhân viên khi tới nơi</p>
+                  </td></tr>
+                </table>
+              </td></tr>`
                   : ''
               }
-            </table>
 
-            <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb">
-              <p style="margin:0 0 8px;font-size:14px;font-weight:700">Lưu ý trước khi đến</p>
-              <ul style="margin:0;padding-left:18px;color:#4b5563;font-size:13px;line-height:1.7">
-                <li>Đến sớm để kịp check-in và xác nhận thông tin thi đấu.</li>
-                <li>Đọc mã check-in ở trên cho nhân viên tại quầy khi tới nơi.</li>
-                <li>Theo dõi thông báo trong ứng dụng để xem sơ đồ đấu và kết quả.</li>
-              </ul>
-              <a href="${env.frontendUrl}/contests/${input.contestId}"
-                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
-                Xem sơ đồ đấu / kết quả
-              </a>
-            </div>
-          </div>
-        </div>
+              <tr><td style="padding:24px 32px 0">
+                <a href="${contestUrl}" style="display:block;background:#ea580c;color:#ffffff;text-align:center;text-decoration:none;font-size:15px;font-weight:700;padding:14px 24px;border-radius:12px">
+                  Xem sơ đồ đấu và kết quả
+                </a>
+              </td></tr>
+
+              <tr><td style="padding:24px 32px 32px">
+                <p style="margin:0 0 8px;font-size:14px;font-weight:700">Trước khi đi, nhớ kiểm tra</p>
+                <ul style="margin:0;padding-left:18px;color:#5d5f5f;font-size:13px;line-height:1.8">
+                  <li>Đến sớm hơn giờ bắt đầu để kịp điểm danh.</li>
+                  <li>Mang theo mã điểm danh ở trên.</li>
+                  <li>Mang xe cá nhân thì nhân viên sẽ kiểm tra xe trước khi vào thi.</li>
+                </ul>
+                <p style="margin:20px 0 0;padding-top:16px;border-top:1px solid #f0eded;color:#747878;font-size:12px;line-height:1.6">
+                  Không điểm danh đúng giờ thì bạn có thể bị xử thua vắng mặt.
+                </p>
+              </td></tr>
+
+            </table>
+          </td></tr>
+        </table>
       `,
     });
   }
