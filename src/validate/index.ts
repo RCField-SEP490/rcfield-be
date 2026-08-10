@@ -72,7 +72,11 @@ export const LogoutSchema = z.object({
 export const UpdateMeSchema = z
   .object({
     full_name: z.string().min(2).max(255).optional(),
-    phone: z.string().min(9).max(20).nullable().optional(),
+    phone: z
+      .string()
+      .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không đúng định dạng')
+      .nullable()
+      .optional(),
     avatar_url: z.string().url().nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
