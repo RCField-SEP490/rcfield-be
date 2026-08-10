@@ -38,6 +38,7 @@ export interface BookingFinancialSummary {
   additionalOutstandingAmount: number;
   totalPaidAmount: number;
   totalRefundedAmount: number;
+  netPaidAmount: number;
   outstandingAmount: number;
   isSettled: boolean;
 }
@@ -271,6 +272,12 @@ export function buildBookingFinancialSummary(
   );
   const outstandingAmount = prepaidOutstandingAmount + additionalOutstandingAmount;
 
+  const grossPaidAmount = successfulPayments.reduce(
+    (sum, transaction) => sum + Number(transaction.amount),
+    0,
+  );
+  const netPaidAmount = Math.max(0, grossPaidAmount - totalRefundedAmount);
+
   return {
     prepaidLines,
     additionalLines,
@@ -284,10 +291,9 @@ export function buildBookingFinancialSummary(
       0,
     ),
     additionalOutstandingAmount,
-    totalPaidAmount:
-      successfulPayments.reduce((sum, transaction) => sum + Number(transaction.amount), 0) -
-      totalRefundedAmount,
+    totalPaidAmount: grossPaidAmount,
     totalRefundedAmount,
+    netPaidAmount,
     outstandingAmount,
     isSettled: outstandingAmount === 0,
   };

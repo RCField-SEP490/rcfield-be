@@ -97,6 +97,12 @@ export async function listTrackConfigs(
 ): Promise<ReturnType<typeof formatConfig>[]> {
   const repo = AppDataSource.getRepository(CafeTrackConfig);
   const trackTypeRepo = AppDataSource.getRepository(TrackType);
+  const cafeRepo = AppDataSource.getRepository(Cafe);
+
+  const cafe = await cafeRepo.findOne({ where: { id: cafeId } });
+  if (!cafe || cafe.deletedAt) {
+    throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
+  }
 
   const isProvider = viewer?.role === UserRole.PROVIDER || viewer?.role === UserRole.ADMIN;
 
@@ -119,6 +125,40 @@ export async function listTrackConfigs(
       return listFallbackTrackConfigs(cafeId);
     }
     throw error;
+  }
+
+  // If cafe has trackTypes that don't have records in cafe_track_configs, initialize them
+  if (cafe.trackTypes && cafe.trackTypes.length > 0) {
+    const existingTrackTypeIds = new Set(configs.map((c) => c.trackTypeId));
+    const missingTrackTypeIds = cafe.trackTypes.filter((id) => !existingTrackTypeIds.has(id));
+
+    if (missingTrackTypeIds.length > 0) {
+      const activeTrackTypes = await trackTypeRepo.findBy({ id: In(missingTrackTypeIds) });
+      const newConfigs: CafeTrackConfig[] = [];
+      for (const tt of activeTrackTypes) {
+        if (!tt.isActive) continue;
+        const newCfg = repo.create({
+          cafeId,
+          trackTypeId: tt.id,
+          maxConcurrent: cafe.maxConcurrentBookings || 10,
+          byocCapacity: cafe.byocCapacity || 0,
+          images: [],
+          description: tt.description,
+          sortOrder: tt.sortOrder ?? 0,
+          isActive: true,
+        });
+        newConfigs.push(newCfg);
+      }
+      if (newConfigs.length > 0) {
+        await repo.save(newConfigs);
+        configs.push(...newConfigs);
+        configs.sort(
+          (a, b) =>
+            a.sortOrder - b.sortOrder ||
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
+      }
+    }
   }
 
   const trackTypeIds = [...new Set(configs.map((c) => c.trackTypeId))];
@@ -181,18 +221,39 @@ export async function updateTrackConfig(
   await getManagedCafeOrThrow(cafeId, viewer);
 
   const repo = AppDataSource.getRepository(CafeTrackConfig);
-  const config = await repo.findOne({
+  let config = await repo.findOne({
     where: { id: configId, cafeId },
   });
   if (!config || config.deletedAt) {
-    throw new AppError('Track config not found', 404, 'TRACK_CONFIG_NOT_FOUND');
+    config = await repo.findOne({ where: { trackTypeId: configId, cafeId } });
+  }
+  if (!config || config.deletedAt) {
+    const trackType = await AppDataSource.getRepository(TrackType).findOne({
+      where: { id: configId },
+    });
+    if (trackType) {
+      const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: cafeId } });
+      config = repo.create({
+        cafeId,
+        trackTypeId: trackType.id,
+        maxConcurrent: cafe?.maxConcurrentBookings ?? 10,
+        byocCapacity: cafe?.byocCapacity ?? 0,
+        images: [],
+        description: trackType.description,
+        sortOrder: trackType.sortOrder ?? 0,
+        isActive: true,
+      });
+      await repo.save(config);
+    } else {
+      throw new AppError('Track config not found', 404, 'TRACK_CONFIG_NOT_FOUND');
+    }
   }
 
   // Deactivation guard: block if upcoming active bookings exist
   if (body.is_active === false && config.isActive) {
     const upcomingCount = await AppDataSource.getRepository(Booking)
       .createQueryBuilder('b')
-      .where('b.track_config_id = :configId', { configId })
+      .where('b.track_config_id = :configId', { configId: config.id })
       .andWhere('b.status IN (:...statuses)', {
         statuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
       })
@@ -232,9 +293,30 @@ export async function uploadTrackConfigImages(
   await getManagedCafeOrThrow(cafeId, viewer);
 
   const repo = AppDataSource.getRepository(CafeTrackConfig);
-  const config = await repo.findOne({ where: { id: configId, cafeId } });
+  let config = await repo.findOne({ where: { id: configId, cafeId } });
   if (!config || config.deletedAt) {
-    throw new AppError('Track config not found', 404, 'TRACK_CONFIG_NOT_FOUND');
+    config = await repo.findOne({ where: { trackTypeId: configId, cafeId } });
+  }
+  if (!config || config.deletedAt) {
+    const trackType = await AppDataSource.getRepository(TrackType).findOne({
+      where: { id: configId },
+    });
+    if (trackType) {
+      const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: cafeId } });
+      config = repo.create({
+        cafeId,
+        trackTypeId: trackType.id,
+        maxConcurrent: cafe?.maxConcurrentBookings ?? 10,
+        byocCapacity: cafe?.byocCapacity ?? 0,
+        images: [],
+        description: trackType.description,
+        sortOrder: trackType.sortOrder ?? 0,
+        isActive: true,
+      });
+      await repo.save(config);
+    } else {
+      throw new AppError('Track config not found', 404, 'TRACK_CONFIG_NOT_FOUND');
+    }
   }
 
   if (config.images.length + files.length > 20) {
@@ -245,13 +327,14 @@ export async function uploadTrackConfigImages(
   for (const file of files) {
     const uploaded = await uploadImage({
       buffer: file.buffer,
-      folder: `rcfield/tracks/${cafeId}/${configId}`,
-      publicIdPrefix: `track-${configId}`,
+      folder: `rcfield/tracks/${cafeId}/${config.id}`,
+      publicIdPrefix: `track-${config.id}`,
     });
     newUrls.push(uploaded.url);
   }
 
-  config.images = [...config.images, ...newUrls];
+  // Prepend newly uploaded images so the new image immediately becomes the cover (images[0])
+  config.images = [...newUrls, ...config.images];
   await repo.save(config);
   return config.images;
 }
