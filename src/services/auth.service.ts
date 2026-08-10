@@ -337,7 +337,22 @@ class AuthService {
     if (!user) throw new AppError('Người dùng không tồn tại', 404, 'USER_NOT_FOUND');
 
     if (input.full_name !== undefined) user.full_name = input.full_name.trim();
-    if (input.phone !== undefined) user.phone = input.phone;
+    if (input.phone !== undefined) {
+      const newPhone = input.phone ? input.phone.trim() : null;
+      if (newPhone) {
+        const existingPhoneUser = await this.userRepo.findOne({
+          where: { phone: newPhone },
+        });
+        if (existingPhoneUser && existingPhoneUser.id !== userId) {
+          throw new AppError(
+            'Số điện thoại này đã được sử dụng bởi tài khoản khác',
+            409,
+            'PHONE_ALREADY_EXISTS',
+          );
+        }
+      }
+      user.phone = newPhone;
+    }
     if (input.avatar_url !== undefined) user.avatar_url = input.avatar_url;
 
     const saved = await this.userRepo.save(user);
