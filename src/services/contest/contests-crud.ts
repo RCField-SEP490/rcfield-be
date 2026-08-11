@@ -327,6 +327,13 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
     ).map((item) => item.cafeId);
 
   if (body.participating_cafe_ids) {
+    if (contest.status !== ContestStatus.DRAFT) {
+      throw new AppError(
+        'Không thể thay đổi chi nhánh sau khi giải đấu đã mở đăng ký',
+        400,
+        'CONTEST_BRANCH_NOT_MODIFIABLE',
+      );
+    }
     const providerId = await resolveContestProviderIdForViewer(viewer, contest);
     const branches = await resolveProviderBranchesOrThrow(providerId, body.participating_cafe_ids);
     const existingCafes = await AppDataSource.getRepository(ContestCafe).find({
