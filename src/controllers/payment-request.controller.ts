@@ -111,7 +111,7 @@ export const paymentRequestController = {
         });
         for (const pr of pendingRequests) {
           pr.status = PaymentRequestStatus.REJECTED;
-          pr.adminNotes = 'Hủy để tạo yêu cầu thanh toán mới';
+          pr.adminNotes = 'Hủy để tạo yêu cầu thanh toán mới.';
           pr.reviewedAt = new Date();
           await prRepo.save(pr);
         }

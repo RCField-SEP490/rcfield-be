@@ -105,7 +105,7 @@ export async function handlePaymentSuccess(request: PaymentRequest): Promise<voi
   await AppDataSource.transaction(async (manager) => {
     request.status = PaymentRequestStatus.CONFIRMED;
     request.reviewedAt = new Date();
-    request.adminNotes = 'Thanh toan tu dong qua PayOS';
+    request.adminNotes = 'Thanh toán tự động qua PayOS.';
     await manager.save(request);
 
     await activateFromPayment(request.providerId, request.planId);
@@ -131,7 +131,7 @@ export async function handlePaymentSuccess(request: PaymentRequest): Promise<voi
  */
 export async function handlePaymentFailed(
   request: PaymentRequest,
-  reason = 'Thanh toan bi huy hoac that bai',
+  reason = 'Thanh toán bị huỷ hoặc thất bại.',
 ): Promise<void> {
   if (
     request.status === PaymentRequestStatus.CONFIRMED ||
@@ -189,7 +189,7 @@ export async function verifyPaymentStatus(orderCode: number): Promise<PaymentReq
       await handlePaymentSuccess(request);
     } else if (['CANCELLED', 'EXPIRED'].includes(payosOrder.status)) {
       const reason =
-        payosOrder.status === 'CANCELLED' ? 'Nguoi dung huy thanh toan' : 'Giao dich het han';
+        payosOrder.status === 'CANCELLED' ? 'Người dùng hủy thanh toán.' : 'Giao dịch hết hạn.';
       await handlePaymentFailed(request, reason);
     }
 
