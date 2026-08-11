@@ -255,17 +255,25 @@ export async function approve(providerId: string, _adminId: string): Promise<voi
   const profile = await getProfileOrThrow(providerId);
   assertTransition(profile, ProviderStatus.ACTIVE);
 
+  // Hồ sơ bị từ chối rồi duyệt lại vẫn đi qua đây. Chỉ cấp gói dùng thử cho
+  // người chưa từng nhận, nếu không mỗi vòng từ chối/duyệt lại là thêm 30 ngày
+  // miễn phí.
+  const grantsTrial = profile.trialUsedAt === null;
+
   await AppDataSource.transaction(async (manager) => {
     profile.registrationStatus = ProviderStatus.ACTIVE;
+    if (grantsTrial) profile.trialUsedAt = new Date();
     await manager.save(profile);
-    await createTrial(providerId);
+    if (grantsTrial) await createTrial(providerId);
   });
 
   await createNotification(
     providerId,
     NotificationType.ACCOUNT_APPROVED,
     'Tài khoản đã được duyệt',
-    'Chào mừng bạn đến với RCField! Gói dùng thử 30 ngày đã được kích hoạt.',
+    grantsTrial
+      ? 'Chào mừng bạn đến với RCField! Gói dùng thử 30 ngày đã được kích hoạt.'
+      : 'Tài khoản của bạn đã hoạt động trở lại. Chọn một gói đăng ký để tiếp tục vận hành.',
   );
 }
 

@@ -85,4 +85,16 @@ export const featuredPopupController = {
       next(error);
     }
   },
+
+  // GET /api/v1/explore/featured-popups
+  async listActive(_req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const data = await featuredPopupService.listActiveFeaturedPopups(
+        FeaturedPopupPlacement.EXPLORE,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
 };

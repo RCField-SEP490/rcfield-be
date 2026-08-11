@@ -1,5 +1,7 @@
 import { AppDataSource } from '../config/database';
 import { PaymentRequest } from '../models/payment-request.entity';
+import { ProviderProfile } from '../models/provider-profile.entity';
+import { SubscriptionPlan } from '../models/subscription-plan.entity';
 import { AppError, NotificationType, PaymentRequestStatus } from '../types';
 import { createNotification } from './notification.service';
 import { activateFromPayment } from './subscription.service';
@@ -21,6 +23,35 @@ export async function submit(providerId: string, body: SubmitBody): Promise<Paym
       'Bạn đã có yêu cầu thanh toán đang chờ xử lý',
       409,
       'PAYMENT_REQUEST_PENDING',
+    );
+  }
+
+  const plan = await AppDataSource.getRepository(SubscriptionPlan).findOne({
+    where: { id: body.plan_id },
+  });
+  if (!plan) {
+    throw new AppError('Gói đăng ký không tồn tại', 404, 'SUBSCRIPTION_PLAN_NOT_FOUND');
+  }
+
+  // Gói dùng thử được cấp tự động một lần khi duyệt hồ sơ, không phải thứ mua
+  // được. Chặn ở đây chứ không chỉ ẩn nút bên giao diện: `confirm()` cộng thẳng
+  // 30 ngày cho bất kỳ gói nào, nên một yêu cầu gói dùng thử lọt qua là mở
+  // đường dùng miễn phí vô hạn.
+  if (plan.isTrial) {
+    const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
+      where: { userId: providerId },
+    });
+    if (profile?.trialUsedAt) {
+      throw new AppError(
+        'Bạn đã sử dụng gói dùng thử. Mỗi tài khoản chỉ được dùng thử một lần.',
+        409,
+        'TRIAL_ALREADY_USED',
+      );
+    }
+    throw new AppError(
+      'Gói dùng thử được kích hoạt tự động khi hồ sơ được duyệt, không cần thanh toán.',
+      400,
+      'TRIAL_NOT_PURCHASABLE',
     );
   }
 

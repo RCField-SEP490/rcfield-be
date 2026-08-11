@@ -74,6 +74,15 @@ export class ProviderProfile {
   @Column({ name: 'kyc_submitted_at', type: 'timestamptz', nullable: true })
   kycSubmittedAt: Date | null;
 
+  /**
+   * Thời điểm provider tiêu suất dùng thử. Mỗi tài khoản chỉ được một lần.
+   *
+   * Không suy ra được từ `provider_subscriptions` vì `activateFromPayment` ghi
+   * đè `plan_id` lên bản ghi cũ, xoá mất dấu vết gói dùng thử.
+   */
+  @Column({ name: 'trial_used_at', type: 'timestamptz', nullable: true })
+  trialUsedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

@@ -8,13 +8,28 @@ import {
 } from '../validate';
 import * as paymentRequestService from '../services/payment-request.service';
 import * as subscriptionService from '../services/subscription.service';
+import { AppDataSource } from '../config/database';
+import { ProviderProfile } from '../models/provider-profile.entity';
 
 export const paymentRequestController = {
   // GET /api/v1/provider/subscription  [auth]
   async getSubscriptionStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
-      const sub = await subscriptionService.getActive(req.user!.userId);
-      res.json({ success: true, data: sub });
+      const providerId = req.user!.userId;
+      const sub = await subscriptionService.getActive(providerId);
+
+      // Trả kèm ở cấp ngoài chứ không nhét vào `data`: `getActive` trả null khi
+      // gói đã hết hạn, mà đó lại đúng lúc giao diện cần biết suất dùng thử đã
+      // tiêu hay chưa để khoá nút.
+      const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
+        where: { userId: providerId },
+      });
+
+      res.json({
+        success: true,
+        data: sub,
+        trial_used_at: profile?.trialUsedAt ?? null,
+      });
     } catch (err) {
       next(err);
     }

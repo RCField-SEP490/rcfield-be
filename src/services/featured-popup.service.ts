@@ -1,6 +1,8 @@
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { FeaturedPopup } from '../models/featured-popup.entity';
 import { Contest } from '../models/contest.entity';
+import { mapContestPayload } from './contest/payload';
 import {
   AppError,
   FeaturedPopupAudienceScope,
@@ -153,6 +155,50 @@ export async function getActiveFeaturedPopup(placement = FeaturedPopupPlacement.
     .getOne();
 
   return popup ? mapFeaturedPopup(popup) : null;
+}
+
+/**
+ * Mọi suất quảng bá đang chạy của một vị trí, kèm dữ liệu giải đấu liên kết.
+ *
+ * Dùng cho dải carousel ở trang khám phá. Khác `getActiveFeaturedPopup` ở chỗ
+ * trả về danh sách thay vì một suất, nhưng dùng **đúng bộ điều kiện lọc** — đặc
+ * biệt là `review_status = APPROVED`, để nội dung provider trả tiền vẫn phải qua
+ * kiểm duyệt mới ra trước mặt khách.
+ *
+ * Giải không mua gói quảng bá sẽ không có hàng nào trong `featured_popups`, nên
+ * mặc nhiên không xuất hiện — không cần lọc thêm ở tầng nào khác.
+ */
+export async function listActiveFeaturedPopups(placement = FeaturedPopupPlacement.EXPLORE) {
+  const now = new Date();
+  const popups = await AppDataSource.getRepository(FeaturedPopup)
+    .createQueryBuilder('popup')
+    .where('popup.placement = :placement', { placement })
+    .andWhere('popup.is_active = TRUE')
+    .andWhere('popup.review_status = :approved', {
+      approved: FeaturedPopupReviewStatus.APPROVED,
+    })
+    .andWhere('popup.starts_at <= :now', { now })
+    .andWhere('popup.ends_at >= :now', { now })
+    .orderBy('popup.priority', 'DESC')
+    .addOrderBy('popup.starts_at', 'DESC')
+    .getMany();
+
+  if (popups.length === 0) return [];
+
+  const contestIds = popups
+    .map((popup) => popup.contestId)
+    .filter((id): id is string => Boolean(id));
+
+  const contests = contestIds.length
+    ? await AppDataSource.getRepository(Contest).findBy({ id: In(contestIds) })
+    : [];
+  const mappedContests = contests.length ? await mapContestPayload(contests) : [];
+  const contestMap = new Map(mappedContests.map((contest) => [contest.id, contest]));
+
+  return popups.map((popup) => ({
+    ...mapFeaturedPopup(popup),
+    contest: popup.contestId ? (contestMap.get(popup.contestId) ?? null) : null,
+  }));
 }
 
 /**

@@ -289,6 +289,51 @@ export enum FeaturedPopupAudienceScope {
   ALL = 'ALL',
 }
 
+/** Chiều tiền của một bút toán trong sổ thu chi giải đấu. */
+export enum ContestLedgerDirection {
+  IN = 'IN',
+  OUT = 'OUT',
+}
+
+/**
+ * Loại khoản thu — chỉ hợp lệ khi direction = IN.
+ *
+ * Tập đóng: chủ doanh nghiệp không tự thêm loại. Khoản không thuộc loại nào có
+ * sẵn thì dùng OTHER và mô tả ở tiêu đề, nhờ vậy báo cáo của các giải khác nhau
+ * so sánh được với nhau.
+ */
+export enum ContestLedgerIncomeCategory {
+  ENTRY_FEE_ADJUSTMENT = 'ENTRY_FEE_ADJUSTMENT',
+  SPONSORSHIP = 'SPONSORSHIP',
+  TICKET = 'TICKET',
+  FNB = 'FNB',
+  OTHER = 'OTHER',
+}
+
+/**
+ * Loại khoản chi — chỉ hợp lệ khi direction = OUT.
+ *
+ * FNB và OTHER cố ý trùng tên với enum thu: quán vừa thu tiền đồ uống bán trong
+ * ngày thi, vừa chi tiền mua nước cho trọng tài. Cột direction phân biệt nên
+ * trùng tên không gây nhập nhằng.
+ */
+export enum ContestLedgerExpenseCategory {
+  PRIZE_CASH = 'PRIZE_CASH',
+  PRIZE_ITEM = 'PRIZE_ITEM',
+  VENUE = 'VENUE',
+  STAFF = 'STAFF',
+  MARKETING = 'MARKETING',
+  FNB = 'FNB',
+  OTHER = 'OTHER',
+}
+
+/** Đường tiền lệ phí đi vào, cần để đối chiếu báo cáo với sao kê ngân hàng. */
+export enum ContestEntryFeePaymentMethod {
+  ONLINE = 'ONLINE',
+  CASH = 'CASH',
+  TRANSFER = 'TRANSFER',
+}
+
 export enum RaceRecordSourceType {
   CONTEST = 'CONTEST',
   SESSION_TIME_ATTACK = 'SESSION_TIME_ATTACK',

@@ -10,7 +10,7 @@ import { ContestTemplate } from '../../models/contest-template.entity';
 import { ContestType } from '../../models/contest-type.entity';
 import { Contest } from '../../models/contest.entity';
 import { AppError, ContestMatchStatus, UserRole } from '../../types';
-import { assertContestOperator } from '../contest.helpers';
+import { assertContestOperator, assertContestOwner } from '../contest.helpers';
 import { Viewer } from '../cafe.service';
 import { CreateRegistrationBody } from './types';
 
@@ -117,6 +117,27 @@ export function stripRuntimeManagedConfig(config: Record<string, unknown> | null
 
 export async function assertContestProviderOrAssignedStaff(contestId: string, viewer: Viewer) {
   return assertContestOperator(contestId, viewer);
+}
+
+/**
+ * Quyền xem sổ thu chi và báo cáo tài chính của một giải: CHỈ provider sở hữu.
+ *
+ * ⚠️ Đừng thay bằng guard nào khác trong module contest — hai guard sẵn có đều
+ * mở rộng hơn mức tính năng này cho phép:
+ *
+ * - `assertContestOperator` chấp nhận cả STAFF được phân công → nhân viên đọc
+ *   được số tổng tài chính của giải, vi phạm FR-021.
+ * - `getContestForProvider` (contest-fee.service.ts) chấp nhận cả ADMIN →
+ *   quản trị viên nền tảng nhìn được chi phí nội bộ của provider, vi phạm
+ *   FR-017a. Đây là ngoại lệ có chủ đích so với phần còn lại của hệ thống:
+ *   nền tảng không thu phần trăm trên giải nên không có lý do nghiệp vụ nào để
+ *   xem, trong khi các provider lại cạnh tranh nhau trên cùng hệ thống.
+ *
+ * `assertContestOwner` đã đúng ngữ nghĩa; hàm này chỉ đặt tên rõ ý đồ tại điểm
+ * gọi để người sửa sau không vô tình nới quyền.
+ */
+export async function assertContestFinanceOwner(contestId: string, viewer: Viewer) {
+  return assertContestOwner(contestId, viewer);
 }
 
 export async function resolveContestProviderIdForViewer(

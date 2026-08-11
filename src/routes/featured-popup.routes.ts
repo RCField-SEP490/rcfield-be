@@ -6,6 +6,7 @@ import { featuredPopupController } from '../controllers/featured-popup.controlle
 export const featuredPopupRouter = Router();
 
 featuredPopupRouter.get('/explore/featured-popup', featuredPopupController.getActive);
+featuredPopupRouter.get('/explore/featured-popups', featuredPopupController.listActive);
 
 featuredPopupRouter.use('/admin/featured-popups', authenticate, authorize(UserRole.ADMIN));
 // Đường tĩnh '/pending' phải đứng trước ':popupId', nếu không Express khớp
