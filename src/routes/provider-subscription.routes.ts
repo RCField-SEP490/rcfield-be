@@ -85,6 +85,11 @@ providerSubscriptionRouter.post(
   requireActiveProvider,
   paymentRequestController.submitPaymentRequest,
 );
+providerSubscriptionRouter.post(
+  '/payment-requests/payos-link',
+  requireActiveProvider,
+  paymentRequestController.getPayOSLink,
+);
 providerSubscriptionRouter.get(
   '/payment-requests',
   requireActiveProvider,

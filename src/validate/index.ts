@@ -1215,6 +1215,15 @@ export const SubmitPaymentRequestSchema = z.object({
   transfer_amount: z.number().positive('Số tiền phải lớn hơn 0'),
 });
 
+export const GetPayOSLinkSchema = z
+  .object({
+    plan_id: z.string().uuid('plan_id phải là UUID hợp lệ').optional(),
+    payment_request_id: z.string().uuid('payment_request_id phải là UUID hợp lệ').optional(),
+  })
+  .refine((data) => data.plan_id || data.payment_request_id, {
+    message: 'Cần truyền plan_id hoặc payment_request_id',
+  });
+
 export const AdminRejectSchema = z.object({
   reason: z.string().min(1).max(500),
 });
