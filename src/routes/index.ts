@@ -15,6 +15,7 @@ import { staffRouter } from './staff.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { adminAmenityRouter } from './admin-amenity.routes';
 import { cafeRouter } from './cafe.routes';
+import { bankTransactionRouter, cafeBankPaymentRouter } from './bank-payment.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
@@ -127,6 +128,11 @@ router.use('/provider', providerSubscriptionRouter);
 router.use('/staff', staffRouter);
 router.use('/system', systemRouter);
 router.use('/uploads', uploadRouter);
+// Mount TRƯỚC `cafeRouter`: cả hai cùng nhận `/cafes/:cafeId/...`, và Express
+// duyệt theo thứ tự đăng ký. Đặt sau thì `cafeRouter` có thể nuốt mất đường dẫn
+// bằng một route bắt chung nào đó.
+router.use('/cafes/:cafeId', cafeBankPaymentRouter);
+router.use('/bank-transactions', bankTransactionRouter);
 router.use('/cafes', cafeRouter);
 router.use('/', cafeImagesRouter);
 router.use('/cafes/:cafeId/vehicle-catalogs', vehicleCatalogRouter);

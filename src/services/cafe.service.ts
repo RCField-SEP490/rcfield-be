@@ -112,7 +112,14 @@ async function makeUniqueSlug(name: string): Promise<string> {
   return slug;
 }
 
-function assertCafeOwner(cafe: Cafe, providerId: string): void {
+/**
+ * Chỉ chủ sở hữu chi nhánh đi qua được.
+ *
+ * ⚠️ Khác `getManagedCafeOrThrow`, hàm này KHÔNG cho STAFF qua. Với dữ liệu
+ * nhạy cảm như tài khoản ngân hàng nhận tiền, đó là khác biệt quyết định —
+ * dùng nhầm hàm kia là để nhân viên đọc và sửa được số tài khoản của chủ quán.
+ */
+export function assertCafeOwner(cafe: Cafe, providerId: string): void {
   if (cafe.providerId !== providerId) {
     throw new AppError('Bạn chỉ có thể cập nhật cafe thuộc sở hữu của mình', 403, 'FORBIDDEN');
   }

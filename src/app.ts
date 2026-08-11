@@ -5,6 +5,9 @@ import cors from 'cors';
 import { rateLimit } from 'express-rate-limit';
 import { router } from './routes';
 import { vnpayRouter } from './routes/vnpay.routes';
+import { bankWebhookRouter } from './routes/bank-webhook.routes';
+import { sandboxBankRouter } from './routes/sandbox-bank.routes';
+import { logger } from './config/logger';
 import {
   createVnpayPayment,
   handleVnpayIpn,
@@ -39,6 +42,27 @@ app.use(
     skip: (req) => /^\/api\/v1\/cafes\/[^/]+\/availability$/.test(req.path),
   }),
 );
+
+// Điểm nhận thông báo tiền về từ dịch vụ đối soát ngân hàng. Mount TRƯỚC
+// `/api/v1` router chính vì nó không đi qua `authenticate` — bên gọi là một
+// dịch vụ máy-với-máy, xác thực bằng khoá API trong header.
+app.use('/api/v1/payments', bankWebhookRouter);
+
+// Ngân hàng mô phỏng — chỉ tồn tại khi được bật.
+//
+// Mount có điều kiện chứ không chặn bằng middleware: tắt cờ thì Express không
+// biết đường dẫn này tồn tại và trả 404: không có dòng mã nào của phần mô phỏng
+// chạy. Chặn bằng middleware thì mã vẫn nạp, vẫn chạy, chỉ là từ chối ở cuối.
+if (env.sandboxBank.enabled) {
+  app.use('/api/v1/sandbox-bank', sandboxBankRouter);
+  logger.warn(
+    'SandboxBank',
+    'ĐANG BẬT — mọi người quét mã QR đều tự xác nhận được booking mà không trả tiền. ' +
+      'Tắt bằng SANDBOX_BANK_ENABLED=false trước khi vận hành thương mại.',
+  );
+} else {
+  logger.info('SandboxBank', 'đang tắt — chỉ dịch vụ đối soát thật gọi được webhook');
+}
 
 app.use('/api/v1', router);
 app.use('/api/payments/vnpay', vnpayRouter);

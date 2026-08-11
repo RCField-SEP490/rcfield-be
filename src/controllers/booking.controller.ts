@@ -30,6 +30,7 @@ import {
   createCheckoutAdditionalPaymentUrl,
 } from '../services/payment.service';
 import type { BookingSnapshot } from '../services/payment.service';
+import { assertPaymentMethodAvailable } from '../services/payment-method-resolver';
 import { env } from '../config/env';
 import { Booking } from '../models/booking.entity';
 import { BookingParticipant } from '../models/booking-participant.entity';
@@ -117,7 +118,19 @@ export const bookingController = {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
       }
 
-      const result = await createCheckoutUrl(bookingId, ipAddr, req.body?.return_url);
+      // `payment_method` vắng mặt nghĩa là VNPay — hành vi y hệt trước khi có
+      // tính năng chuyển khoản. Mọi client cũ tiếp tục chạy không đổi.
+      const paymentMethod = await assertPaymentMethodAvailable(
+        booking.cafeId,
+        req.body?.payment_method,
+      );
+
+      const result = await createCheckoutUrl(
+        bookingId,
+        ipAddr,
+        req.body?.return_url,
+        paymentMethod,
+      );
       res.status(201).json({ success: true, data: result });
     } catch (err) {
       next(err);

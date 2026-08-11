@@ -47,6 +47,9 @@ import {
 } from './contest-rental.service';
 import { getPaymentGateway } from './payment-gateway.factory';
 import type { PaymentVerificationResult } from './payment-gateway.interface';
+import QRCode from 'qrcode';
+import { buildVietQrPayload, findBank, generatePaymentRefCode } from './vietqr';
+import { getVerifiedBankSettings } from './payment-method-resolver';
 
 async function pushBookingNew(booking: Booking): Promise<void> {
   try {
@@ -412,6 +415,20 @@ export async function resolveContestPricingAdjustments(
   return { ...adjustments, contestId: contest.id };
 }
 
+/** Dữ liệu mã QR chuyển khoản, chỉ có khi cổng là `bank_transfer`. */
+export interface BankTransferCheckout {
+  qr_payload: string;
+  qr_image_data_url: string;
+  ref_code: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  amount: number;
+  expires_at: string;
+  is_sandbox: boolean;
+  sandbox_url?: string;
+}
+
 export interface CheckoutResult {
   payment_url: string | null;
   txn_ref: string;
@@ -419,9 +436,23 @@ export interface CheckoutResult {
   confirmed?: boolean;
   slots_used?: number;
   slots_remaining_after?: number;
+  /**
+   * Mặc định `'redirect'` — hành vi có từ trước. Frontend cũ chưa đọc trường
+   * này ở đâu cả, nên thêm vào là an toàn.
+   */
+  flow?: 'redirect' | 'bank_transfer';
+  bank_transfer?: BankTransferCheckout;
 }
 
-/** Freezes prices into snapshot, returns VNPay redirect URL. If total=0, confirms inline. */
+/**
+ * Chốt giá vào snapshot rồi trả về đường thanh toán.
+ *
+ * `gatewayName` mặc định `'vnpay'` — chi nhánh chưa cấu hình gì thì hành vi
+ * không khác gì trước khi có chuyển khoản. Với `'bank_transfer'`, hàm trả thêm
+ * `flow` và dữ liệu mã QR thay vì một URL để chuyển hướng.
+ *
+ * Tổng bằng 0 (gói slot phủ hết) thì xác nhận luôn tại chỗ, không qua cổng nào.
+ */
 export async function createCheckoutUrl(
   bookingId: string,
   ipAddr: string,
@@ -660,10 +691,39 @@ export async function createCheckoutUrl(
     gatewayUrlExpiresAt &&
     gatewayUrlExpiresAt > new Date()
   ) {
+    // Lần thanh toán trước vẫn còn sống — trả lại đúng nó thay vì tạo mới.
+    //
+    // Với chuyển khoản phải dựng lại dữ liệu mã QR: nếu chỉ trả `payment_url`
+    // trống trơn, frontend không thấy `flow` nên rơi về nhánh chuyển hướng và
+    // đâm vào một URL không có trang nào. Khách bấm thanh toán lần hai là
+    // chuyện thường, không phải ngoại lệ hiếm.
+    if (latestPendingAttempt.gateway === 'BANK_TRANSFER') {
+      if (!latestPendingAttempt.paymentRefCode) {
+        throw new AppError(
+          'Giao dịch chuyển khoản thiếu mã tham chiếu.',
+          500,
+          'MISSING_PAYMENT_REF_CODE',
+        );
+      }
+      return {
+        payment_url: buildBankTransferPageUrl(bookingId),
+        txn_ref: latestPendingAttempt.txnRef,
+        total_amount: Number(latestPendingAttempt.amount),
+        flow: 'bank_transfer',
+        bank_transfer: await buildBankTransferCheckout({
+          cafeId: booking.cafeId,
+          amount: Number(latestPendingAttempt.amount),
+          refCode: latestPendingAttempt.paymentRefCode,
+          expiresAt: booking.paymentExpiresAt,
+        }),
+      };
+    }
+
     return {
       payment_url: pendingRequest.paymentUrl,
       txn_ref: latestPendingAttempt.txnRef,
       total_amount: Number(latestPendingAttempt.amount),
+      flow: 'redirect',
     };
   }
   if (latestPendingAttempt && !pendingRequest.additionalPayment) {
@@ -680,6 +740,15 @@ export async function createCheckoutUrl(
   // Every retry has a new gateway reference; a failed/cancelled VNPay attempt
   // must never be reused.
   const txnRef = `b_${bookingId.replace(/-/g, '').slice(0, 16)}_${randomUUID().replace(/-/g, '')}`;
+
+  // Chuyển khoản cần một mã ngắn nhúng vào nội dung — `txnRef` dài 50+ ký tự,
+  // không ai gõ tay vào app ngân hàng được, và ngân hàng cũng cắt bớt.
+  //
+  // Mã gắn vào TRANSACTION chứ không vào booking: mỗi lần khách đổi phương thức
+  // thanh toán, đoạn code phía trên đã đánh dấu transaction cũ FAILED và tạo cái
+  // mới, nên mã QR đã hiện ra tự hết hiệu lực theo. Gắn vào booking thì mã sống
+  // dai hơn phiên thanh toán và khách có thể bị thu tiền hai lần.
+  const paymentRefCode = gateway.name === 'BANK_TRANSFER' ? await allocatePaymentRefCode() : null;
 
   const gatewayResult = gateway.createPaymentUrl({
     amount: totalCharged,
@@ -705,6 +774,7 @@ export async function createCheckoutUrl(
     type: PaymentTransactionType.PAYMENT,
     gateway: gateway.name,
     txnRef,
+    paymentRefCode,
     amount: totalCharged,
     status: PaymentTransactionStatus.PENDING,
     rawRequest: {
@@ -720,7 +790,12 @@ export async function createCheckoutUrl(
   await txRepo.save(tx);
 
   // Auto-confirm for local/test flows: legacy VNPay mock env OR explicit mock gateway.
-  if (gateway.name === 'MOCK' || env.vnpay.mockEnabled) {
+  //
+  // ⚠️ `env.vnpay.mockEnabled` CHỈ áp cho cổng VNPAY. Bỏ điều kiện đó ra thì
+  // trên môi trường demo (nơi cờ này đang bật), booking chuyển khoản sẽ được
+  // xác nhận ngay tại đây — trước cả khi mã QR kịp hiện lên màn hình khách —
+  // và toàn bộ luồng đối soát qua webhook trở thành vô nghĩa.
+  if (gateway.name === 'MOCK' || (env.vnpay.mockEnabled && gateway.name === 'VNPAY')) {
     await processMockConfirmation(txnRef);
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
@@ -736,10 +811,112 @@ export async function createCheckoutUrl(
 
   logger.info('PaymentService', `checkout created txnRef=${txnRef} bookingId=${bookingId}`);
 
+  if (gateway.name === 'BANK_TRANSFER' && paymentRefCode) {
+    return {
+      payment_url: buildBankTransferPageUrl(bookingId),
+      txn_ref: txnRef,
+      total_amount: totalCharged,
+      flow: 'bank_transfer',
+      bank_transfer: await buildBankTransferCheckout({
+        cafeId: booking.cafeId,
+        amount: totalCharged,
+        refCode: paymentRefCode,
+        expiresAt: booking.paymentExpiresAt,
+      }),
+    };
+  }
+
   return {
     payment_url: gatewayResult.payment_url,
     txn_ref: txnRef,
     total_amount: totalCharged,
+    flow: 'redirect',
+  };
+}
+
+// ── Chuyển khoản: mã tham chiếu và dữ liệu mã QR ──────────────────────────────
+
+/**
+ * Trang chờ chuyển khoản, đánh địa chỉ theo `bookingId` chứ không theo `txnRef`.
+ *
+ * Khách tải lại trang hoặc mở lại link cũ vẫn phải ra đúng đơn của mình — mà
+ * `txnRef` thì đổi mỗi lần thử thanh toán lại, còn `bookingId` thì không.
+ */
+function buildBankTransferPageUrl(bookingId: string): string {
+  return new URL(`/payment/bank-transfer/${bookingId}`, env.frontendUrl).toString();
+}
+
+/**
+ * Cấp một mã tham chiếu chưa ai dùng.
+ *
+ * Không gian mã ~1 triệu tổ hợp và chỉ những giao dịch chưa hoàn tất mới thực sự
+ * cạnh tranh, nên đụng nhau là hiếm; vòng thử lại ở đây là để đúng chứ không
+ * phải để nhanh.
+ */
+async function allocatePaymentRefCode(): Promise<string> {
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = generatePaymentRefCode();
+    const clash = await txRepo.findOne({ where: { paymentRefCode: candidate } });
+    if (!clash) return candidate;
+  }
+  throw new AppError(
+    'Không cấp được mã tham chiếu thanh toán, thử lại sau.',
+    500,
+    'REF_CODE_ALLOCATION_FAILED',
+  );
+}
+
+/** Dựng mã QR VietQR cho một lần thanh toán chuyển khoản. */
+async function buildBankTransferCheckout(input: {
+  cafeId: string;
+  amount: number;
+  refCode: string;
+  expiresAt: Date;
+}): Promise<BankTransferCheckout> {
+  const settings = await getVerifiedBankSettings(input.cafeId);
+  if (!settings?.bankBin || !settings.accountNumber || !settings.accountName) {
+    throw new AppError(
+      'Chi nhánh chưa cấu hình xong tài khoản nhận chuyển khoản.',
+      400,
+      'PAYMENT_METHOD_UNAVAILABLE',
+    );
+  }
+
+  const qrPayload = buildVietQrPayload({
+    bankBin: settings.bankBin,
+    accountNumber: settings.accountNumber,
+    amount: input.amount,
+    memo: input.refCode,
+  });
+
+  const bank = settings.bankCode ? findBank(settings.bankCode) : null;
+
+  // Chế độ mô phỏng đổi NỘI DUNG mã QR sang đường dẫn trang ngân hàng giả lập,
+  // để quét bằng camera là mở được ngay — mã ngân hàng thật sẽ mở app ngân hàng
+  // và không có cách nào tự báo về cho hệ thống.
+  const sandboxUrl = env.sandboxBank.enabled
+    ? new URL(`/api/v1/sandbox-bank/pay?ref=${input.refCode}`, env.apiBaseUrl).toString()
+    : undefined;
+
+  const qrContent = sandboxUrl ?? qrPayload;
+  const qrImageDataUrl = await QRCode.toDataURL(qrContent, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 320,
+  });
+
+  return {
+    qr_payload: qrContent,
+    qr_image_data_url: qrImageDataUrl,
+    ref_code: input.refCode,
+    bank_name: bank?.name ?? settings.bankCode ?? 'Ngân hàng',
+    account_number: settings.accountNumber,
+    account_name: settings.accountName,
+    amount: input.amount,
+    expires_at: input.expiresAt.toISOString(),
+    is_sandbox: env.sandboxBank.enabled,
+    sandbox_url: sandboxUrl,
   };
 }
 

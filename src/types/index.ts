@@ -334,6 +334,57 @@ export enum ContestEntryFeePaymentMethod {
   TRANSFER = 'TRANSFER',
 }
 
+// ── Thanh toán chuyển khoản theo chi nhánh (feature 019) ──────────────────────
+
+/** Cách một chi nhánh nhận tiền booking. */
+export enum CafePaymentMethod {
+  /** Cổng thanh toán dùng chung — mặc định của mọi chi nhánh chưa cấu hình. */
+  VNPAY = 'VNPAY',
+  /** Chuyển khoản thẳng vào tài khoản của chi nhánh, đối soát qua webhook. */
+  BANK_TRANSFER = 'BANK_TRANSFER',
+}
+
+/**
+ * Phán quyết của hệ thống về một khoản tiền được báo là đã về tài khoản.
+ *
+ * Tách khỏi `BankTransactionMatchReason` có chủ đích: nhân viên chỉ lọc đúng
+ * `NEEDS_REVIEW` (một điều kiện, một index), còn lý do cụ thể thì thêm mới
+ * thoải mái mà không phải sửa mọi chỗ lọc.
+ */
+export enum BankTransactionMatchStatus {
+  MATCHED = 'MATCHED',
+  NEEDS_REVIEW = 'NEEDS_REVIEW',
+  IGNORED = 'IGNORED',
+}
+
+/** Vì sao một giao dịch không khớp sạch. `null` nghĩa là khớp không vướng gì. */
+export enum BankTransactionMatchReason {
+  /** Tiền nhiều hơn số phải trả — booking vẫn được xác nhận. */
+  OVERPAID = 'OVERPAID',
+  /** Nội dung chuyển khoản không chứa mã tham chiếu. */
+  NO_REF_CODE = 'NO_REF_CODE',
+  /** Có mã nhưng không tra ra giao dịch thanh toán nào. */
+  REF_NOT_FOUND = 'REF_NOT_FOUND',
+  /** Tiền ít hơn số phải trả — không xác nhận booking. */
+  SHORT_PAID = 'SHORT_PAID',
+  /** Giao dịch thanh toán đã SUCCESS — khách chuyển lần thứ hai. */
+  ALREADY_PAID = 'ALREADY_PAID',
+  /** Giao dịch thanh toán đã FAILED — khách đã đổi sang phương thức khác. */
+  SESSION_REPLACED = 'SESSION_REPLACED',
+  /** Tiền về sau khi hết hạn giữ chỗ. Không bao giờ tự xác nhận lại. */
+  BOOKING_EXPIRED = 'BOOKING_EXPIRED',
+  /** Tài khoản nhận không thuộc chi nhánh nào trong hệ thống. */
+  UNKNOWN_ACCOUNT = 'UNKNOWN_ACCOUNT',
+}
+
+/** Nguồn gửi thông báo tiền về. */
+export enum BankTransactionGateway {
+  /** Dịch vụ đối soát ngân hàng thật (SePay và tương đương). */
+  SEPAY = 'SEPAY',
+  /** Bên mô phỏng nội bộ, chỉ sống khi SANDBOX_BANK_ENABLED=true. */
+  SANDBOX = 'SANDBOX',
+}
+
 export enum RaceRecordSourceType {
   CONTEST = 'CONTEST',
   SESSION_TIME_ATTACK = 'SESSION_TIME_ATTACK',

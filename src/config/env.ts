@@ -102,6 +102,22 @@ export const env = {
     mockEnabled: parseBoolean(process.env.VNPAY_MOCK_ENABLED),
   },
 
+  // Nhận tiền chuyển khoản thẳng vào tài khoản của từng chi nhánh.
+  //
+  // `sandboxBank` bật một bên ngân hàng mô phỏng để demo được khi chưa đăng ký
+  // dịch vụ đối soát. Cố ý KHÔNG chặn theo môi trường — bật/tắt hoàn toàn do
+  // người vận hành quyết định. Xem `specs/019-cafe-bank-payment/spec.md`,
+  // mục "Trước khi vận hành thương mại", cho danh sách phải làm trước khi
+  // hệ thống nhận đồng tiền thật đầu tiên.
+  sandboxBank: {
+    enabled: parseBoolean(process.env.SANDBOX_BANK_ENABLED),
+  },
+
+  bankWebhook: {
+    // Dịch vụ đối soát gửi kèm dạng `Authorization: Apikey <key>`.
+    apiKey: process.env.BANK_WEBHOOK_API_KEY ?? '',
+  },
+
   ai: {
     googleApiKey: process.env.GOOGLE_API_KEY ?? '',
     embeddingModel: process.env.GOOGLE_EMBEDDING_MODEL ?? 'gemini-embedding-001',
@@ -130,3 +146,14 @@ export const env = {
     fbChatQueueEnabled: parseBoolean(process.env.FB_CHAT_QUEUE_ENABLED, true),
   },
 } as const;
+
+// Ngân hàng mô phỏng gọi ngược vào điểm nhận thông báo của chính hệ thống và
+// phải mang khoá xác thực. Bật mô phỏng mà quên khai khoá thì mọi giao dịch
+// demo đều bị từ chối 401 — hỏng lúc chạy chứ không hỏng lúc khởi động, nên
+// chặn ngay ở đây cho thấy lỗi sớm.
+if (env.sandboxBank.enabled && !env.bankWebhook.apiKey) {
+  throw new Error(
+    'SANDBOX_BANK_ENABLED=true nhưng thiếu BANK_WEBHOOK_API_KEY. ' +
+      'Khai khoá này trước khi bật ngân hàng mô phỏng.',
+  );
+}

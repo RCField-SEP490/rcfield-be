@@ -1806,3 +1806,44 @@ export const ConfirmCheckoutSchema = z.object({
 export const UpdateDamageItemsSchema = z.object({
   damageLineItems: z.array(DamageLineItemInputSchema).min(0),
 });
+
+// ── cafe_payment_settings / bank_transactions ─────────────────────────────────
+
+export const UpdateCafePaymentSettingsSchema = z
+  .object({
+    method: z.enum(['VNPAY', 'BANK_TRANSFER']),
+    bank_code: z.string().min(1).max(20).optional().nullable(),
+    account_number: z
+      .string()
+      .regex(/^\d{4,19}$/, 'Số tài khoản chỉ gồm chữ số, 4–19 ký tự')
+      .optional()
+      .nullable(),
+    account_name: z.string().min(2).max(160).optional().nullable(),
+  })
+  .refine(
+    (body) =>
+      body.method !== 'BANK_TRANSFER' ||
+      Boolean(body.bank_code && body.account_number && body.account_name),
+    {
+      message:
+        'Chọn nhận chuyển khoản thì phải khai đủ ngân hàng, số tài khoản và tên chủ tài khoản',
+      path: ['method'],
+    },
+  );
+
+export const AssignBankTransactionSchema = z.object({
+  booking_id: z.string().uuid('booking_id phải là UUID hợp lệ'),
+  note: z.string().max(1000).optional(),
+});
+
+export const IgnoreBankTransactionSchema = z.object({
+  // Bắt buộc: đánh dấu một khoản tiền thật là "không liên quan" phải kèm lý do,
+  // vì sau này không ai nhớ được vì sao nó bị bỏ qua.
+  note: z.string().min(1, 'Phải ghi lý do bỏ qua khoản tiền này').max(1000),
+});
+
+export const ListBankTransactionsQuerySchema = z.object({
+  status: z.enum(['MATCHED', 'NEEDS_REVIEW', 'IGNORED']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
