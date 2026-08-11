@@ -865,6 +865,98 @@ class EmailService {
       `,
     });
   }
+
+  async sendSubscriptionConfirmed(input: {
+    to: string;
+    providerName: string;
+    planName: string;
+    amount: number;
+    startDate: Date;
+    endDate: Date;
+  }): Promise<void> {
+    const subject = `✅ Kích hoạt thành công gói hội viên ${input.planName} | RCField`;
+
+    const formattedAmount = Number(input.amount).toLocaleString('vi-VN') + ' ₫';
+    const formattedStartDate = input.startDate.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    const formattedEndDate = input.endDate.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+
+    const textContent = [
+      `Xin chào ${input.providerName},`,
+      `Yêu cầu thanh toán cho gói hội viên ${input.planName} của bạn đã được Admin phê duyệt thành công.`,
+      `Thông tin gói hội viên của bạn:`,
+      `- Gói dịch vụ: ${input.planName}`,
+      `- Số tiền thanh toán: ${formattedAmount}`,
+      `- Ngày kích hoạt: ${formattedStartDate}`,
+      `- Ngày hết hạn: ${formattedEndDate}`,
+      `Gói dịch vụ mới của bạn hiện đã có hiệu lực. Bạn có thể đăng nhập vào hệ thống để trải nghiệm ngay.`,
+      `Trân trọng,`,
+      `Đội ngũ RCField`,
+    ].join('\n\n');
+
+    await this.brevoSend({
+      sender: { email: env.email.fromEmail, name: env.email.fromName },
+      to: [{ email: input.to, name: input.providerName }],
+      subject,
+      textContent,
+      htmlContent: `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
+          <div style="background:#111827;padding:24px 32px">
+            <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
+          </div>
+          <div style="padding:32px">
+            <h2 style="margin:0 0 8px;color:#10b981">Xác nhận kích hoạt gói hội viên thành công</h2>
+            <p style="color:#6b7280;margin:0 0 24px">
+              Xin chào <strong>${input.providerName}</strong>, yêu cầu thanh toán cho gói hội viên của bạn đã được phê duyệt và kích hoạt thành công.
+            </p>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Gói dịch vụ</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:600;color:#111827">${input.planName}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Số tiền thanh toán</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:700;color:#111827">${formattedAmount}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Thời gian bắt đầu</td>
+                <td style="padding:8px 0;font-size:13px;color:#111827">${formattedStartDate}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Hạn hết hạn</td>
+                <td style="padding:8px 0;font-size:13px;color:#ef4444;font-weight:600">${formattedEndDate}</td>
+              </tr>
+            </table>
+
+            <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb;margin-bottom:24px">
+              <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#111827">Bắt đầu sử dụng</p>
+              <p style="margin:0;color:#4b5563;font-size:13px;line-height:1.7">
+                Gói dịch vụ của bạn đã chính thức có hiệu lực. Mọi giới hạn về chi nhánh, quota AI message và kết nối kênh bán hàng của bạn đã được nâng cấp theo gói dịch vụ mới.
+              </p>
+              <a href="${env.frontendUrl}/provider/subscriptions"
+                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
+                Quản lý gói dịch vụ
+              </a>
+            </div>
+
+            <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
+              Cảm ơn bạn đã lựa chọn sử dụng dịch vụ của RCField! Mọi thắc mắc vui lòng phản hồi qua email này để được hỗ trợ tốt nhất.
+            </p>
+          </div>
+        </div>
+      `,
+    });
+  }
 }
 
 export const emailService = new EmailService();

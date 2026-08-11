@@ -120,6 +120,12 @@ export const env = {
     encryptionKey: Buffer.from(process.env.CHANNEL_ENCRYPTION_KEY ?? '0'.repeat(64), 'hex'),
   },
 
+  payos: {
+    clientId: process.env.PAYOS_CLIENT_ID ?? '',
+    apiKey: process.env.PAYOS_API_KEY ?? '',
+    checksumKey: process.env.PAYOS_CHECKSUM_KEY ?? '',
+  },
+
   features: {
     fbChatQueueEnabled: parseBoolean(process.env.FB_CHAT_QUEUE_ENABLED, true),
   },
