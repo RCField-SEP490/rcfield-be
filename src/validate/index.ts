@@ -7,6 +7,9 @@ import {
   BookingStatus,
   CafeStatus,
   ContestBanScopeType,
+  ContestLedgerDirection,
+  ContestLedgerExpenseCategory,
+  ContestLedgerIncomeCategory,
   FeaturedPopupAudienceScope,
   FeaturedPopupPlacement,
   ContestParticipantStatus,
@@ -601,6 +604,69 @@ export const ContestMarkFeePaidSchema = z.object({
 
 export const ContestAssignStaffSchema = z.object({
   staff_id: z.string().uuid(),
+});
+
+// ── sổ thu chi giải đấu ──────────────────────────────────────────────────────
+
+/**
+ * Trường dùng chung cho mọi bút toán.
+ *
+ * `amount` là số nguyên dương: tiền Việt không có phần thập phân trong thực tế
+ * vận hành, và DB đã có `CHECK (amount > 0)` làm lưới thứ hai. Muốn ghi giảm
+ * thì tạo một khoản ở chiều ngược lại, không nhập số âm.
+ */
+const ContestLedgerBaseFields = {
+  title: z.string().trim().min(1, 'Cần nhập tiêu đề khoản').max(255),
+  amount: z
+    .number()
+    .int('Số tiền phải là số nguyên')
+    .positive('Số tiền phải lớn hơn 0. Muốn ghi giảm thì tạo khoản ở chiều ngược lại.'),
+  occurred_at: z.string().datetime({ offset: true }),
+  note: z.string().trim().max(1000).optional(),
+  receipt_url: z.string().url().max(2000).optional().nullable(),
+};
+
+/**
+ * Tập `category` hợp lệ phụ thuộc `direction`, nên phải dùng discriminated union
+ * chứ không phải một enum phẳng — nếu không, khoản thu sẽ nhận được loại
+ * `PRIZE_CASH` và ngược lại.
+ */
+export const CreateContestLedgerEntrySchema = z.discriminatedUnion('direction', [
+  z.object({
+    direction: z.literal(ContestLedgerDirection.IN),
+    category: z.nativeEnum(ContestLedgerIncomeCategory),
+    ...ContestLedgerBaseFields,
+  }),
+  z.object({
+    direction: z.literal(ContestLedgerDirection.OUT),
+    category: z.nativeEnum(ContestLedgerExpenseCategory),
+    ...ContestLedgerBaseFields,
+  }),
+]);
+
+/**
+ * `direction` cố ý KHÔNG sửa được: đổi chiều làm mọi con số trong nhật ký thao
+ * tác mất nghĩa. Muốn đổi thì xoá rồi tạo lại.
+ */
+export const UpdateContestLedgerEntrySchema = z
+  .object({
+    category: z.string().trim().min(1).max(30),
+    title: z.string().trim().min(1).max(255),
+    amount: z.number().int().positive(),
+    occurred_at: z.string().datetime({ offset: true }),
+    note: z.string().trim().max(1000).nullable(),
+    receipt_url: z.string().url().max(2000).nullable(),
+  })
+  .partial()
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'Cần ít nhất một trường để cập nhật',
+  });
+
+export const ContestLedgerListQuerySchema = z.object({
+  direction: z.nativeEnum(ContestLedgerDirection).optional(),
+  category: z.string().trim().max(30).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
 });
 
 export const ContestBanCreateSchema = z.object({

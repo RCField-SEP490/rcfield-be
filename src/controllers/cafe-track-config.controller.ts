@@ -27,9 +27,13 @@ export const cafeTrackConfigController = {
   // GET /api/v1/cafes/:cafeId/track-configs
   async listConfigs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      // Mặc định chỉ trả sân đang bật. Màn quản lý cấu hình sân phải xin thêm
+      // `?include_inactive=true`, và service còn kiểm quyền lần nữa.
+      const includeInactive = req.query.include_inactive === 'true';
       const data = await trackConfigService.listTrackConfigs(
         req.params.cafeId,
         viewerFromRequest(req),
+        { includeInactive },
       );
       res.json({ success: true, data });
     } catch (err) {

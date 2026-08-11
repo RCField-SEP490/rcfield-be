@@ -94,6 +94,7 @@ async function listFallbackTrackConfigs(
 export async function listTrackConfigs(
   cafeId: string,
   viewer?: Viewer,
+  options?: { includeInactive?: boolean },
 ): Promise<ReturnType<typeof formatConfig>[]> {
   const repo = AppDataSource.getRepository(CafeTrackConfig);
   const trackTypeRepo = AppDataSource.getRepository(TrackType);
@@ -104,7 +105,12 @@ export async function listTrackConfigs(
     throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
   }
 
-  const isProvider = viewer?.role === UserRole.PROVIDER || viewer?.role === UserRole.ADMIN;
+  // Cấu hình đã tắt chỉ hiện khi màn hình CHỦ ĐỘNG xin, và người xin phải có
+  // quyền. Trước đây chỉ cần là provider là thấy hết ở mọi màn — nên chủ quán
+  // mở trang chi nhánh công khai của chính mình lại thấy cả sân đã tắt, tức
+  // nhìn thấy thứ khách hàng không thấy ngay trên trang dành cho khách.
+  const canSeeInactive = viewer?.role === UserRole.PROVIDER || viewer?.role === UserRole.ADMIN;
+  const includeInactive = Boolean(options?.includeInactive) && canSeeInactive;
 
   const qb = repo
     .createQueryBuilder('ctc')
@@ -113,7 +119,7 @@ export async function listTrackConfigs(
     .orderBy('ctc.sort_order', 'ASC')
     .addOrderBy('ctc.created_at', 'ASC');
 
-  if (!isProvider) {
+  if (!includeInactive) {
     qb.andWhere('ctc.is_active = true');
   }
 
@@ -129,7 +135,21 @@ export async function listTrackConfigs(
 
   // If cafe has trackTypes that don't have records in cafe_track_configs, initialize them
   if (cafe.trackTypes && cafe.trackTypes.length > 0) {
-    const existingTrackTypeIds = new Set(configs.map((c) => c.trackTypeId));
+    // Phải hỏi lại DB xem hàng nào ĐANG TỒN TẠI, không dùng `configs` ở trên.
+    //
+    // `configs` đã bị lọc thêm `is_active = true` khi người xem không phải
+    // provider, trong khi unique index `idx_cafe_track_configs_unique_active`
+    // chỉ tính `deleted_at IS NULL`. Một cấu hình bị tắt vẫn chiếm chỗ trong
+    // index nhưng vắng mặt trong `configs`, nên code cũ tưởng là thiếu rồi
+    // INSERT đè lên chính nó → 23505, và khách xem trang chi nhánh ăn 500.
+    const existingRows = await repo
+      .createQueryBuilder('ctc')
+      .select('ctc.track_type_id', 'trackTypeId')
+      .where('ctc.cafe_id = :cafeId', { cafeId })
+      .andWhere('ctc.deleted_at IS NULL')
+      .getRawMany<{ trackTypeId: string }>();
+
+    const existingTrackTypeIds = new Set(existingRows.map((row) => row.trackTypeId));
     const missingTrackTypeIds = cafe.trackTypes.filter((id) => !existingTrackTypeIds.has(id));
 
     if (missingTrackTypeIds.length > 0) {
@@ -150,13 +170,22 @@ export async function listTrackConfigs(
         newConfigs.push(newCfg);
       }
       if (newConfigs.length > 0) {
-        await repo.save(newConfigs);
-        configs.push(...newConfigs);
-        configs.sort(
-          (a, b) =>
-            a.sortOrder - b.sortOrder ||
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-        );
+        // `orIgnore` thay cho `save`: đây là một endpoint GET, hai request cùng
+        // lúc trên một chi nhánh chưa khởi tạo sẽ cùng thấy "thiếu" và cùng
+        // chèn. Không có ON CONFLICT DO NOTHING thì một trong hai ăn 23505 —
+        // chính là lỗi vừa gặp, chỉ khác đường dẫn tới.
+        await repo
+          .createQueryBuilder()
+          .insert()
+          .into(CafeTrackConfig)
+          .values(newConfigs)
+          .orIgnore()
+          .execute();
+
+        // Đọc lại thay vì push `newConfigs` vào bộ nhớ: khi va chạm xảy ra,
+        // hàng thắng cuộc là của request kia, và `newConfigs` không mang id
+        // thật của hàng đó.
+        configs = await qb.getMany();
       }
     }
   }

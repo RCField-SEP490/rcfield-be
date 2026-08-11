@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { contestController } from '../controllers/contest.controller';
 import { contestFeeController } from '../controllers/contest-fee.controller';
+import { contestFinanceController } from '../controllers/contest-finance.controller';
 import {
   authenticate,
   authorize,
@@ -118,6 +119,60 @@ contestRouter.get(
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.getMetrics,
+);
+// Báo cáo tài chính giải — CHỈ provider, không mở cho STAFF như các route trên.
+// Cố ý không gắn `requireActiveProvider`: chủ doanh nghiệp bị tạm khoá vẫn phải
+// xem lại được sổ sách của mình; chặn đọc là giữ con tin dữ liệu tài chính.
+contestRouter.get(
+  '/contests/:contestId/finance',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFinanceController.getFinanceReport,
+);
+
+// ── Sổ thu chi giải ──────────────────────────────────────────────────────────
+// Đăng ký `/ledger-entries/mine` TRƯỚC `/ledger-entries` không cần thiết vì hai
+// path khác độ sâu, nhưng vẫn giữ thứ tự này cho người đọc khỏi phải kiểm lại.
+contestRouter.get(
+  '/contests/:contestId/ledger-entries/mine',
+  authenticate,
+  authorize(UserRole.STAFF),
+  contestFinanceController.listMyEntries,
+);
+contestRouter.get(
+  '/contests/:contestId/ledger-entries',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFinanceController.listEntries,
+);
+contestRouter.post(
+  '/contests/:contestId/ledger-entries',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestFinanceController.createEntry,
+);
+contestRouter.post(
+  '/contests/:contestId/ledger-entries/receipt',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  bannerUpload.single('file'),
+  contestFinanceController.uploadReceipt,
+);
+contestRouter.patch(
+  '/contest-ledger-entries/:entryId',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestFinanceController.updateEntry,
+);
+contestRouter.delete(
+  '/contest-ledger-entries/:entryId',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestFinanceController.deleteEntry,
 );
 contestRouter.get(
   '/contests/:contestId/staff-assignments',
