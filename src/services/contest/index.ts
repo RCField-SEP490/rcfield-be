@@ -25,6 +25,8 @@ export {
   createContestEntryPaymentUrl,
   disqualifyRegistration,
 } from './registrations';
+export { buildContestFinanceReport } from './finance';
+export type { ContestFinanceReport, ContestFinanceCategoryTotal } from './finance';
 export {
   listContestStaffAssignments,
   assignContestStaff,

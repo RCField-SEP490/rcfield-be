@@ -46,6 +46,7 @@ beforeEach(async () => {
       contest_staff_assignments,
       contest_match_participants,
       contest_matches,
+      contest_ledger_entries,
       contest_registrations,
       contest_cafes,
       contests,
