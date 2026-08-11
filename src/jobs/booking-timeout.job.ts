@@ -93,7 +93,9 @@ async function notifyOverdueSessions(): Promise<void> {
       minutesOverdue: session.minutesOverdue,
       route: `/staff/sessions/${session.sessionId}`,
     };
-    const recipients = new Set([session.checkedInBy, session.providerId].filter(Boolean));
+    // Quá giờ trả xe là việc xử lý ngay tại quầy. Chỉ nhân viên đã check-in
+    // nhận cảnh báo; provider không bị làm phiền bởi vận hành từng phiên.
+    const recipients = new Set([session.checkedInBy].filter(Boolean));
 
     for (const userId of recipients) {
       await createNotification(
@@ -123,12 +125,19 @@ async function notifyOverdueSessions(): Promise<void> {
  */
 async function expireStaleExtensionProposals(): Promise<void> {
   const staleProposals = await AppDataSource.query<
-    { proposalId: string; sessionId: string; checkedInBy: string; customerId: string | null }[]
+    {
+      proposalId: string;
+      sessionId: string;
+      cafeId: string;
+      checkedInBy: string;
+      customerId: string | null;
+    }[]
   >(
     `SELECT
-       p.id AS "proposalId",
-       p.session_id AS "sessionId",
-       s.checked_in_by AS "checkedInBy",
+      p.id AS "proposalId",
+      p.session_id AS "sessionId",
+      s.cafe_id AS "cafeId",
+      s.checked_in_by AS "checkedInBy",
        b.customer_id AS "customerId"
      FROM extension_proposals p
      JOIN sessions s ON s.id = p.session_id
@@ -156,6 +165,12 @@ async function expireStaleExtensionProposals(): Promise<void> {
     if (proposal.customerId) {
       wsService.pushToUser(proposal.customerId, 'SESSION_EXTENSION_EXPIRED', eventData);
     }
+    wsService.pushToCafe(proposal.cafeId, 'SESSION_UPDATED', {
+      ...eventData,
+      sessionStatus: SessionStatus.ACTIVE,
+      action: 'EXTENSION_EXPIRED',
+      updatedAt: new Date().toISOString(),
+    });
     logger.info('BookingTimeout', 'expired unanswered session extension proposal', {
       proposalId: proposal.proposalId,
       sessionId: proposal.sessionId,
@@ -169,10 +184,10 @@ export function scheduleBookingTimeout(): void {
     try {
       await processExpiredBookings();
 
-      // NO_SHOW: a CHECKED_IN session only represents a handover in progress.
-      // If the handover is not completed within 30 minutes, it must not keep the
-      // booking alive indefinitely. Active/checkout sessions represent an actual
-      // attended play session and are therefore excluded.
+      // NO_SHOW is only for a customer who never checked in. Once a staff member
+      // starts handover, the customer may already be physically present; marking
+      // that booking as no-show would create an incorrect penalty/refund. An
+      // unfinished handover must instead be resolved by the branch staff.
       const noShows: { id: string }[] = await AppDataSource.query(
         `SELECT b.id FROM bookings b
          WHERE b.status = 'CONFIRMED'
@@ -181,7 +196,7 @@ export function scheduleBookingTimeout(): void {
            AND NOT EXISTS (
              SELECT 1 FROM sessions s
              WHERE s.booking_id = b.id
-               AND s.status IN ('ACTIVE', 'EXTENDING', 'CHECKING_OUT', 'COMPLETED')
+               AND s.status IN ('CHECKED_IN', 'ACTIVE', 'EXTENDING', 'CHECKING_OUT', 'COMPLETED')
            )`,
       );
 

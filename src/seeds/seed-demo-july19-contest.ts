@@ -683,26 +683,17 @@ async function createCustomerVehicle(customerId: string): Promise<string> {
   const model = 'YD-2S Plus';
   const [vehicle] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO customer_vehicles (
-      user_id, customer_id, name, brand, model, color, serial_number, description, notes,
-      scale, chassis_type, frequency, status, metadata
+      customer_id, brand, model, serial_number, description, notes
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING id`,
     [
       customerId,
-      customerId,
-      `${brand} ${model}`,
       brand,
       model,
-      'Blue',
       `BYOC-${customerId.slice(0, 8)}`,
       'Xe drift RWD cá nhân, khung carbon, servo metal gear, lốp drift chuyên dụng.',
       'Đã qua tech inspection nội bộ.',
-      '1:10',
-      'Drift',
-      '2.4GHz',
-      'ACTIVE',
-      JSON.stringify({ seeded_for: 'demo_july19', tech_inspection: 'passed' }),
     ],
   );
   return vehicle.id;

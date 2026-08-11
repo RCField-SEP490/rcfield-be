@@ -712,34 +712,22 @@ describe('Contest runtime routes', () => {
     expect(res.body.code).toBe('CONTEST_PARTICIPANT_BANNED');
   });
 
-  it('customer có thể tạo payment URL cho contest entry fee', async () => {
+  it('customer có thể tạo payment URL cho contest entry fee của đăng ký BYOC', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);
     const cafe = await createTestCafe({ provider_id: provider.id });
     const customer = await createTestUser({ role: UserRole.CUSTOMER });
     const customerToken = generateToken(customer);
-    const { contestId, trackTypeId } = await createContestFixture(
-      provider.id,
-      cafe.id,
-      'TIME_TRIAL',
-      {
-        entryFee: 150000,
-      },
-    );
-    const vehicle = await createTestVehicle({
-      cafe_id: cafe.id,
-      compatible_track_types: [trackTypeId],
+    const { contestId } = await createContestFixture(provider.id, cafe.id, 'TIME_TRIAL', {
+      entryFee: 150000,
+      vehiclePolicy: 'MIXED',
     });
-
     const registerRes = await request(app)
       .post(`/api/v1/contests/${contestId}/register`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({
-        vehicle_source: 'RENTAL',
-        rental: {
-          cafe_id: cafe.id,
-          vehicle_catalog_id: vehicle.catalog_id,
-        },
+        vehicle_source: 'BYOC',
+        byoc_vehicle_name: 'Yokomo YD-2',
       })
       .expect(201);
 

@@ -4,6 +4,7 @@ import { UserRole } from '../types';
 import {
   submitReview,
   dismissReview,
+  snoozeReviewReminder,
   listPending,
   listCustomerReviews,
 } from '../controllers/review.controller';
@@ -15,5 +16,6 @@ reviewRouter.use(authorize(UserRole.CUSTOMER));
 
 reviewRouter.post('/', submitReview);
 reviewRouter.post('/:bookingId/dismiss', dismissReview);
+reviewRouter.post('/:bookingId/snooze', snoozeReviewReminder);
 reviewRouter.get('/pending', listPending);
 reviewRouter.get('/', listCustomerReviews);

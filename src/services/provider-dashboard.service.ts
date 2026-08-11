@@ -3,7 +3,7 @@ import { CafeOperatingHours } from '../types';
 import {
   getBookableSlotMinutes,
   getOccupancyRate,
-  getVietnamCurrentMonthRange,
+  getVietnamCurrentMonthToDateRange,
 } from '../lib/provider-occupancy';
 import { SESSION_OVERDUE_ALERT_MINUTES } from '../lib/session-operational-timing';
 
@@ -492,7 +492,9 @@ export async function getProviderBranchOperations(
   from?: string,
   to?: string,
 ): Promise<BranchOperationsItem[]> {
-  const currentMonth = getVietnamCurrentMonthRange();
+  // The default is month-to-date. A full calendar month would include future
+  // capacity in the denominator and therefore understate current utilisation.
+  const currentMonth = getVietnamCurrentMonthToDateRange();
   const fromDate = from || currentMonth.from;
   const toDate = to || currentMonth.to;
 

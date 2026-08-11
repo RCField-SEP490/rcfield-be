@@ -176,6 +176,17 @@ async function cleanupSeedContests(): Promise<void> {
   if (contests.length === 0) return;
 
   const contestIds = contests.map((item) => item.id);
+  // Featured popups and fee orders are seeded from the contest story too. They
+  // reference contests directly, so clean them before re-creating the story.
+  await AppDataSource.query(`DELETE FROM featured_popups WHERE contest_id = ANY($1::uuid[])`, [
+    contestIds,
+  ]);
+  await AppDataSource.query(`DELETE FROM contest_fee_orders WHERE contest_id = ANY($1::uuid[])`, [
+    contestIds,
+  ]);
+  await AppDataSource.query(`DELETE FROM race_records WHERE contest_id = ANY($1::uuid[])`, [
+    contestIds,
+  ]);
   await AppDataSource.query(
     `DELETE FROM payment_transactions
      WHERE contest_registration_id IN (

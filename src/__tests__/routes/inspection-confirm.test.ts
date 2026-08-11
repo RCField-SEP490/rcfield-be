@@ -45,7 +45,7 @@ async function seedSession(opts: { sessionStatus: string }) {
 }
 
 describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm — customerConfirmInspection', () => {
-  it('cho phép staff tạo biên bản CHECK_IN mới sau khi khách dispute, khách xác nhận lại thì session ACTIVE', async () => {
+  it('bắt đầu phiên ngay khi staff hoàn tất bàn giao và khóa biên bản giao xe với khách', async () => {
     const { customerToken, staffToken, session } = await seedSession({
       sessionStatus: 'CHECKED_IN',
     });
@@ -57,28 +57,28 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
       .expect(201);
     const firstInspectionId = firstRes.body.data.inspectionId;
 
-    // Customer disputes the first handover inspection.
-    await request(app)
+    const [startedSession] = await AppDataSource.query<{ status: string }[]>(
+      `SELECT status FROM sessions WHERE id = $1`,
+      [session.id],
+    );
+    expect(startedSession.status).toBe('ACTIVE');
+
+    // Handover is verified at the counter, so the customer cannot change it
+    // after the session has started.
+    const response = await request(app)
       .post(`/api/v1/sessions/${session.id}/inspections/${firstInspectionId}/confirm`)
       .set('Authorization', `Bearer ${customerToken}`)
       .send({ agreed: false, disagreementNote: 'Xe co vet xuoc lon' })
-      .expect(200);
+      .expect(400);
+    expect(response.body.code).toBe('CHECK_IN_INSPECTION_READ_ONLY');
 
-    // Staff re-inspects: a NEW inspection must be created (not the disputed one).
+    // Re-submitting cannot create a second handover record for the same session.
     const secondRes = await request(app)
       .post(`/api/v1/staff/sessions/${session.id}/inspections`)
       .set('Authorization', `Bearer ${staffToken}`)
       .send({ type: 'CHECK_IN', photos: rentalInspectionPhotos })
       .expect(201);
-    const secondInspectionId = secondRes.body.data.inspectionId;
-    expect(secondInspectionId).not.toBe(firstInspectionId);
-
-    // Customer confirms the new inspection → session goes ACTIVE.
-    await request(app)
-      .post(`/api/v1/sessions/${session.id}/inspections/${secondInspectionId}/confirm`)
-      .set('Authorization', `Bearer ${customerToken}`)
-      .send({ agreed: true })
-      .expect(200);
+    expect(secondRes.body.data.id).toBe(firstInspectionId);
 
     const [sessionAfter] = await AppDataSource.query<{ status: string }[]>(
       `SELECT status FROM sessions WHERE id = $1`,
@@ -87,7 +87,7 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
     expect(sessionAfter.status).toBe('ACTIVE');
   });
 
-  it('trả về biên bản CHECK_IN cũ khi staff submit lại mà khách chưa dispute', async () => {
+  it('trả về biên bản CHECK_IN cũ khi staff submit lại', async () => {
     const { staffToken, session } = await seedSession({ sessionStatus: 'CHECKED_IN' });
 
     const firstRes = await request(app)
@@ -102,7 +102,7 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
       .send({ type: 'CHECK_IN', photos: rentalInspectionPhotos })
       .expect(201);
 
-    // No new inspection is created while the first one is undisputed.
+    // No new inspection is created for the same handover.
     const inspections = await AppDataSource.query<{ id: string }[]>(
       `SELECT id FROM inspections WHERE session_id = $1 AND type = 'CHECK_IN'`,
       [session.id],
@@ -111,7 +111,7 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
     expect(inspections[0].id).toBe(firstRes.body.data.inspectionId);
   });
 
-  it('từ chối xác nhận CHECK_IN khi session không ở trạng thái CHECKED_IN', async () => {
+  it('không cho khách xác nhận biên bản CHECK_IN khi phiên đã ACTIVE', async () => {
     const { customerToken, staffToken, session } = await seedSession({
       sessionStatus: 'ACTIVE',
     });
@@ -122,15 +122,20 @@ describe('POST /api/v1/sessions/:sessionId/inspections/:inspectionId/confirm —
       .send({ type: 'CHECK_IN', photos: rentalInspectionPhotos })
       .expect(201);
 
-    const res = await request(app)
+    const response = await request(app)
       .post(
         `/api/v1/sessions/${session.id}/inspections/${inspectionRes.body.data.inspectionId}/confirm`,
       )
       .set('Authorization', `Bearer ${customerToken}`)
       .send({ agreed: true })
       .expect(400);
+    expect(response.body.code).toBe('CHECK_IN_INSPECTION_READ_ONLY');
 
-    expect(res.body.code).toBe('INVALID_SESSION_STATE');
+    const [sessionAfter] = await AppDataSource.query<{ status: string }[]>(
+      `SELECT status FROM sessions WHERE id = $1`,
+      [session.id],
+    );
+    expect(sessionAfter.status).toBe('ACTIVE');
   });
 
   it('từ chối xác nhận CHECK_OUT khi session không ở trạng thái CHECKING_OUT', async () => {

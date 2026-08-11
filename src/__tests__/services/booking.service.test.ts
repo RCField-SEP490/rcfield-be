@@ -1,9 +1,11 @@
 import { BookingStatus } from '../../types';
 import {
   canTransition,
+  getPackageCreditRefundRatio,
   isWithinMaxAdvanceBookingDays,
   meetsMinimumBookingNotice,
 } from '../../services/booking.service';
+import { UserRole } from '../../types';
 
 describe('BookingService.canTransition', () => {
   it('PENDING → CONFIRMED via PAYMENT_CONFIRMED is valid', () => {
@@ -12,6 +14,10 @@ describe('BookingService.canTransition', () => {
 
   it('PENDING → CANCELLED via PAYMENT_TIMEOUT is valid', () => {
     expect(canTransition(BookingStatus.PENDING, 'PAYMENT_TIMEOUT')).toBe(true);
+  });
+
+  it('PENDING → CANCELLED via HOLD_CANCELLED is valid', () => {
+    expect(canTransition(BookingStatus.PENDING, 'HOLD_CANCELLED')).toBe(true);
   });
 
   it('CONFIRMED → CANCELLED via CUSTOMER_CANCEL is valid', () => {
@@ -74,5 +80,34 @@ describe('BookingService.isWithinMaxAdvanceBookingDays', () => {
         now,
       ),
     ).toBe(false);
+  });
+});
+
+describe('BookingService.getPackageCreditRefundRatio', () => {
+  const now = new Date('2026-08-07T12:00:00.000Z');
+
+  it.each([
+    ['refunds all credits before 24 hours', UserRole.CUSTOMER, '2026-08-08T13:00:00.000Z', 1],
+    [
+      'refunds half credits at the 12-hour boundary',
+      UserRole.CUSTOMER,
+      '2026-08-08T00:00:00.000Z',
+      0.5,
+    ],
+    ['does not refund credits inside 12 hours', UserRole.CUSTOMER, '2026-08-07T23:59:59.000Z', 0],
+    [
+      'refunds all credits for a cafe cancellation before start',
+      UserRole.PROVIDER,
+      '2026-08-07T18:00:00.000Z',
+      1,
+    ],
+    [
+      'does not refund credits after the slot starts',
+      UserRole.PROVIDER,
+      '2026-08-07T11:59:59.000Z',
+      0,
+    ],
+  ])('%s', (_name, role, slotStart, expected) => {
+    expect(getPackageCreditRefundRatio(role as UserRole, new Date(slotStart), now)).toBe(expected);
   });
 });

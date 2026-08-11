@@ -60,11 +60,14 @@ import { authService } from './auth.service';
 import { transition } from './booking.service';
 import { env } from '../config/env';
 import { wsService } from './websocket.service';
-import { createNotification } from './notification.service';
+import { createBookingReviewRequestNotification, createNotification } from './notification.service';
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { createWalkInBooking as createWalkInBookingService } from './booking.service';
 import { getSessionOperationalTiming } from '../lib/session-operational-timing';
-import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
+import {
+  buildBookingFinancialSummary,
+  type PendingInitialPaymentSnapshot,
+} from '../lib/booking-financial-summary';
 import {
   RENTAL_INSPECTION_MAX_PHOTOS,
   RENTAL_INSPECTION_MIN_PHOTOS,
@@ -74,6 +77,53 @@ import {
   logContestVehicleCheckedOut,
   syncContestRegistrationOnVehicleCheckIn,
 } from './contest-rental.service';
+
+/**
+ * All active staff assigned to a cafe need the same operational state, while
+ * the payload remains deliberately minimal. Each screen refetches through its
+ * existing authorised API rather than receiving inspection or payment details
+ * over WebSocket.
+ */
+function broadcastSessionUpdated(input: {
+  cafeId: string;
+  bookingId: string;
+  sessionId: string;
+  sessionStatus: SessionStatus;
+  action: string;
+}): void {
+  wsService.pushToCafe(input.cafeId, 'SESSION_UPDATED', {
+    ...input,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function notifyCustomerToReviewBooking(booking: Booking): Promise<void> {
+  if (!booking.customerId || booking.source === BookingSource.STAFF_MANUAL) return;
+
+  const notificationCreated = await createBookingReviewRequestNotification(
+    booking.customerId,
+    booking.id,
+  );
+  if (notificationCreated) {
+    wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
+      bookingId: booking.id,
+      route: `/customer/bookings?reviewBookingId=${booking.id}`,
+    });
+  }
+}
+
+function broadcastFnbOrderUpdated(input: {
+  cafeId: string;
+  bookingId: string;
+  sessionId?: string | null;
+  orderId: string;
+  status: string;
+}): void {
+  wsService.pushToCafe(input.cafeId, 'FNB_ORDER_UPDATED', {
+    ...input,
+    updatedAt: new Date().toISOString(),
+  });
+}
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -137,6 +187,7 @@ export interface TodayBookingItem {
   participantDetails: { name: string; phone?: string; isBooker: boolean }[];
   plannedVehicles: string[];
   sessions: any[];
+  hasPendingRefund?: boolean;
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -540,7 +591,8 @@ export async function getBookingsByDate(
        c.name AS cafe_name,
        c.address AS cafe_address,
        c.phone AS cafe_phone,
-       tt.name AS track_name
+       tt.name AS track_name,
+       (SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS "hasPendingRefund"
      FROM bookings b
      JOIN cafes c ON c.id = b.cafe_id
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
@@ -668,6 +720,7 @@ export async function getBookingsByDate(
       participantDetails,
       plannedVehicles,
       sessions: sessionsList,
+      hasPendingRefund: row.hasPendingRefund,
     });
   }
 
@@ -869,6 +922,14 @@ export async function updateFnbOrderStatus(
       );
     }
   }
+
+  broadcastFnbOrderUpdated({
+    cafeId,
+    bookingId: order.booking_id,
+    sessionId: order.session_id,
+    orderId,
+    status: newStatus,
+  });
 
   logger.info('Staff', 'fnb order status updated', { orderId, cafeId, newStatus });
 }
@@ -1361,6 +1422,14 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
     }
   }
 
+  broadcastSessionUpdated({
+    cafeId: booking.cafeId,
+    bookingId: booking.id,
+    sessionId: session.id,
+    sessionStatus: session.status,
+    action: 'CHECK_IN_STARTED',
+  });
+
   return session;
 }
 
@@ -1624,6 +1693,9 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     paymentComponents,
     paymentTransactions,
     Number(booking.discountAmount) || 0,
+    booking.status === BookingStatus.PENDING
+      ? (booking.snapshot as PendingInitialPaymentSnapshot | null)
+      : undefined,
   );
   const slotFee = paymentComponents
     .filter((component) => component.type === PaymentComponentType.SLOT_FEE)
@@ -1767,12 +1839,10 @@ export async function submitInspection(
   });
   if (existingInspection) {
     if (inspectionType === InspectionType.CHECK_IN) {
-      // Allow a fresh CHECK_IN inspection only after the customer disputed the
-      // previous one (mirrors the CHECK_OUT re-inspection-after-dispute flow).
-      const wasDisputed =
-        existingInspection.customerConfirmedAt != null &&
-        existingInspection.customerConfirmed === false;
-      if (!wasDisputed) return existingInspection;
+      // Handover is jointly verified at the counter before this record is
+      // created. It is final for the running session and must not be replaced
+      // by a later customer-side response.
+      return existingInspection;
     } else if (!existingInspection.customerConfirmedAt) {
       return existingInspection;
     }
@@ -1841,108 +1911,30 @@ export async function submitInspection(
   }
 
   if (inspection.type === InspectionType.CHECK_IN) {
-    // Auto-confirm BYOC only — the customer is responsible for their own vehicle.
-    // For rental vehicles, the customer must review the handover photos before the
-    // inspection is marked as confirmed (customerConfirmInspection). The session and
-    // vehicle must stay in the pre-handover state until then.
+    // BYOC has no cafe asset to hand over, so there is nothing for the customer
+    // to confirm in the rental handover record.
     if (isByoc) {
       inspection.customerConfirmed = true;
       inspection.customerConfirmedAt = new Date();
       await AppDataSource.getRepository(Inspection).save(inspection);
-
-      session.status = SessionStatus.ACTIVE;
-      session.actualStartAt = new Date();
-      await AppDataSource.getRepository(Session).save(session);
-
-      for (const sv of activeSVs) {
-        sv.status = SessionVehicleStatus.IN_USE;
-        await svRepo.save(sv);
-        if (sv.vehicleId) {
-          await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-            status: VehicleStatus.IN_USE,
-          });
-          // Emit realtime cập nhật trạng thái xe cho provider
-          try {
-            const [vehMeta] = await AppDataSource.query<
-              { cafe_id: string; identifier: string; provider_id: string }[]
-            >(
-              `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
-              [sv.vehicleId],
-            );
-            if (vehMeta) {
-              wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
-                vehicleId: sv.vehicleId,
-                cafeId: vehMeta.cafe_id,
-                identifier: vehMeta.identifier,
-                status: 'IN_USE',
-              });
-            }
-          } catch {
-            /* non-critical */
-          }
-        }
-      }
     }
 
-    // Notify the customer to review the handover inspection. For rentals this is
-    // required before customerConfirmed is set; for BYOC it is informational.
-    if (booking?.customerId) {
-      try {
-        await createNotification(
-          booking.customerId,
-          isByoc
-            ? NotificationType.CUSTOMER_CHECKIN_CONFIRMED
-            : ('SESSION_CHECKIN_INSPECTION' as NotificationType),
-          isByoc ? 'Xe đã được bàn giao' : 'Biên bản bàn giao xe',
-          isByoc
-            ? `Biên bản bàn giao xe phiên chơi ${session.id.substring(0, 8)} đã được xác nhận.`
-            : 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
-          {
-            sessionId,
-            inspectionId: inspection.id,
-            sessionStatus: session.status,
-            inspectionType: inspection.type,
-            route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
-          },
-        );
-        wsService.pushToUser(
-          booking.customerId,
-          isByoc ? 'CUSTOMER_CHECKIN_CONFIRMED' : 'SESSION_CHECKIN_INSPECTION',
-          {
-            sessionId,
-            inspectionId: inspection.id,
-            sessionStatus: session.status,
-            inspectionType: inspection.type,
-            route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
-          },
-        );
-      } catch (err) {
-        logger.error(
-          'InspectionNotification',
-          'Failed to notify customer check-in inspection',
-          err,
-        );
-      }
-    }
+    // Completing the staff handover is the operational start of a session.
+    // The customer can review the evidence and report a discrepancy afterwards,
+    // but opening their app must not block a vehicle that has been physically
+    // handed over at the counter.
+    session.status = SessionStatus.ACTIVE;
+    session.actualStartAt = new Date();
+    await AppDataSource.getRepository(Session).save(session);
 
-    // Thông báo realtime cho Provider (owner của cafe)
-    try {
-      const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-        `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-        [session.cafeId],
-      );
-      if (cafeRow) {
-        wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-          sessionId,
-          sessionStatus: session.status,
+    for (const sv of activeSVs) {
+      sv.status = SessionVehicleStatus.IN_USE;
+      await svRepo.save(sv);
+      if (sv.vehicleId) {
+        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
+          status: VehicleStatus.IN_USE,
         });
       }
-    } catch (notifyErr) {
-      logger.error(
-        'InspectionNotification',
-        'Failed to push SESSION_STATUS_CHANGED to provider',
-        notifyErr,
-      );
     }
   } else {
     // CHECK_OUT — set CHECKING_OUT or COMPLETED (for BYOC)
@@ -1961,26 +1953,6 @@ export async function submitInspection(
       session.status = SessionStatus.CHECKING_OUT;
       session.checkedOutBy = staffUserId;
       await AppDataSource.getRepository(Session).save(session);
-    }
-
-    // Thông báo realtime cho Provider khi trạng thái session thay đổi
-    try {
-      const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-        `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-        [session.cafeId],
-      );
-      if (cafeRow) {
-        wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-          sessionId,
-          sessionStatus: session.status,
-        });
-      }
-    } catch (notifyErr) {
-      logger.error(
-        'StaffService',
-        'Failed to push SESSION_STATUS_CHANGED to provider on checkout',
-        notifyErr,
-      );
     }
 
     if (activeSVs.length > 0) {
@@ -2035,13 +2007,16 @@ export async function submitInspection(
           eventType as any,
           inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
           inspection.type === InspectionType.CHECK_IN
-            ? 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.'
+            ? 'Nhân viên trực ca đã hoàn tất bàn giao xe. Phiên chơi đã bắt đầu; bạn có thể xem lại ảnh biên bản trong chi tiết đơn đặt.'
             : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
           {
             sessionId,
             inspectionId: inspection.id,
             inspectionType: inspection.type,
-            route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+            route:
+              inspection.type === InspectionType.CHECK_IN
+                ? `/customer/bookings/${booking.id}?section=handover`
+                : `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
             damageFlagged: !!damageFlagged,
           },
         );
@@ -2051,7 +2026,10 @@ export async function submitInspection(
           bookingId: booking.id,
           inspectionId: inspection.id,
           type: inspection.type,
-          route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+          route:
+            inspection.type === InspectionType.CHECK_IN
+              ? `/customer/bookings/${booking.id}?section=handover`
+              : `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
           damageFlagged: !!damageFlagged,
         });
       }
@@ -2067,6 +2045,19 @@ export async function submitInspection(
     (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
     0,
   );
+
+  if (booking) {
+    broadcastSessionUpdated({
+      cafeId: booking.cafeId,
+      bookingId: booking.id,
+      sessionId,
+      sessionStatus: session.status,
+      action:
+        inspection.type === InspectionType.CHECK_IN
+          ? 'CHECK_IN_INSPECTION_SUBMITTED'
+          : 'CHECK_OUT_INSPECTION_SUBMITTED',
+    });
+  }
 
   logger.info('Staff', 'submitInspection', {
     sessionId,
@@ -2593,7 +2584,7 @@ export async function proposeExtension(
             proposalId: proposal.id,
             extraMinutes,
             additionalFee: Number(additionalFee),
-            route: `/customer/extension/${sessionId}`,
+            route: `/customer/extension-response/${sessionId}`,
           },
         );
 
@@ -2608,6 +2599,14 @@ export async function proposeExtension(
         });
       }
     }
+
+    broadcastSessionUpdated({
+      cafeId: session.cafeId,
+      bookingId: session.bookingId,
+      sessionId,
+      sessionStatus: session.status,
+      action: 'EXTENSION_APPROVED',
+    });
 
     return proposal;
   }
@@ -2632,7 +2631,7 @@ export async function proposeExtension(
         extraMinutes: proposal.durationMinutes,
         additionalFee: Number(proposal.feeAmount),
         expiresAt: expiresAt.toISOString(),
-        route: `/customer/extension/${sessionId}`,
+        route: `/customer/extension-response/${sessionId}`,
       },
     );
 
@@ -2645,6 +2644,14 @@ export async function proposeExtension(
       route: `/customer/extension-response/${sessionId}`,
     });
   }
+
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    sessionId,
+    sessionStatus: session.status,
+    action: 'EXTENSION_PROPOSED',
+  });
 
   return proposal;
 }
@@ -2766,6 +2773,13 @@ export async function addSessionFnbOrder(
     orderType: FnbOrderType.ON_SITE,
     excludeStaffUserId: staffUserId,
   });
+  broadcastFnbOrderUpdated({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    sessionId: session.id,
+    orderId: fnbOrder.id,
+    status: FnbOrderStatus.PENDING,
+  });
 
   // Notify customer of new Fnb order added
   try {
@@ -2865,49 +2879,15 @@ export async function swapSessionVehicle(
   newSV.startedAt = new Date();
   await svRepo.save(newSV);
 
-  return newSV;
-}
-
-export async function simulateClientCheckInResponse(sessionId: string): Promise<any> {
-  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
-  if (!session) {
-    throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
-  }
-
-  const inspectionRepo = AppDataSource.getRepository(Inspection);
-  const checkInInspection = await inspectionRepo.findOne({
-    where: { sessionId, type: InspectionType.CHECK_IN },
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    sessionId,
+    sessionStatus: session.status,
+    action: 'VEHICLE_SWAPPED',
   });
 
-  if (checkInInspection) {
-    checkInInspection.customerConfirmed = true;
-    checkInInspection.customerConfirmedAt = new Date();
-    await inspectionRepo.save(checkInInspection);
-  }
-
-  session.status = SessionStatus.ACTIVE;
-  session.actualStartAt = new Date();
-  await AppDataSource.getRepository(Session).save(session);
-
-  const svRepo = AppDataSource.getRepository(SessionVehicle);
-  const sessionVehicles = await svRepo.find({ where: { sessionId } });
-  const vehicleRepo = AppDataSource.getRepository(Vehicle);
-
-  for (const sv of sessionVehicles) {
-    sv.status = SessionVehicleStatus.IN_USE;
-    sv.startedAt = new Date();
-    await svRepo.save(sv);
-
-    if (sv.vehicleSource === VehicleSource.RENTAL && sv.vehicleId) {
-      const veh = await vehicleRepo.findOne({ where: { id: sv.vehicleId } });
-      if (veh) {
-        veh.status = VehicleStatus.IN_USE;
-        await vehicleRepo.save(veh);
-      }
-    }
-  }
-
-  return session;
+  return newSV;
 }
 
 export async function simulateClientCheckOutResponse(sessionId: string): Promise<any> {
@@ -2958,21 +2938,7 @@ export async function simulateClientCheckOutResponse(sessionId: string): Promise
     booking.status = BookingStatus.COMPLETED;
     booking.completedAt = new Date();
     await AppDataSource.getRepository(Booking).save(booking);
-    if (booking.source !== BookingSource.STAFF_MANUAL) {
-      await createNotification(
-        booking.customerId,
-        NotificationType.BOOKING_REVIEW_REQUEST,
-        'Đánh giá trải nghiệm của bạn',
-        'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-        {
-          bookingId: booking.id,
-          route: `/customer/review/${booking.id}`,
-        },
-      );
-      wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
-        bookingId: booking.id,
-      });
-    }
+    await notifyCustomerToReviewBooking(booking);
   }
 
   // Settle invoice at checkout — called unconditionally so BYOC sessions
@@ -3064,20 +3030,16 @@ export async function customerConfirmInspection(
   if (!inspection)
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
 
-  // The inspection can only be confirmed while the session is in the matching
-  // lifecycle state: CHECK_IN during handover (session CHECKED_IN), CHECK_OUT
-  // during return (session CHECKING_OUT).
-  if (inspection.type === InspectionType.CHECK_IN && session.status !== SessionStatus.CHECKED_IN) {
+  // Check-in is jointly verified face-to-face before staff creates the record.
+  // Customers can view it later but cannot confirm or dispute it in the app.
+  if (inspection.type !== InspectionType.CHECK_OUT) {
     throw new AppError(
-      'Phiên chạy không ở trạng thái chờ xác nhận bàn giao xe',
+      'Biên bản bàn giao xe đã được xác nhận tại quầy và chỉ có thể xem lại',
       400,
-      'INVALID_SESSION_STATE',
+      'CHECK_IN_INSPECTION_READ_ONLY',
     );
   }
-  if (
-    inspection.type === InspectionType.CHECK_OUT &&
-    session.status !== SessionStatus.CHECKING_OUT
-  ) {
+  if (session.status !== SessionStatus.CHECKING_OUT) {
     throw new AppError(
       'Phiên chạy không ở trạng thái chờ xác nhận trả xe',
       400,
@@ -3097,110 +3059,6 @@ export async function customerConfirmInspection(
       (inspection.damageDescription || '') + ` [KH phản hồi: ${disagreementNote}]`;
   }
   await inspRepo.save(inspection);
-
-  if (inspection.type === InspectionType.CHECK_IN) {
-    const isByoc = booking.playMode === BookingMode.BYOC;
-
-    // For rental vehicles, the session and vehicle were kept in the pre-handover state
-    // until the customer reviews the handover inspection. Now we either release the
-    // vehicle (agreed) or revert it (disputed).
-    if (!isByoc) {
-      const svRepo = AppDataSource.getRepository(SessionVehicle);
-      const activeSVs = await svRepo.find({ where: { sessionId } });
-
-      if (agreed) {
-        session.status = SessionStatus.ACTIVE;
-        session.actualStartAt = new Date();
-        await AppDataSource.getRepository(Session).save(session);
-
-        for (const sv of activeSVs) {
-          sv.status = SessionVehicleStatus.IN_USE;
-          await svRepo.save(sv);
-          if (sv.vehicleId) {
-            await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-              status: VehicleStatus.IN_USE,
-            });
-            try {
-              const [vehMeta] = await AppDataSource.query<
-                { cafe_id: string; identifier: string; provider_id: string }[]
-              >(
-                `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
-                [sv.vehicleId],
-              );
-              if (vehMeta) {
-                wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
-                  vehicleId: sv.vehicleId,
-                  cafeId: vehMeta.cafe_id,
-                  identifier: vehMeta.identifier,
-                  status: 'IN_USE',
-                });
-              }
-            } catch {
-              /* non-critical */
-            }
-          }
-        }
-      } else {
-        // Customer disputed the handover. Revert the vehicle so staff can resolve before
-        // releasing it to the customer.
-        for (const sv of activeSVs) {
-          sv.status = SessionVehicleStatus.ASSIGNED;
-          await svRepo.save(sv);
-          if (sv.vehicleId) {
-            await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-              status: VehicleStatus.AVAILABLE,
-            });
-          }
-        }
-      }
-    }
-
-    // For BYOC we only record the customer's agreement/dispute. The session is
-    // already ACTIVE so the customer can drive, but the confirmation timestamp is now
-    // audit evidence for any later damage dispute.
-    if (session.checkedInBy) {
-      const title = agreed
-        ? 'Khách hàng đã xác nhận bàn giao xe'
-        : 'Khách hàng phản hồi bàn giao xe';
-      const body = agreed
-        ? `Khách hàng vừa xác nhận biên bản bàn giao xe của phiên chơi ${session.id.substring(0, 8)}.`
-        : `Khách hàng vừa phản hồi biên bản bàn giao xe của phiên chơi ${session.id.substring(0, 8)}.`;
-      try {
-        await createNotification(
-          session.checkedInBy,
-          agreed
-            ? NotificationType.CUSTOMER_CHECKIN_CONFIRMED
-            : NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
-          title,
-          body,
-          { sessionId, inspectionId, sessionStatus: session.status },
-        );
-        wsService.pushToUser(
-          session.checkedInBy,
-          agreed ? 'CUSTOMER_CHECKIN_CONFIRMED' : 'CUSTOMER_CHECKOUT_CONFIRMED',
-          {
-            sessionId,
-            inspectionId,
-            sessionStatus: session.status,
-          },
-        );
-      } catch (err) {
-        logger.error(
-          'InspectionNotification',
-          'Failed to notify staff about customer check-in confirmation',
-          err,
-        );
-      }
-    }
-
-    return {
-      sessionId,
-      inspectionId,
-      type: inspection.type,
-      customerConfirmed: inspection.customerConfirmed,
-      sessionStatus: session.status,
-    };
-  }
 
   if (agreed) {
     session.status = SessionStatus.COMPLETED;
@@ -3244,21 +3102,7 @@ export async function customerConfirmInspection(
           status: BookingStatus.COMPLETED,
           completedAt,
         });
-        if (booking.source !== BookingSource.STAFF_MANUAL) {
-          await createNotification(
-            booking.customerId,
-            NotificationType.BOOKING_REVIEW_REQUEST,
-            'Đánh giá trải nghiệm của bạn',
-            'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-            {
-              bookingId: booking.id,
-              route: `/customer/review/${booking.id}`,
-            },
-          );
-          wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
-            bookingId: booking.id,
-          });
-        }
+        await notifyCustomerToReviewBooking(booking);
       }
     }
 
@@ -3276,25 +3120,6 @@ export async function customerConfirmInspection(
         inspectionId,
         sessionStatus: session.status,
       });
-      // Thông báo realtime cho Provider khi khách xác nhận trả xe
-      try {
-        const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-          `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-          [session.cafeId],
-        );
-        if (cafeRow) {
-          wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-            sessionId,
-            sessionStatus: session.status,
-          });
-        }
-      } catch (notifyErr) {
-        logger.error(
-          'StaffService',
-          'Failed to push SESSION_STATUS_CHANGED to provider on customer confirm checkout',
-          notifyErr,
-        );
-      }
     }
   } else {
     // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
@@ -3323,6 +3148,14 @@ export async function customerConfirmInspection(
       });
     }
   }
+
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: booking.id,
+    sessionId,
+    sessionStatus: session.status,
+    action: agreed ? 'CHECK_OUT_CONFIRMED' : 'CHECK_OUT_DISPUTED',
+  });
 
   return { success: true, agreed, sessionStatus: session.status };
 }
@@ -3360,6 +3193,14 @@ export async function customerRespondExtension(
 
     session.status = SessionStatus.ACTIVE;
     await AppDataSource.getRepository(Session).save(session);
+
+    broadcastSessionUpdated({
+      cafeId: session.cafeId,
+      bookingId: booking.id,
+      sessionId,
+      sessionStatus: session.status,
+      action: 'EXTENSION_EXPIRED',
+    });
 
     throw new AppError(
       timing.canExtend
@@ -3433,6 +3274,14 @@ export async function customerRespondExtension(
       newPlannedEnd: session.plannedEndAt.toISOString(),
     });
   }
+
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: booking.id,
+    sessionId,
+    sessionStatus: session.status,
+    action: approved ? 'EXTENSION_APPROVED' : 'EXTENSION_REJECTED',
+  });
 
   return {
     success: true,
@@ -3513,7 +3362,7 @@ async function handleVehicleCheckoutMaintenance(
               vehicleName: vehName,
               cafeName: vehInfo.cafeName,
               status: 'PENDING_REPAIR',
-              route: '/provider/cafe-vehicles',
+              route: '/provider/vehicles',
             },
           );
 
@@ -3523,14 +3372,7 @@ async function handleVehicleCheckoutMaintenance(
             vehicleId: sv.vehicleId,
             vehicleName: vehName,
             cafeName: vehInfo.cafeName,
-            route: '/provider/cafe-vehicles',
-          });
-
-          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_STATUS_CHANGED', {
-            vehicleId: sv.vehicleId,
-            cafeId: vehInfo.cafeId,
-            identifier: vehInfo.vehicleIdentifier,
-            status: 'MAINTENANCE',
+            route: '/provider/vehicles',
           });
         }
       } catch (err) {
@@ -3657,25 +3499,13 @@ async function pushCheckoutCompletedEvents(
   if (booking.customerId) {
     wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', payload);
   }
-  // Thông báo realtime cho Provider khi session hoàn tất
-  try {
-    const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-      `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-      [booking.cafeId],
-    );
-    if (cafeRow) {
-      wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-        sessionId,
-        sessionStatus: SessionStatus.COMPLETED,
-      });
-    }
-  } catch (notifyErr) {
-    logger.error(
-      'StaffService',
-      'Failed to push SESSION_STATUS_CHANGED to provider on checkout completed',
-      notifyErr,
-    );
-  }
+  broadcastSessionUpdated({
+    cafeId: booking.cafeId,
+    bookingId: booking.id,
+    sessionId,
+    sessionStatus: SessionStatus.COMPLETED,
+    action: 'CHECK_OUT_COMPLETED',
+  });
 }
 
 // ── STAFF CONFIRM CHECKOUT ────────────────────────────────────────────────────
@@ -3793,6 +3623,14 @@ export async function updateDamageLineItems(
         }),
       );
     }
+
+    broadcastSessionUpdated({
+      cafeId: session.cafeId,
+      bookingId: session.bookingId,
+      sessionId,
+      sessionStatus: session.status,
+      action: 'INSPECTION_UPDATED',
+    });
   }
 
   return {
@@ -3807,52 +3645,6 @@ export async function updateDamageLineItems(
     })),
     totalDamageCharge,
   };
-}
-
-// ── ESCALATE DISPUTE TO PROVIDER ──────────────────────────────────────────────
-
-export async function escalateDisputeToProvider(
-  sessionId: string,
-  inspectionId: string,
-  note: string,
-  staffUserId: string,
-): Promise<any> {
-  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
-  if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
-
-  const inspRepo = AppDataSource.getRepository(Inspection);
-  const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
-  if (!inspection)
-    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
-
-  inspection.damageDescription =
-    (inspection.damageDescription || '') +
-    ` [Leo thang tranh chấp bởi NV ${staffUserId.substring(0, 8)}: ${note}]`;
-  await inspRepo.save(inspection);
-
-  const booking = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
-  if (booking) {
-    const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
-    if (cafe?.providerId) {
-      await createNotification(
-        cafe.providerId,
-        NotificationType.CUSTOMER_INSPECTION_DISPUTED,
-        'Tranh chấp biên bản hư hỏng xe cần xem xét',
-        `Nhân viên báo cáo tranh chấp phiên chơi ${session.id.substring(0, 8)}: "${note}". Vui lòng xem xét và phán quyết.`,
-      );
-      wsService.pushToUser(cafe.providerId, 'CUSTOMER_INSPECTION_DISPUTED', {
-        sessionId,
-        inspectionId,
-        note,
-        staffUserId,
-      });
-    }
-  }
-
-  logger.info('Staff', 'escalateDisputeToProvider', { sessionId, inspectionId, staffUserId });
-  return { success: true, sessionId, inspectionId };
 }
 
 export async function settleSessionCheckoutBilling(
@@ -4211,7 +4003,7 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
         ...(sessionForNotification
           ? {
               sessionId: sessionForNotification.id,
-              route: `/staff/session/${sessionForNotification.id}`,
+              route: `/staff/sessions/${sessionForNotification.id}`,
             }
           : {}),
         totalCounterBill,
@@ -4230,26 +4022,20 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     logger.error('SettlePendingNotification', 'Failed to notify', err);
   }
 
+  wsService.pushToCafe(booking.cafeId, 'BOOKING_PAYMENT_UPDATED', {
+    bookingId,
+    cafeId: booking.cafeId,
+    ...(sessionForNotification ? { sessionId: sessionForNotification.id } : {}),
+    action: 'COUNTER_PAYMENT_SETTLED',
+    updatedAt: new Date().toISOString(),
+  });
+
   const bookingReconciliation = await reconcileBookingAfterCheckout(booking);
   if (completedSessionIdDuringSettlement) {
     void pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
   }
-  if (
-    bookingReconciliation.newlyCompleted &&
-    booking.source !== BookingSource.STAFF_MANUAL &&
-    booking.customerId
-  ) {
-    await createNotification(
-      booking.customerId,
-      NotificationType.BOOKING_REVIEW_REQUEST,
-      'Đánh giá trải nghiệm của bạn',
-      'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-      {
-        bookingId,
-        route: `/customer/review/${bookingId}`,
-      },
-    ).catch(() => {});
-    wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
+  if (bookingReconciliation.newlyCompleted) {
+    await notifyCustomerToReviewBooking(booking).catch(() => {});
   }
 
   return {
@@ -4641,7 +4427,7 @@ export async function updateMaintenanceStatus(
               vehicleName,
               cafeName: vehInfo.cafeName,
               status: 'COMPLETED',
-              route: '/provider/cafe-vehicles',
+              route: '/provider/vehicles',
             },
           );
 
@@ -4651,13 +4437,7 @@ export async function updateMaintenanceStatus(
             vehicleName,
             cafeName: vehInfo.cafeName,
             vehicleId: targetVehicleId,
-            route: '/provider/cafe-vehicles',
-          });
-          // Realtime cập nhật trạng thái xe về AVAILABLE cho provider
-          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_STATUS_CHANGED', {
-            vehicleId: targetVehicleId,
-            identifier: vehInfo.vehicleIdentifier,
-            status: 'AVAILABLE',
+            route: '/provider/vehicles',
           });
         } catch (err) {
           logger.error(
@@ -4709,7 +4489,7 @@ export async function updateMaintenanceStatus(
                 vehicleName,
                 cafeName: vehInfo.cafeName,
                 status: 'RECEIVED',
-                route: '/provider/cafe-vehicles',
+                route: '/provider/vehicles',
               },
             );
 
@@ -4719,7 +4499,7 @@ export async function updateMaintenanceStatus(
               vehicleName,
               cafeName: vehInfo.cafeName,
               vehicleId: targetVehicleId,
-              route: '/provider/cafe-vehicles',
+              route: '/provider/vehicles',
             });
           } catch (err) {
             logger.error(

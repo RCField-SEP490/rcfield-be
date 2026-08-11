@@ -72,7 +72,11 @@ export const LogoutSchema = z.object({
 export const UpdateMeSchema = z
   .object({
     full_name: z.string().min(2).max(255).optional(),
-    phone: z.string().min(9).max(20).nullable().optional(),
+    phone: z
+      .string()
+      .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không đúng định dạng')
+      .nullable()
+      .optional(),
     avatar_url: z.string().url().nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
@@ -1468,6 +1472,10 @@ export const CancelBookingSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+export const ConfirmRefundSchema = z.object({
+  method: z.enum(['CASH', 'BANK_TRANSFER']),
+});
+
 export const CreateContestRentalBookingSchema = z.object({
   contest_id: z.string().uuid(),
   cafe_id: z.string().uuid(),
@@ -1477,12 +1485,51 @@ export const CreateContestRentalBookingSchema = z.object({
   vehicle_catalog_id: z.string().uuid().optional(),
 });
 
-export const ListCafeBookingsSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  status: z.nativeEnum(BookingStatus).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
+export const ListCafeBookingsSchema = z
+  .object({
+    // `date` is retained for clients that request one day. Omitting every
+    // date field intentionally returns the booking history with pagination.
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    status: z.nativeEnum(BookingStatus).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .superRefine((value, context) => {
+    if (value.date && (value.from || value.to)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['date'],
+        message: 'Chỉ dùng date hoặc cặp from/to, không dùng đồng thời.',
+      });
+    }
+
+    if ((value.from && !value.to) || (!value.from && value.to)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: value.from ? ['to'] : ['from'],
+        message: 'Cần cung cấp cả from và to khi lọc theo khoảng ngày.',
+      });
+    }
+
+    if (value.from && value.to && value.from > value.to) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['to'],
+        message: 'Ngày kết thúc phải sau hoặc bằng ngày bắt đầu.',
+      });
+    }
+  });
 
 export const ListCafeSessionsSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -1683,9 +1730,4 @@ export const ConfirmCheckoutSchema = z.object({
 
 export const UpdateDamageItemsSchema = z.object({
   damageLineItems: z.array(DamageLineItemInputSchema).min(0),
-});
-
-export const EscalateDisputeSchema = z.object({
-  inspectionId: z.string().uuid('inspectionId phải là UUID hợp lệ'),
-  note: z.string().min(1, 'Vui lòng nhập mô tả tranh chấp'),
 });

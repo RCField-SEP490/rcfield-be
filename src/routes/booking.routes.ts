@@ -35,6 +35,13 @@ bookingRouter.get(
   bookingController.getPaymentTransaction,
 );
 
+bookingRouter.get(
+  '/:id/cancellation-quote',
+  authenticate,
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  bookingController.getCancellationQuote,
+);
+
 bookingRouter.get('/:id', authenticate, bookingController.getBooking);
 
 bookingRouter.post(

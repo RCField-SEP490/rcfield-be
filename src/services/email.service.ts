@@ -331,11 +331,10 @@ class EmailService {
       identifier: string | null;
       color: string | null;
       rental_fee_snapshot: string;
-      security_deposit_snapshot: string;
     };
     const vehicleRows = (await ds.query(
       `SELECT vc.name AS catalog_name, vc.tier, v.identifier, v.color,
-              bv.rental_fee_snapshot, bv.security_deposit_snapshot
+              bv.rental_fee_snapshot
          FROM booking_vehicles bv
          LEFT JOIN vehicles v ON v.id = bv.vehicle_id
          LEFT JOIN vehicle_catalogs vc ON vc.id = v.catalog_id
@@ -375,14 +374,6 @@ class EmailService {
           total: v.rental_fee,
         });
       }
-      if (v.security_deposit > 0) {
-        lineItems.push({
-          description: `Cọc xe — ${vehicleName}`,
-          qty: 1,
-          unitPrice: v.security_deposit,
-          total: v.security_deposit,
-        });
-      }
     }
 
     if (snapshot.fnb_total > 0) {
@@ -401,8 +392,6 @@ class EmailService {
     }
 
     const discountAmount = snapshot.discount_amount ?? 0;
-    const depositAmount = vehicleSnapshots.reduce((sum, v) => sum + v.security_deposit, 0);
-
     const pdfBuffer = await generateInvoicePdf({
       invoiceNumber: shortRef,
       issuedAt: new Date(r.paid_at),
@@ -423,7 +412,6 @@ class EmailService {
       discountAmount,
       promoCode: promoApplied?.code ?? null,
       totalAmount: snapshot.total_charged,
-      depositAmount,
     });
 
     const pdfBase64 = pdfBuffer.toString('base64');
@@ -517,14 +505,6 @@ class EmailService {
                 <td style="padding:10px 12px;font-size:14px;font-weight:700;text-align:right">${snapshot.total_charged.toLocaleString('vi-VN')} ₫</td>
               </tr>
             </table>
-
-            ${
-              depositAmount > 0
-                ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e">
-              ⚠ Tiền cọc xe <strong>${depositAmount.toLocaleString('vi-VN')} ₫</strong> sẽ được hoàn trả sau khi check-out thành công.
-            </div>`
-                : ''
-            }
 
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
               Vui lòng lưu hóa đơn này để đối chiếu khi cần. Mọi thắc mắc liên hệ chi nhánh trực tiếp.
