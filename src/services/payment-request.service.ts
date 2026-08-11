@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { AppDataSource } from '../config/database';
 import { PaymentRequest } from '../models/payment-request.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
@@ -5,6 +6,7 @@ import { SubscriptionPlan } from '../models/subscription-plan.entity';
 import { AppError, NotificationType, PaymentRequestStatus } from '../types';
 import { createNotification } from './notification.service';
 import { activateFromPayment } from './subscription.service';
+import { emailService } from './email.service';
 
 interface SubmitBody {
   plan_id: string;
@@ -74,21 +76,46 @@ export async function confirm(requestId: string, adminId: string, notes?: string
     throw new AppError('Yêu cầu đã được xử lý', 400, 'ALREADY_PROCESSED');
   }
 
-  await AppDataSource.transaction(async (manager) => {
+  const { userRows, planRows, sub } = await AppDataSource.transaction(async (manager) => {
     request.status = PaymentRequestStatus.CONFIRMED;
     request.reviewedBy = adminId;
     request.reviewedAt = new Date();
     if (notes) request.adminNotes = notes;
     await manager.save(request);
 
-    await activateFromPayment(request.providerId, request.planId);
+    const activatedSub = await activateFromPayment(request.providerId, request.planId);
 
     await AppDataSource.query(
       `UPDATE cafes SET deleted_at = NULL, updated_at = NOW()
        WHERE provider_id = $1 AND deleted_at IS NOT NULL`,
       [request.providerId],
     );
+
+    const users = await manager.query(`SELECT email, full_name FROM users WHERE id = $1`, [
+      request.providerId,
+    ]);
+    const plans = await manager.query(`SELECT name FROM subscription_plans WHERE id = $1`, [
+      request.planId,
+    ]);
+
+    return { userRows: users, planRows: plans, sub: activatedSub };
   });
+
+  // Gửi email thông báo kích hoạt gói thành công
+  if (userRows.length && planRows.length && sub) {
+    void emailService
+      .sendSubscriptionConfirmed({
+        to: userRows[0].email,
+        providerName: userRows[0].full_name,
+        planName: planRows[0].name,
+        amount: Number(request.transferAmount),
+        startDate: sub.startedAt,
+        endDate: sub.expiresAt,
+      })
+      .catch((err) => {
+        console.error('EmailConfirmError', 'Failed to send confirmation email', err);
+      });
+  }
 
   await createNotification(
     request.providerId,

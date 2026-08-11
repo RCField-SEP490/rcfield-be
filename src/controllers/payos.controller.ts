@@ -27,8 +27,8 @@ export const payosController = {
         const isSuccess = webhookData.code === '00';
 
         if (isSuccess) {
-          await payosService.handlePaymentSuccess(request);
-          console.log(`PaymentRequest ${request.id} confirmed via PayOS Webhook`);
+          await payosService.handlePayOSPaid(request);
+          console.log(`PaymentRequest ${request.id} paid via PayOS Webhook (pending approval)`);
         } else {
           const reason = `PayOS Webhook báo giao dịch thất bại. Code: ${webhookData.code}`;
           await payosService.handlePaymentFailed(request, reason);

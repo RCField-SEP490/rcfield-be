@@ -5,7 +5,6 @@ import { AppDataSource } from '../config/database';
 import { PaymentRequest } from '../models/payment-request.entity';
 import { AppError, NotificationType, PaymentRequestStatus } from '../types';
 import { createNotification } from './notification.service';
-import { activateFromPayment } from './subscription.service';
 
 let payOS: PayOS | null = null;
 
@@ -95,34 +94,22 @@ export async function createPaymentLink(
 }
 
 /**
- * Xử lý khi thanh toán thành công
+ * Xử lý khi thanh toán thành công qua PayOS (chờ Admin duyệt)
  */
-export async function handlePaymentSuccess(request: PaymentRequest): Promise<void> {
-  if (request.status === PaymentRequestStatus.CONFIRMED) {
+export async function handlePayOSPaid(request: PaymentRequest): Promise<void> {
+  if (request.status !== PaymentRequestStatus.PENDING) {
     return;
   }
 
-  await AppDataSource.transaction(async (manager) => {
-    request.status = PaymentRequestStatus.CONFIRMED;
-    request.reviewedAt = new Date();
-    request.adminNotes = 'Thanh toán tự động qua PayOS.';
-    await manager.save(request);
-
-    await activateFromPayment(request.providerId, request.planId);
-
-    // Kích hoạt lại các quán cafe của provider bị xóa tạm thời (do hết hạn subscription)
-    await manager.query(
-      `UPDATE cafes SET deleted_at = NULL, updated_at = NOW()
-       WHERE provider_id = $1 AND deleted_at IS NOT NULL`,
-      [request.providerId],
-    );
-  });
+  const repo = AppDataSource.getRepository(PaymentRequest);
+  request.adminNotes = 'Đã thanh toán thành công vui lòng chờ Admin duyệt.';
+  await repo.save(request);
 
   await createNotification(
     request.providerId,
-    NotificationType.PAYMENT_REQUEST_CONFIRMED,
-    'Thanh toán được xác nhận',
-    'Gói đăng ký của bạn đã được kích hoạt thành công qua cổng PayOS.',
+    NotificationType.SYSTEM,
+    'Thanh toán thành công qua PayOS',
+    'Giao dịch thanh toán qua cổng PayOS đã hoàn tất thành công. Vui lòng chờ Admin phê duyệt để bắt đầu sử dụng gói hội viên.',
   );
 }
 
@@ -186,7 +173,7 @@ export async function verifyPaymentStatus(orderCode: number): Promise<PaymentReq
     const payosOrder = await payOSInstance.paymentRequests.get(orderCode);
 
     if (payosOrder.status === 'PAID') {
-      await handlePaymentSuccess(request);
+      await handlePayOSPaid(request);
     } else if (['CANCELLED', 'EXPIRED'].includes(payosOrder.status)) {
       const reason =
         payosOrder.status === 'CANCELLED' ? 'Người dùng hủy thanh toán.' : 'Giao dịch hết hạn.';

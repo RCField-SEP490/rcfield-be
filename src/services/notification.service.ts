@@ -4,6 +4,7 @@ import { logger } from '../config/logger';
 import { Notification } from '../models/notification.entity';
 import { PushToken } from '../models/push-token.entity';
 import { NotificationType } from '../types';
+import { wsService } from './websocket.service';
 
 interface ListOptions {
   page: number;
@@ -22,6 +23,20 @@ export async function createNotification(
   const notification = await repo.save(
     repo.create({ userId, type, title, message, data: data ?? null }),
   );
+
+  // Gửi thông báo real-time qua WebSocket
+  try {
+    wsService.pushToUser(userId, 'notification', {
+      id: notification.id,
+      type,
+      title,
+      message,
+      data: data ?? null,
+      createdAt: notification.createdAt,
+    });
+  } catch (error) {
+    logger.error('WebSocketNotification', 'Failed to send websocket notification', error);
+  }
 
   void sendExpoPushToUser(userId, {
     title,
