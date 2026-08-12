@@ -53,6 +53,7 @@ import { sendContestRegistrationStatusNotification } from './contest/registratio
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
+import { getBookingCutoff } from './subscription.service';
 import type { Promotion } from '../models/promotion.entity';
 import {
   DAY_MS,
@@ -83,6 +84,25 @@ function isVietnamToday(value: Date): boolean {
       day: '2-digit',
     }).format(date);
   return format(value) === format(new Date());
+}
+
+/**
+ * Chặn đơn kéo dài quá thời điểm chi nhánh còn được phục vụ.
+ *
+ * Gói của provider vào ân hạn nghĩa là chi nhánh sắp bị ẩn. Nhận tiền cho một
+ * buổi chơi nằm sau mốc đó là hứa một dịch vụ mà hệ thống biết chắc sẽ không
+ * giữ được.
+ */
+async function assertWithinSubscriptionCoverage(cafe: Cafe, slotEnd: Date): Promise<void> {
+  const cutoff = await getBookingCutoff(cafe.providerId);
+  if (!cutoff || slotEnd.getTime() <= cutoff.getTime()) return;
+
+  throw new AppError(
+    'Chi nhánh này tạm thời chỉ nhận đặt lịch trong thời gian ngắn sắp tới. Vui lòng chọn ngày gần hơn hoặc liên hệ quán.',
+    409,
+    'PROVIDER_SUBSCRIPTION_ENDING',
+    { bookable_until: cutoff.toISOString() },
+  );
 }
 
 export function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slotEnd: Date): void {
@@ -655,6 +675,7 @@ export async function createBooking(
   assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
   assertMinimumBookingNotice(slotStart, cafe.minBookingNoticeMinutes);
   assertMaxAdvanceBookingDays(slotStart, slotEnd, cafe.maxAdvanceBookingDays);
+  await assertWithinSubscriptionCoverage(cafe, slotEnd);
 
   // Validate the current cafe policy before returning an existing pending payment.
   // This prevents a legacy pending booking outside a newly tightened window from
@@ -1735,6 +1756,9 @@ export async function createWalkInBooking(
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
   if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
   assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
+  // Khách vãng lai chơi ngay nên hầu như luôn nằm trong phạm vi còn phục vụ.
+  // Vẫn kiểm để bất biến "không nhận đơn ngoài phạm vi" đúng ở mọi lối tạo đơn.
+  await assertWithinSubscriptionCoverage(cafe, slotEnd);
 
   const slotDuration = cafe.slotDurationMinutes;
   const slotMinutes = (slotEnd.getTime() - slotStart.getTime()) / 60000;

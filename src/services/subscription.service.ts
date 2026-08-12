@@ -256,3 +256,45 @@ export async function incrementAIQuota(providerId: string): Promise<void> {
     quota: before[0]?.quota,
   });
 }
+
+/**
+ * Mốc cuối cùng mà một chi nhánh còn được nhận đơn đặt lịch.
+ *
+ * Trả `null` nghĩa là không có giới hạn thêm nào — hành vi bình thường.
+ *
+ * ── Vì sao cần ───────────────────────────────────────────────────────────────
+ * Khi gói hết hạn, `subscription-lifecycle.job` cho 7 ngày ân hạn rồi **xoá mềm
+ * toàn bộ chi nhánh**. Trước đây suốt 7 ngày đó hệ thống vẫn nhận đơn bình
+ * thường, kể cả đơn cho những ngày SAU khi chi nhánh bị xoá — khách trả tiền
+ * cho một buổi chơi mà chính hệ thống sắp tự tay huỷ bỏ, rồi không check-in
+ * được và không ai hoàn tiền.
+ *
+ * ── Vì sao không chặn sạch đơn mới ───────────────────────────────────────────
+ * Đơn rơi vào trong thời gian ân hạn vẫn sẽ được chơi thật. Chặn nó là hại cả
+ * quán lẫn khách mà không cứu được ai. Chỉ chặn đúng phần chạy ra ngoài phạm vi
+ * mà quán còn được phục vụ.
+ *
+ * ── Vì sao không có gói thì KHÔNG chặn ───────────────────────────────────────
+ * Thiếu bản ghi gói là một trạng thái dữ liệu, không phải bằng chứng provider
+ * đã hết hạn. Biến nó thành lỗi cho khách là phạt nhầm người.
+ */
+export async function getBookingCutoff(providerId: string): Promise<Date | null> {
+  const sub = await getActive(providerId);
+
+  // `getActive` bỏ qua gói EXPIRED. Không tìm thấy gói nào đang mở thì có hai
+  // khả năng: chưa từng có gói, hoặc gói đã hết hẳn. Phân biệt bằng một truy
+  // vấn riêng, vì hai trường hợp này phải xử lý khác nhau.
+  if (!sub) {
+    const expired = await AppDataSource.getRepository(ProviderSubscription).findOne({
+      where: { providerId, status: SubscriptionStatus.EXPIRED },
+      order: { createdAt: 'DESC' },
+    });
+    // Đã hết hẳn: không nhận thêm đơn nào nữa. Chưa từng có gói: không chặn.
+    return expired ? new Date() : null;
+  }
+
+  if (sub.status !== SubscriptionStatus.GRACE_PERIOD) return null;
+
+  // Trong ân hạn, chỉ nhận đơn kết thúc trước lúc hết ân hạn.
+  return sub.graceEndsAt ?? sub.expiresAt;
+}
