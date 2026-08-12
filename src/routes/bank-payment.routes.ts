@@ -16,6 +16,14 @@ import { UserRole } from '../types';
  *   đối mặt khách đang đứng chờ ở quầy.
  */
 
+// ── Bảng tra ngân hàng ───────────────────────────────────────────────────────
+
+// Công khai và không gắn với chi nhánh nào: đây là bảng tra tĩnh của VietQR,
+// giao diện đọc để dựng ô chọn thay vì chép lại danh sách vào mã nguồn.
+export const banksRouter = Router();
+
+banksRouter.get('/', bankPaymentController.listBanks);
+
 // Mount dưới `/cafes/:cafeId` nên cần mergeParams để đọc được `:cafeId`.
 export const cafeBankPaymentRouter = Router({ mergeParams: true });
 

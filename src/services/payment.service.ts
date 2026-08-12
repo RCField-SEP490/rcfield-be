@@ -46,6 +46,7 @@ import {
   type ContestPricingAdjustments,
 } from './contest-rental.service';
 import { getPaymentGateway } from './payment-gateway.factory';
+import { resolveVnpayCredentials, type VnpayCredentials } from './vnpay-credentials';
 import type { PaymentVerificationResult } from './payment-gateway.interface';
 import QRCode from 'qrcode';
 import { buildVietQrPayload, findBank, generatePaymentRefCode } from './vietqr';
@@ -686,12 +687,23 @@ export async function createCheckoutUrl(
     : null;
   if (
     latestPendingAttempt &&
+    // Phải CÙNG cổng thì mới dùng lại. Thiếu điều kiện này thì khách đổi
+    // phương thức sẽ nhận lại phiên của phương thức cũ: xin `bank_transfer`
+    // trong lúc còn phiên VNPay sống thì hàm trả về nhánh `redirect` không kèm
+    // `bank_transfer`, và trang mã QR không có gì để vẽ nên báo "Không mở được
+    // trang thanh toán". Chiều ngược lại còn tệ hơn — bấm VNPay lại bị đẩy
+    // sang trang chuyển khoản.
+    //
+    // Ghi chú ở đoạn cấp mã tham chiếu phía dưới vốn đã giả định rằng đổi
+    // phương thức sẽ đánh dấu giao dịch cũ FAILED; chính điều kiện thiếu ở đây
+    // đã chặn việc đó xảy ra.
+    latestPendingAttempt.gateway === gateway.name &&
     !pendingRequest.additionalPayment &&
     pendingRequest.paymentUrl &&
     gatewayUrlExpiresAt &&
     gatewayUrlExpiresAt > new Date()
   ) {
-    // Lần thanh toán trước vẫn còn sống — trả lại đúng nó thay vì tạo mới.
+    // Lần thanh toán trước vẫn còn sống VÀ cùng cổng — trả lại đúng nó.
     //
     // Với chuyển khoản phải dựng lại dữ liệu mã QR: nếu chỉ trả `payment_url`
     // trống trơn, frontend không thấy `flow` nên rơi về nhánh chuyển hướng và
@@ -750,6 +762,11 @@ export async function createCheckoutUrl(
   // dai hơn phiên thanh toán và khách có thể bị thu tiền hai lần.
   const paymentRefCode = gateway.name === 'BANK_TRANSFER' ? await allocatePaymentRefCode() : null;
 
+  // Cổng riêng của chi nhánh nếu đã khai, không thì cổng cấp nền tảng.
+  // `resolveVnpayCredentials` ghi log rõ nguồn nào được dùng.
+  const vnpayCredentials =
+    gateway.name === 'VNPAY' ? await resolveVnpayCredentials(booking.cafeId) : undefined;
+
   const gatewayResult = gateway.createPaymentUrl({
     amount: totalCharged,
     txnRef,
@@ -757,6 +774,7 @@ export async function createCheckoutUrl(
     ipAddr,
     returnUrl: customReturnUrl,
     bankCode: 'VNBANK',
+    credentials: vnpayCredentials,
   });
 
   logger.debug(
@@ -782,6 +800,8 @@ export async function createCheckoutUrl(
       totalCharged,
       ipAddr,
       gateway: gateway.name,
+      // Ghi lại đã đi qua cổng nào để đối soát về sau truy được.
+      vnpayCredentialSource: vnpayCredentials?.source,
       paymentUrl: gatewayResult.payment_url,
       gatewayUrlExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
       components: buildInitialPaymentReceiptComponents(snapshot),
@@ -899,11 +919,18 @@ async function buildBankTransferCheckout(input: {
     ? new URL(`/api/v1/sandbox-bank/pay?ref=${input.refCode}`, env.apiBaseUrl).toString()
     : undefined;
 
+  // Sinh ở 720px cho ô hiển thị ~256px: màn retina vẽ ở 2–3x, ảnh nhỏ hơn kích
+  // thước hiển thị thật sẽ bị nội suy nhòe. Ảnh QR đen trắng nén PNG rất tốt
+  // nên phóng to gần như không tốn thêm dung lượng.
+  //
+  // `margin: 4` là vùng trắng tối thiểu theo chuẩn QR. Để 1 thì ai chụp màn
+  // hình rồi cắt riêng mã ra gửi đi sẽ mất vùng trắng, máy quét khó tính đọc
+  // hụt — mà chụp màn gửi cho người khác trả hộ là chuyện xảy ra thật.
   const qrContent = sandboxUrl ?? qrPayload;
   const qrImageDataUrl = await QRCode.toDataURL(qrContent, {
     errorCorrectionLevel: 'M',
-    margin: 1,
-    width: 320,
+    margin: 4,
+    width: 720,
   });
 
   return {
@@ -1037,13 +1064,49 @@ export async function processConfirmation(
   return processGatewayConfirmation(vnpParams, 'vnpay');
 }
 
+/**
+ * Tìm thông tin cổng của chi nhánh đứng sau một mã giao dịch.
+ *
+ * Không tra được thì trả `undefined` để rơi về cấu hình nền tảng — mã giao dịch
+ * lạ vẫn phải bị đánh trượt chữ ký ở bước sau, không được ném lỗi ở đây.
+ */
+async function resolveVnpayCredentialsForTxnRef(
+  txnRef: unknown,
+): Promise<VnpayCredentials | undefined> {
+  if (typeof txnRef !== 'string' || !txnRef) return undefined;
+
+  const transaction = await AppDataSource.getRepository(PaymentTransaction).findOne({
+    where: { txnRef },
+    select: { bookingId: true },
+  });
+  if (!transaction?.bookingId) return undefined;
+
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: transaction.bookingId },
+    select: { cafeId: true },
+  });
+  if (!booking?.cafeId) return undefined;
+
+  return resolveVnpayCredentials(booking.cafeId);
+}
+
 /** Generic gateway confirmation: verify then apply business logic. */
 export async function processGatewayConfirmation(
   params: Record<string, unknown>,
   gatewayName: string,
 ): Promise<{ rspCode: string; message: string }> {
   const gateway = getPaymentGateway(gatewayName);
-  const result = gateway.verifyCallback(params);
+
+  // Chữ ký phải được kiểm bằng ĐÚNG khoá đã ký. Chi nhánh đi cổng riêng thì
+  // khoá nằm ở cấu hình của chi nhánh, nên phải lần từ mã giao dịch về booking
+  // rồi ra chi nhánh trước khi kiểm. Dùng nhầm khoá nền tảng ở đây thì mọi
+  // giao dịch của chi nhánh có cổng riêng đều bị đánh trượt chữ ký.
+  const credentials =
+    gateway.name === 'VNPAY'
+      ? await resolveVnpayCredentialsForTxnRef(params.vnp_TxnRef)
+      : undefined;
+
+  const result = gateway.verifyCallback(params, credentials);
 
   if (!result.isValid) {
     return { rspCode: '97', message: 'Invalid signature' };

@@ -6,6 +6,15 @@ export interface CreatePaymentUrlInput {
   returnUrl?: string;
   orderType?: string;
   bankCode?: string;
+  /**
+   * Thông tin cổng riêng của chi nhánh. Bỏ trống là dùng cấu hình cấp nền tảng.
+   * Chỉ VNPay đọc tới; các cổng khác bỏ qua.
+   */
+  credentials?: {
+    tmnCode: string;
+    hashSecret: string;
+    paymentUrl: string;
+  };
 }
 
 export interface PaymentUrlResult {
@@ -37,7 +46,10 @@ export interface PaymentVerificationResult {
 export interface PaymentGateway {
   readonly name: string;
   createPaymentUrl(input: CreatePaymentUrlInput): PaymentUrlResult;
-  verifyCallback(params: Record<string, unknown>): PaymentVerificationResult;
+  verifyCallback(
+    params: Record<string, unknown>,
+    credentials?: CreatePaymentUrlInput['credentials'],
+  ): PaymentVerificationResult;
 }
 
 export interface ProcessConfirmationResult {

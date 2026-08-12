@@ -18,6 +18,7 @@ export const vnpayGateway: PaymentGateway = {
       bankCode: input.bankCode,
       ipAddr: input.ipAddr,
       returnUrl: input.returnUrl,
+      credentials: input.credentials,
     });
 
     return {
@@ -28,7 +29,10 @@ export const vnpayGateway: PaymentGateway = {
     };
   },
 
-  verifyCallback(params: Record<string, unknown>): PaymentVerificationResult {
-    return verifyVnpayParams(params);
+  verifyCallback(
+    params: Record<string, unknown>,
+    credentials?: CreatePaymentUrlInput['credentials'],
+  ): PaymentVerificationResult {
+    return verifyVnpayParams(params, credentials);
   },
 };

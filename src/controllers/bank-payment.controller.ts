@@ -2,6 +2,7 @@ import type { NextFunction, Response } from 'express';
 import * as bankTransactionService from '../services/bank-transaction.service';
 import * as settingsService from '../services/cafe-payment-settings.service';
 import { resolvePaymentMethodsForCafe } from '../services/payment-method-resolver';
+import { listBankOptions } from '../services/vietqr';
 import {
   AppError,
   AuthRequest,
@@ -22,6 +23,16 @@ function requireUser(req: AuthRequest) {
 }
 
 export const bankPaymentController = {
+  // GET /api/v1/banks
+  // Công khai: chỉ là bảng tra tĩnh mã ngân hàng, không có gì để giấu.
+  listBanks(_req: AuthRequest, res: Response, next: NextFunction): void {
+    try {
+      res.json({ success: true, data: { banks: listBankOptions() } });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /api/v1/cafes/:cafeId/payment-methods
   async listPaymentMethods(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

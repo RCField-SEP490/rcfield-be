@@ -54,7 +54,12 @@ import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import type { Promotion } from '../models/promotion.entity';
-import type { CafeOperatingHours } from '../types';
+import {
+  DAY_MS,
+  buildOperatingWindow,
+  getOperatingDayKey,
+  getVietnamLocalMidnightUtcMs,
+} from '../lib/vietnam-time';
 
 // ── State machine ─────────────────────────────────────────────────────────────
 
@@ -68,21 +73,6 @@ const VALID_TRANSITIONS: Record<BookingStatus, string[]> = {
 };
 
 const MAX_CONSECUTIVE_SLOTS = 8;
-const VN_TZ_OFFSET_MS = 7 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
-const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-
-function getVietnamLocalMidnightUtcMs(value: Date): number {
-  const local = new Date(value.getTime() + VN_TZ_OFFSET_MS);
-  return (
-    Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - VN_TZ_OFFSET_MS
-  );
-}
-
-function getOperatingDayKey(localMidnightUtcMs: number): string {
-  const local = new Date(localMidnightUtcMs + VN_TZ_OFFSET_MS);
-  return DAY_KEYS[local.getUTCDay()]!;
-}
 
 function isVietnamToday(value: Date): boolean {
   const format = (date: Date) =>
@@ -93,36 +83,6 @@ function isVietnamToday(value: Date): boolean {
       day: '2-digit',
     }).format(date);
   return format(value) === format(new Date());
-}
-
-function parseOperatingTimeToMinutes(value?: string): number | null {
-  if (!value) return null;
-  const match = value.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return null;
-
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours === 24 && minutes === 0) return 24 * 60;
-  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
-  return hours * 60 + minutes;
-}
-
-function buildOperatingWindow(
-  operatingHours: CafeOperatingHours | null | undefined,
-  localMidnightUtcMs: number,
-): { openAt: Date; closeAt: Date } | null {
-  const schedule = operatingHours?.[getOperatingDayKey(localMidnightUtcMs)];
-  if (!schedule || schedule.is_closed) return null;
-
-  const openMinutes = parseOperatingTimeToMinutes(schedule.open);
-  const closeMinutes = parseOperatingTimeToMinutes(schedule.close);
-  if (openMinutes === null || closeMinutes === null) return null;
-
-  const closeOffsetMinutes = closeMinutes <= openMinutes ? closeMinutes + 24 * 60 : closeMinutes;
-  return {
-    openAt: new Date(localMidnightUtcMs + openMinutes * 60 * 1000),
-    closeAt: new Date(localMidnightUtcMs + closeOffsetMinutes * 60 * 1000),
-  };
 }
 
 export function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slotEnd: Date): void {

@@ -15,7 +15,7 @@ import { staffRouter } from './staff.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { adminAmenityRouter } from './admin-amenity.routes';
 import { cafeRouter } from './cafe.routes';
-import { bankTransactionRouter, cafeBankPaymentRouter } from './bank-payment.routes';
+import { bankTransactionRouter, banksRouter, cafeBankPaymentRouter } from './bank-payment.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
@@ -35,6 +35,7 @@ import { favoriteRouter } from './favorite.routes';
 import { contestRouter } from './contest.routes';
 import { racingNetworkRouter } from './racing-network.routes';
 import { featuredPopupRouter } from './featured-popup.routes';
+import { seoController } from '../controllers/seo.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -43,6 +44,9 @@ import { AmenityCatalog } from '../models/amenity-catalog.entity';
 import { TrackType } from '../models/track-type.entity';
 
 const router = Router();
+
+// Công khai, không xác thực: bot tìm kiếm không đăng nhập được.
+router.get('/seo/sitemap.xml', seoController.getSitemap);
 
 router.get('/health', (_req, res) => {
   res.json({ success: true, message: 'RCField API is running' });
@@ -132,6 +136,7 @@ router.use('/uploads', uploadRouter);
 // duyệt theo thứ tự đăng ký. Đặt sau thì `cafeRouter` có thể nuốt mất đường dẫn
 // bằng một route bắt chung nào đó.
 router.use('/cafes/:cafeId', cafeBankPaymentRouter);
+router.use('/banks', banksRouter);
 router.use('/bank-transactions', bankTransactionRouter);
 router.use('/cafes', cafeRouter);
 router.use('/', cafeImagesRouter);

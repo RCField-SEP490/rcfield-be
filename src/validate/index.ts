@@ -281,6 +281,12 @@ export const CafeListQuerySchema = z.object({
             .filter(Boolean);
     }),
   status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
+  /** Chỉ giữ chi nhánh còn slot đặt được trong ngày này (giờ Việt Nam). */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải theo định dạng YYYY-MM-DD')
+    .optional()
+    .openapi({ example: '2026-08-20' }),
 });
 
 const CafeUpsertBaseSchema = z.object({

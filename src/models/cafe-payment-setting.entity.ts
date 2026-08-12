@@ -47,6 +47,20 @@ export class CafePaymentSetting {
   @Column({ name: 'account_name', type: 'varchar', length: 160, nullable: true })
   accountName: string | null;
 
+  /**
+   * Mã merchant VNPay riêng của chi nhánh. `null` = dùng cổng cấp nền tảng.
+   */
+  @Column({ name: 'vnpay_tmn_code', type: 'varchar', length: 32, nullable: true })
+  vnpayTmnCode: string | null;
+
+  /**
+   * Khoá ký VNPay, đã mã hoá. KHÔNG BAO GIỜ trả ra khỏi máy chủ dưới mọi hình
+   * thức — kể cả che bớt. Lộ khoá này là người ngoài ký được giao dịch giả mà
+   * hệ thống không phân biệt nổi với giao dịch thật.
+   */
+  @Column({ name: 'vnpay_hash_secret_encrypted', type: 'text', nullable: true })
+  vnpayHashSecretEncrypted: string | null;
+
   @Column({ name: 'is_verified', type: 'boolean', default: false })
   isVerified: boolean;
 

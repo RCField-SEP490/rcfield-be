@@ -209,10 +209,17 @@ export async function buildSampleQr(cafeId: string, providerId: string): Promise
 
   return {
     qr_payload: qrPayload,
+    // Sinh ở 720px cho một ô hiển thị ~208px: màn retina vẽ ở 2–3x, ảnh nhỏ hơn
+    // kích thước hiển thị thật sẽ bị nội suy nhòe và trông rất thô. Ảnh QR đen
+    // trắng nén PNG rất tốt nên phóng to gần như không tốn thêm dung lượng.
+    //
+    // `margin: 4` là vùng trắng tối thiểu theo chuẩn QR. Trước đây để 1 — vẫn
+    // quét được vì nền quanh mã cũng trắng, nhưng ai cắt riêng ảnh mã ra gửi đi
+    // thì mất vùng trắng và máy quét khó tính sẽ đọc hụt.
     qr_image_data_url: await QRCode.toDataURL(qrPayload, {
       errorCorrectionLevel: 'M',
-      margin: 1,
-      width: 280,
+      margin: 4,
+      width: 720,
     }),
     amount: SAMPLE_QR_AMOUNT,
     memo: SAMPLE_QR_MEMO,

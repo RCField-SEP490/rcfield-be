@@ -653,7 +653,16 @@ export const bookingController = {
         ])
         .addSelect('c.name', 'cafeName')
         .where('b.customer_id = :customerId', { customerId: req.user!.userId })
-        .orderBy('b.slotStart', 'DESC')
+        // Sắp theo LÚC TẠO ĐƠN, không theo giờ chơi.
+        //
+        // Theo giờ chơi thì đơn vừa đặt cho tuần sau nằm dưới đơn đặt từ tháng
+        // trước cho tháng sau — khách vừa bấm xong không thấy đơn của mình đâu.
+        //
+        // `b.id` làm khoá phụ để thứ tự luôn xác định: hai đơn trùng mốc tạo mà
+        // không có tiêu chí phá hoà thì Postgres trả về thứ tự tuỳ lúc, và phân
+        // trang sẽ có dòng hiện hai lần ở hai trang hoặc biến mất hẳn.
+        .orderBy('b.createdAt', 'DESC')
+        .addOrderBy('b.id', 'DESC')
         .skip((query.page - 1) * query.limit)
         .take(query.limit);
 

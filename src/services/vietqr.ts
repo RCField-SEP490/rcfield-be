@@ -71,6 +71,25 @@ export function findBank(code: string): VietQrBank | null {
   return VIETQR_BANKS.find((bank) => bank.code === normalized) ?? null;
 }
 
+export interface BankOption {
+  code: string;
+  name: string;
+}
+
+/**
+ * Danh sách ngân hàng cho ô chọn ở giao diện, sắp theo tên.
+ *
+ * Bỏ `bin` đi: giao diện không cần nó, và BIN là thứ đi thẳng vào chuỗi QR nên
+ * không có lý do gì để phát tán ra ngoài. Có hàm này để giao diện khỏi phải
+ * chép lại danh sách — chép là sớm muộn cũng lệch, và lúc lệch thì chủ quán
+ * dùng ngân hàng thiếu sẽ không cấu hình được dù hệ thống thừa sức hỗ trợ.
+ */
+export function listBankOptions(): BankOption[] {
+  return VIETQR_BANKS.map(({ code, name }) => ({ code, name })).sort((a, b) =>
+    a.name.localeCompare(b.name, 'vi'),
+  );
+}
+
 // ── Mã tham chiếu ─────────────────────────────────────────────────────────────
 
 /**
