@@ -523,7 +523,13 @@ export async function listCafes(
 
   if (scope === 'managed' && viewer?.role === UserRole.PROVIDER) {
     qb.andWhere('cafe.provider_id = :providerId', { providerId: viewer.userId });
-  } else {
+  } else if (viewer?.role !== UserRole.ADMIN) {
+    // Khách và người chưa đăng nhập chỉ thấy cơ sở đang hoạt động.
+    //
+    // ADMIN được loại khỏi ràng buộc này. Trước đây admin cũng bị ép về ACTIVE,
+    // rồi bộ lọc bên dưới cộng thêm một điều kiện trạng thái nữa — hỏi cơ sở
+    // chờ duyệt thành `status = 'ACTIVE' AND status = 'PENDING'`, luôn rỗng.
+    // Hệ quả: màn duyệt cơ sở của admin không bao giờ có gì để duyệt.
     qb.andWhere('cafe.status = :active', { active: CafeStatus.ACTIVE });
   }
 

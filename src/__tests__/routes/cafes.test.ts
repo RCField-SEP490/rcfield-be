@@ -272,6 +272,47 @@ describe('Cafe routes', () => {
     expect(res.body.data[0].status).toBe(CafeStatus.ACTIVE);
   });
 
+  /*
+    Màn "Duyệt cơ sở" của admin sống chết bằng hai truy vấn này.
+
+    Trước đây admin cũng bị ép `status = ACTIVE` như khách vãng lai, rồi bộ lọc
+    cộng thêm một điều kiện trạng thái nữa — hỏi cơ sở chờ duyệt thành
+    `status='ACTIVE' AND status='PENDING'`, luôn trả về rỗng. Provider tạo cơ sở
+    xong nó nằm im mãi vì admin không bao giờ nhìn thấy để duyệt.
+  */
+  it('admin lọc được cơ sở đang chờ duyệt', async () => {
+    const admin = await createTestUser({ role: UserRole.ADMIN });
+    await createTestCafe({ status: CafeStatus.ACTIVE });
+    const pendingCafe = await createTestCafe({ status: CafeStatus.PENDING });
+
+    const res = await request(app)
+      .get('/api/v1/cafes?status=PENDING')
+      .set('Authorization', `Bearer ${generateToken(admin)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].id).toBe(pendingCafe.id);
+    expect(res.body.data[0].status).toBe(CafeStatus.PENDING);
+  });
+
+  it('admin không lọc trạng thái thì thấy đủ mọi trạng thái', async () => {
+    // Bốn ô đếm ở màn duyệt cơ sở tính từ đúng lần gọi không lọc này.
+    const admin = await createTestUser({ role: UserRole.ADMIN });
+    await createTestCafe({ status: CafeStatus.ACTIVE });
+    await createTestCafe({ status: CafeStatus.PENDING });
+    await createTestCafe({ status: CafeStatus.SUSPENDED });
+
+    const res = await request(app)
+      .get('/api/v1/cafes?limit=100')
+      .set('Authorization', `Bearer ${generateToken(admin)}`);
+
+    expect(res.status).toBe(200);
+    const statuses = (res.body.data as Array<{ status: string }>).map((c) => c.status);
+    expect(statuses).toEqual(
+      expect.arrayContaining([CafeStatus.ACTIVE, CafeStatus.PENDING, CafeStatus.SUSPENDED]),
+    );
+  });
+
   it('public list bỏ qua filter status chưa public và chỉ trả ACTIVE', async () => {
     await createTestCafe({ status: CafeStatus.ACTIVE });
     await createTestCafe({ status: CafeStatus.PENDING });
