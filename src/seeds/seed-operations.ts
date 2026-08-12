@@ -74,16 +74,13 @@ async function seed() {
 
   // Clear existing operations seed data to prevent duplication
   logger.info('Seed', 'Clearing existing operations seed data...');
-  await AppDataSource.query(`DELETE FROM trust_score_logs WHERE note LIKE '%[SEED]%'`);
   await AppDataSource.query(
     `DELETE FROM fnb_order_items WHERE fnb_order_id IN (SELECT id FROM fnb_orders WHERE notes LIKE '%[SEED]%')`,
   );
   await AppDataSource.query(`DELETE FROM fnb_orders WHERE notes LIKE '%[SEED]%'`);
-  await AppDataSource.query(`DELETE FROM disputes WHERE reason LIKE '%[SEED]%'`);
   await AppDataSource.query(
     `DELETE FROM extension_proposals WHERE session_id IN (SELECT id FROM sessions WHERE notes LIKE '%[SEED]%')`,
   );
-  await AppDataSource.query(`DELETE FROM incidents WHERE description LIKE '%[SEED]%'`);
   await AppDataSource.query(
     `DELETE FROM inspection_checklists WHERE inspection_id IN (SELECT id FROM inspections WHERE performed_by = $1)`,
     [staff.id],
@@ -447,27 +444,6 @@ async function seed() {
     [insp3Checkout.id],
   );
 
-  // Insert Incident Log
-  await AppDataSource.query(
-    `INSERT INTO incidents (
-      session_id, reported_by, type, status, occurred_at, description, estimated_amount, responsible_party
-    ) VALUES ($1, $2, 'RENTAL_DAMAGE', 'RECORDED', $3, $4, 250000, 'CUSTOMER')`,
-    [s3.id, staff.id, booking3End, 'Khách va chạm góc cua 3 khiến nứt vỡ cản trước xe. [SEED]'],
-  );
-
-  // Opened Dispute
-  await AppDataSource.query(
-    `INSERT INTO disputes (
-      booking_id, opened_by, reason, evidence_photos, status
-    ) VALUES ($1, $2, $3, $4, 'OPEN')`,
-    [
-      b3.id,
-      customer.id,
-      'Vết nứt nhựa mỏng đã có từ trước khi chơi, va quẹt nhẹ không thể gây rách toạc cản trước. [SEED]',
-      ['https://cdn.rcfield.vn/disputes/b3-evidence1.jpg'],
-    ],
-  );
-
   // ─────────────────────────────────────────────────────────────────────────────
   // BOOKING 4: Confirmed upcoming Single Booking (In 2 Hours)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -549,27 +525,6 @@ async function seed() {
       staff.id,
       getOffsetTime(-12),
     ],
-  );
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // TRUST SCORE LOGS
-  // ─────────────────────────────────────────────────────────────────────────────
-  await AppDataSource.query(
-    `INSERT INTO trust_score_logs (
-      user_id, delta, score_before, score_after, reason, note, created_by
-    ) VALUES ($1, -5.00, 100.00, 95.00, 'DAMAGE_CONFIRMED', $2, $3)`,
-    [
-      customer.id,
-      'Xác nhận va quẹt làm gãy cản trước xe Yokomo YD-2S Plus ngày 25/05. [SEED]',
-      staff.id,
-    ],
-  );
-
-  await AppDataSource.query(
-    `INSERT INTO trust_score_logs (
-      user_id, delta, score_before, score_after, reason, note, created_by
-    ) VALUES ($1, 2.00, 95.00, 97.00, 'BOOKING_STREAK', $2, $3)`,
-    [customer.id, 'Cộng điểm tích cực hoàn thành 5 slot chơi liên tiếp đúng giờ. [SEED]', staff.id],
   );
 
   await AppDataSource.destroy();

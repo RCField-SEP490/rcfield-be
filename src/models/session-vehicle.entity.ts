@@ -30,9 +30,6 @@ export class SessionVehicle {
   @Column({ name: 'vehicle_id', type: 'uuid', nullable: true })
   vehicleId: string | null;
 
-  @Column({ name: 'customer_vehicle_id', type: 'uuid', nullable: true })
-  customerVehicleId: string | null;
-
   @Column({ name: 'assigned_to_participant_id', type: 'uuid', nullable: true })
   assignedToParticipantId: string | null;
 

@@ -25,8 +25,6 @@ async function resetBookings() {
 
   // Delete in FK-safe order
   await q(`DELETE FROM notifications`);
-  await q(`DELETE FROM disputes`);
-  await q(`DELETE FROM incidents`);
   await q(`DELETE FROM inspections`);
   await q(`DELETE FROM extension_proposals`);
   await q(`DELETE FROM fnb_order_items`);

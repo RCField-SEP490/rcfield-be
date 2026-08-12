@@ -458,7 +458,6 @@ export async function mapContestRegistrationsPayload(
       status: registration.status,
       vehicle_source: registration.vehicleSource,
       vehicle_id: registration.vehicleId,
-      customer_vehicle_id: registration.customerVehicleId,
       // Dòng xe VĐV đã đặt: nhân viên cần biết để chọn đúng chiếc lúc giao xe.
       rental_catalog_id: registration.rentalCatalogId,
       rental_cafe_id: registration.rentalCafeId,

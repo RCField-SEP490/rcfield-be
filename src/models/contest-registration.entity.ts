@@ -30,9 +30,6 @@ export class ContestRegistration {
   @Column({ name: 'vehicle_id', type: 'uuid', nullable: true })
   vehicleId: string | null;
 
-  @Column({ name: 'customer_vehicle_id', type: 'uuid', nullable: true })
-  customerVehicleId: string | null;
-
   /** Dòng xe VĐV chọn mượn lúc đăng ký; chiếc cụ thể gán lúc check-in. */
   @Column({ name: 'rental_catalog_id', type: 'uuid', nullable: true })
   rentalCatalogId: string | null;

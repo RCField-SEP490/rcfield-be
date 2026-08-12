@@ -582,7 +582,6 @@ async function insertRegistration(params: {
   userId: string;
   vehicleSource?: 'RENTAL' | 'BYOC';
   vehicleId: string | null;
-  customerVehicleId?: string | null;
   status: string;
   paymentStatus: string;
   entryFeeAmount: number;
@@ -595,22 +594,21 @@ async function insertRegistration(params: {
 }): Promise<string> {
   const [registration] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO contest_registrations
-       (contest_id, user_id, participant_role_snapshot, vehicle_source, vehicle_id, customer_vehicle_id,
+       (contest_id, user_id, participant_role_snapshot, vehicle_source, vehicle_id,
         status, check_in_code, checked_in_cafe_id, checked_in_by, checked_in_at,
         payment_status, entry_fee_amount, entry_fee_due_at, cancelled_by, cancelled_at,
         cancellation_reason, metadata)
      VALUES
-       ($1, $2, 'CUSTOMER', $3, $4, $5,
-        $6, $7, $8, $9, $10,
-        $11, $12, NOW() + INTERVAL '3 days', NULL, NULL,
-        $13, $14)
+       ($1, $2, 'CUSTOMER', $3, $4,
+        $5, $6, $7, $8, $9,
+        $10, $11, NOW() + INTERVAL '3 days', NULL, NULL,
+        $12, $13)
      RETURNING id`,
     [
       params.contestId,
       params.userId,
       params.vehicleSource ?? 'RENTAL',
       params.vehicleId,
-      params.customerVehicleId ?? null,
       params.status,
       params.checkInCode,
       params.checkedInCafeId ?? null,
@@ -676,27 +674,6 @@ async function writeAudit(params: {
       JSON.stringify({ demo_july19: true }),
     ],
   );
-}
-
-async function createCustomerVehicle(customerId: string): Promise<string> {
-  const brand = 'Yokomo';
-  const model = 'YD-2S Plus';
-  const [vehicle] = await AppDataSource.query<{ id: string }[]>(
-    `INSERT INTO customer_vehicles (
-      customer_id, brand, model, serial_number, description, notes
-    )
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING id`,
-    [
-      customerId,
-      brand,
-      model,
-      `BYOC-${customerId.slice(0, 8)}`,
-      'Xe drift RWD cá nhân, khung carbon, servo metal gear, lốp drift chuyên dụng.',
-      'Đã qua tech inspection nội bộ.',
-    ],
-  );
-  return vehicle.id;
 }
 
 async function pickAvailableVehicle(cafeId: string): Promise<string> {
@@ -800,8 +777,6 @@ async function main(): Promise<void> {
   const hostVehicle = await pickAvailableVehicle(context.cafeHN.id);
   const sgVehicle = context.cafeSG ? await pickAvailableVehicle(context.cafeSG.id) : hostVehicle;
   const dnVehicle = await pickAvailableVehicle(cafeDaNangId);
-  const byocVehicleId = await createCustomerVehicle(racerIds[0]);
-  const demoByocVehicleId = await createCustomerVehicle(demoUserId);
 
   // Registrations: 15 seeded + 1 demo + 1 empty slot (capacity 17)
   const regs: { id: string; userId: string; status: string; paymentStatus: string }[] = [];
@@ -810,7 +785,6 @@ async function main(): Promise<void> {
     userId: string;
     vehicleSource: 'RENTAL' | 'BYOC';
     vehicleId: string | null;
-    customerVehicleId?: string | null;
     status: string;
     paymentStatus: string;
     checkInCode: string;
@@ -825,7 +799,6 @@ async function main(): Promise<void> {
       userId: params.userId,
       vehicleSource: params.vehicleSource,
       vehicleId: params.vehicleId,
-      customerVehicleId: params.customerVehicleId,
       status: params.status,
       paymentStatus: params.paymentStatus,
       entryFeeAmount: 100000,
@@ -878,7 +851,6 @@ async function main(): Promise<void> {
     userId: racerIds[6],
     vehicleSource: 'BYOC',
     vehicleId: null,
-    customerVehicleId: byocVehicleId,
     status: 'CONFIRMED',
     paymentStatus: 'MARKED_PAID',
     checkInCode: 'DM-BYOC-001',
@@ -981,7 +953,6 @@ async function main(): Promise<void> {
     userId: demoUserId,
     vehicleSource: 'BYOC',
     vehicleId: null,
-    customerVehicleId: demoByocVehicleId,
     status: 'CONFIRMED',
     paymentStatus: 'MARKED_PAID',
     checkInCode: 'DMDEMO001',

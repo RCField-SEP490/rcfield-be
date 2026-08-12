@@ -184,7 +184,6 @@ export async function createContestRegistration(
     registration.bookingId = null;
     registration.rentalCatalogId = rentalCatalogId;
     registration.rentalCafeId = rentalCafeId;
-    registration.customerVehicleId = null;
     registration.status = ContestRegistrationStatus.PENDING;
     registration.checkInCode = existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
     registration.entryFeeAmount = Number(contest.entryFee ?? 0);
