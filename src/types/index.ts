@@ -108,6 +108,7 @@ export enum PaymentComponentType {
   FB_PREORDER = 'FNB_PREORDER',
   FNB_ON_SITE = 'FNB_ON_SITE',
   PACKAGE_PURCHASE = 'PACKAGE_PURCHASE',
+  CONTEST_ENTRY_FEE = 'CONTEST_ENTRY_FEE',
 }
 
 export enum CustomerPackageStatus {
@@ -262,12 +263,126 @@ export enum ContestParticipantStatus {
   DQ = 'DQ',
 }
 
+/** Vòng đời đơn phí tổ chức giải. */
+export enum ContestFeeOrderStatus {
+  /** Đã chọn gói, chưa khai báo chuyển khoản. */
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  /** Đã khai báo chuyển khoản, chờ admin đối soát. */
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  PAID = 'PAID',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+}
+
+/** Suất quảng bá do provider trả phí phải qua admin duyệt nội dung mới lên trang chủ. */
+export enum FeaturedPopupReviewStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
 export enum FeaturedPopupPlacement {
   EXPLORE = 'EXPLORE',
 }
 
 export enum FeaturedPopupAudienceScope {
   ALL = 'ALL',
+}
+
+/** Chiều tiền của một bút toán trong sổ thu chi giải đấu. */
+export enum ContestLedgerDirection {
+  IN = 'IN',
+  OUT = 'OUT',
+}
+
+/**
+ * Loại khoản thu — chỉ hợp lệ khi direction = IN.
+ *
+ * Tập đóng: chủ doanh nghiệp không tự thêm loại. Khoản không thuộc loại nào có
+ * sẵn thì dùng OTHER và mô tả ở tiêu đề, nhờ vậy báo cáo của các giải khác nhau
+ * so sánh được với nhau.
+ */
+export enum ContestLedgerIncomeCategory {
+  ENTRY_FEE_ADJUSTMENT = 'ENTRY_FEE_ADJUSTMENT',
+  SPONSORSHIP = 'SPONSORSHIP',
+  TICKET = 'TICKET',
+  FNB = 'FNB',
+  OTHER = 'OTHER',
+}
+
+/**
+ * Loại khoản chi — chỉ hợp lệ khi direction = OUT.
+ *
+ * FNB và OTHER cố ý trùng tên với enum thu: quán vừa thu tiền đồ uống bán trong
+ * ngày thi, vừa chi tiền mua nước cho trọng tài. Cột direction phân biệt nên
+ * trùng tên không gây nhập nhằng.
+ */
+export enum ContestLedgerExpenseCategory {
+  PRIZE_CASH = 'PRIZE_CASH',
+  PRIZE_ITEM = 'PRIZE_ITEM',
+  VENUE = 'VENUE',
+  STAFF = 'STAFF',
+  MARKETING = 'MARKETING',
+  FNB = 'FNB',
+  OTHER = 'OTHER',
+}
+
+/** Đường tiền lệ phí đi vào, cần để đối chiếu báo cáo với sao kê ngân hàng. */
+export enum ContestEntryFeePaymentMethod {
+  ONLINE = 'ONLINE',
+  CASH = 'CASH',
+  TRANSFER = 'TRANSFER',
+}
+
+// ── Thanh toán chuyển khoản theo chi nhánh (feature 019) ──────────────────────
+
+/** Cách một chi nhánh nhận tiền booking. */
+export enum CafePaymentMethod {
+  /** Cổng thanh toán dùng chung — mặc định của mọi chi nhánh chưa cấu hình. */
+  VNPAY = 'VNPAY',
+  /** Chuyển khoản thẳng vào tài khoản của chi nhánh, đối soát qua webhook. */
+  BANK_TRANSFER = 'BANK_TRANSFER',
+}
+
+/**
+ * Phán quyết của hệ thống về một khoản tiền được báo là đã về tài khoản.
+ *
+ * Tách khỏi `BankTransactionMatchReason` có chủ đích: nhân viên chỉ lọc đúng
+ * `NEEDS_REVIEW` (một điều kiện, một index), còn lý do cụ thể thì thêm mới
+ * thoải mái mà không phải sửa mọi chỗ lọc.
+ */
+export enum BankTransactionMatchStatus {
+  MATCHED = 'MATCHED',
+  NEEDS_REVIEW = 'NEEDS_REVIEW',
+  IGNORED = 'IGNORED',
+}
+
+/** Vì sao một giao dịch không khớp sạch. `null` nghĩa là khớp không vướng gì. */
+export enum BankTransactionMatchReason {
+  /** Tiền nhiều hơn số phải trả — booking vẫn được xác nhận. */
+  OVERPAID = 'OVERPAID',
+  /** Nội dung chuyển khoản không chứa mã tham chiếu. */
+  NO_REF_CODE = 'NO_REF_CODE',
+  /** Có mã nhưng không tra ra giao dịch thanh toán nào. */
+  REF_NOT_FOUND = 'REF_NOT_FOUND',
+  /** Tiền ít hơn số phải trả — không xác nhận booking. */
+  SHORT_PAID = 'SHORT_PAID',
+  /** Giao dịch thanh toán đã SUCCESS — khách chuyển lần thứ hai. */
+  ALREADY_PAID = 'ALREADY_PAID',
+  /** Giao dịch thanh toán đã FAILED — khách đã đổi sang phương thức khác. */
+  SESSION_REPLACED = 'SESSION_REPLACED',
+  /** Tiền về sau khi hết hạn giữ chỗ. Không bao giờ tự xác nhận lại. */
+  BOOKING_EXPIRED = 'BOOKING_EXPIRED',
+  /** Tài khoản nhận không thuộc chi nhánh nào trong hệ thống. */
+  UNKNOWN_ACCOUNT = 'UNKNOWN_ACCOUNT',
+}
+
+/** Nguồn gửi thông báo tiền về. */
+export enum BankTransactionGateway {
+  /** Dịch vụ đối soát ngân hàng thật (SePay và tương đương). */
+  SEPAY = 'SEPAY',
+  /** Bên mô phỏng nội bộ, chỉ sống khi SANDBOX_BANK_ENABLED=true. */
+  SANDBOX = 'SANDBOX',
 }
 
 export enum RaceRecordSourceType {
@@ -442,6 +557,7 @@ export enum NotificationType {
   CONTEST_REGISTRATION_CANCELLED = 'CONTEST_REGISTRATION_CANCELLED',
   CONTEST_CHECKIN_CONFIRMED = 'CONTEST_CHECKIN_CONFIRMED',
   CONTEST_REMINDER = 'CONTEST_REMINDER',
+  BOOKING_CANCELLED = 'BOOKING_CANCELLED',
 }
 
 // ── Review ────────────────────────────────────────────────────────────────────

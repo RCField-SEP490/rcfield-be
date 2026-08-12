@@ -102,3 +102,17 @@ export function getVietnamCurrentMonthRange(now: Date = new Date()): { from: str
   const to = new Date(Date.UTC(current.year, current.monthIndex + 1, 1) - VIETNAM_UTC_OFFSET_MS);
   return { from: from.toISOString(), to: to.toISOString() };
 }
+
+/**
+ * Returns the elapsed part of the current calendar month in Vietnam time.
+ * Dashboard utilisation must not include future opening capacity: doing so
+ * makes a month-to-date metric look artificially close to zero early in the
+ * month.
+ */
+export function getVietnamCurrentMonthToDateRange(now: Date = new Date()): {
+  from: string;
+  to: string;
+} {
+  const { from } = getVietnamCurrentMonthRange(now);
+  return { from, to: now.toISOString() };
+}

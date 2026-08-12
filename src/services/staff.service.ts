@@ -60,11 +60,15 @@ import { authService } from './auth.service';
 import { transition } from './booking.service';
 import { env } from '../config/env';
 import { wsService } from './websocket.service';
-import { createNotification } from './notification.service';
+import { createBookingReviewRequestNotification, createNotification } from './notification.service';
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { createWalkInBooking as createWalkInBookingService } from './booking.service';
 import { getSessionOperationalTiming } from '../lib/session-operational-timing';
-import { buildBookingFinancialSummary } from '../lib/booking-financial-summary';
+import { isRangeWithinOperatingHours } from '../lib/vietnam-time';
+import {
+  buildBookingFinancialSummary,
+  type PendingInitialPaymentSnapshot,
+} from '../lib/booking-financial-summary';
 import {
   RENTAL_INSPECTION_MAX_PHOTOS,
   RENTAL_INSPECTION_MIN_PHOTOS,
@@ -74,6 +78,53 @@ import {
   logContestVehicleCheckedOut,
   syncContestRegistrationOnVehicleCheckIn,
 } from './contest-rental.service';
+
+/**
+ * All active staff assigned to a cafe need the same operational state, while
+ * the payload remains deliberately minimal. Each screen refetches through its
+ * existing authorised API rather than receiving inspection or payment details
+ * over WebSocket.
+ */
+function broadcastSessionUpdated(input: {
+  cafeId: string;
+  bookingId: string;
+  sessionId: string;
+  sessionStatus: SessionStatus;
+  action: string;
+}): void {
+  wsService.pushToCafe(input.cafeId, 'SESSION_UPDATED', {
+    ...input,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function notifyCustomerToReviewBooking(booking: Booking): Promise<void> {
+  if (!booking.customerId || booking.source === BookingSource.STAFF_MANUAL) return;
+
+  const notificationCreated = await createBookingReviewRequestNotification(
+    booking.customerId,
+    booking.id,
+  );
+  if (notificationCreated) {
+    wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
+      bookingId: booking.id,
+      route: `/customer/bookings?reviewBookingId=${booking.id}`,
+    });
+  }
+}
+
+function broadcastFnbOrderUpdated(input: {
+  cafeId: string;
+  bookingId: string;
+  sessionId?: string | null;
+  orderId: string;
+  status: string;
+}): void {
+  wsService.pushToCafe(input.cafeId, 'FNB_ORDER_UPDATED', {
+    ...input,
+    updatedAt: new Date().toISOString(),
+  });
+}
 
 export interface CreateStaffInput {
   cafe_id: string;
@@ -137,6 +188,7 @@ export interface TodayBookingItem {
   participantDetails: { name: string; phone?: string; isBooker: boolean }[];
   plannedVehicles: string[];
   sessions: any[];
+  hasPendingRefund?: boolean;
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -540,7 +592,8 @@ export async function getBookingsByDate(
        c.name AS cafe_name,
        c.address AS cafe_address,
        c.phone AS cafe_phone,
-       tt.name AS track_name
+       tt.name AS track_name,
+       (SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS "hasPendingRefund"
      FROM bookings b
      JOIN cafes c ON c.id = b.cafe_id
      LEFT JOIN track_types tt ON tt.id = b.track_type_id
@@ -668,6 +721,7 @@ export async function getBookingsByDate(
       participantDetails,
       plannedVehicles,
       sessions: sessionsList,
+      hasPendingRefund: row.hasPendingRefund,
     });
   }
 
@@ -869,6 +923,14 @@ export async function updateFnbOrderStatus(
       );
     }
   }
+
+  broadcastFnbOrderUpdated({
+    cafeId,
+    bookingId: order.booking_id,
+    sessionId: order.session_id,
+    orderId,
+    status: newStatus,
+  });
 
   logger.info('Staff', 'fnb order status updated', { orderId, cafeId, newStatus });
 }
@@ -1361,6 +1423,14 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
     }
   }
 
+  broadcastSessionUpdated({
+    cafeId: booking.cafeId,
+    bookingId: booking.id,
+    sessionId: session.id,
+    sessionStatus: session.status,
+    action: 'CHECK_IN_STARTED',
+  });
+
   return session;
 }
 
@@ -1485,9 +1555,6 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
           (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
           0,
         );
-      } else {
-        // Fallback for legacy records without line items
-        totalDamageCharge = (Number(insp.damageCostEstimate) || 0) * 1.5;
       }
     }
 
@@ -1627,6 +1694,9 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     paymentComponents,
     paymentTransactions,
     Number(booking.discountAmount) || 0,
+    booking.status === BookingStatus.PENDING
+      ? (booking.snapshot as PendingInitialPaymentSnapshot | null)
+      : undefined,
   );
   const slotFee = paymentComponents
     .filter((component) => component.type === PaymentComponentType.SLOT_FEE)
@@ -1768,11 +1838,15 @@ export async function submitInspection(
     where: { sessionId, type: inspectionType },
     order: { createdAt: 'DESC' },
   });
-  if (
-    existingInspection &&
-    (inspectionType === InspectionType.CHECK_IN || !existingInspection.customerConfirmedAt)
-  ) {
-    return existingInspection;
+  if (existingInspection) {
+    if (inspectionType === InspectionType.CHECK_IN) {
+      // Handover is jointly verified at the counter before this record is
+      // created. It is final for the running session and must not be replaced
+      // by a later customer-side response.
+      return existingInspection;
+    } else if (!existingInspection.customerConfirmedAt) {
+      return existingInspection;
+    }
   }
 
   let sessionVehicleId = null;
@@ -1838,11 +1912,18 @@ export async function submitInspection(
   }
 
   if (inspection.type === InspectionType.CHECK_IN) {
-    // Auto-confirm CHECK_IN — staff and customer are co-located, no async confirmation needed
-    inspection.customerConfirmed = true;
-    inspection.customerConfirmedAt = new Date();
-    await AppDataSource.getRepository(Inspection).save(inspection);
+    // BYOC has no cafe asset to hand over, so there is nothing for the customer
+    // to confirm in the rental handover record.
+    if (isByoc) {
+      inspection.customerConfirmed = true;
+      inspection.customerConfirmedAt = new Date();
+      await AppDataSource.getRepository(Inspection).save(inspection);
+    }
 
+    // Completing the staff handover is the operational start of a session.
+    // The customer can review the evidence and report a discrepancy afterwards,
+    // but opening their app must not block a vehicle that has been physically
+    // handed over at the counter.
     session.status = SessionStatus.ACTIVE;
     session.actualStartAt = new Date();
     await AppDataSource.getRepository(Session).save(session);
@@ -1854,63 +1935,6 @@ export async function submitInspection(
         await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
           status: VehicleStatus.IN_USE,
         });
-        // Emit realtime cập nhật trạng thái xe cho provider
-        try {
-          const [vehMeta] = await AppDataSource.query<
-            { cafe_id: string; identifier: string; provider_id: string }[]
-          >(
-            `SELECT v.cafe_id, v.identifier, c.provider_id FROM vehicles v JOIN cafes c ON c.id = v.cafe_id WHERE v.id = $1`,
-            [sv.vehicleId],
-          );
-          if (vehMeta) {
-            wsService.pushToUser(vehMeta.provider_id, 'VEHICLE_STATUS_CHANGED', {
-              vehicleId: sv.vehicleId,
-              cafeId: vehMeta.cafe_id,
-              identifier: vehMeta.identifier,
-              status: 'IN_USE',
-            });
-          }
-        } catch {
-          /* non-critical */
-        }
-      }
-    }
-
-    if (session.checkedInBy) {
-      try {
-        await createNotification(
-          session.checkedInBy,
-          NotificationType.CUSTOMER_CHECKIN_CONFIRMED,
-          'Xe đã được bàn giao',
-          `Biên bản bàn giao xe phiên chơi ${session.id.substring(0, 8)} đã được xác nhận.`,
-          { sessionId, inspectionId: inspection.id, sessionStatus: session.status },
-        );
-        wsService.pushToUser(session.checkedInBy, 'CUSTOMER_CHECKIN_CONFIRMED', {
-          sessionId,
-          inspectionId: inspection.id,
-          sessionStatus: session.status,
-        });
-        // Thông báo realtime cho Provider (owner của cafe)
-        try {
-          const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-            `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-            [session.cafeId],
-          );
-          if (cafeRow) {
-            wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-              sessionId,
-              sessionStatus: session.status,
-            });
-          }
-        } catch (notifyErr) {
-          logger.error(
-            'InspectionNotification',
-            'Failed to push SESSION_STATUS_CHANGED to provider',
-            notifyErr,
-          );
-        }
-      } catch (err) {
-        logger.error('InspectionNotification', 'Failed to notify staff check-in confirmation', err);
       }
     }
   } else {
@@ -1930,26 +1954,6 @@ export async function submitInspection(
       session.status = SessionStatus.CHECKING_OUT;
       session.checkedOutBy = staffUserId;
       await AppDataSource.getRepository(Session).save(session);
-    }
-
-    // Thông báo realtime cho Provider khi trạng thái session thay đổi
-    try {
-      const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-        `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-        [session.cafeId],
-      );
-      if (cafeRow) {
-        wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-          sessionId,
-          sessionStatus: session.status,
-        });
-      }
-    } catch (notifyErr) {
-      logger.error(
-        'StaffService',
-        'Failed to push SESSION_STATUS_CHANGED to provider on checkout',
-        notifyErr,
-      );
     }
 
     if (activeSVs.length > 0) {
@@ -2004,13 +2008,16 @@ export async function submitInspection(
           eventType as any,
           inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
           inspection.type === InspectionType.CHECK_IN
-            ? 'Nhân viên trực ca vừa gửi biên bản bàn giao xe. Vui lòng bấm vào để kiểm tra và xác nhận.'
+            ? 'Nhân viên trực ca đã hoàn tất bàn giao xe. Phiên chơi đã bắt đầu; bạn có thể xem lại ảnh biên bản trong chi tiết đơn đặt.'
             : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
           {
             sessionId,
             inspectionId: inspection.id,
             inspectionType: inspection.type,
-            route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+            route:
+              inspection.type === InspectionType.CHECK_IN
+                ? `/customer/bookings/${booking.id}?section=handover`
+                : `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
             damageFlagged: !!damageFlagged,
           },
         );
@@ -2020,7 +2027,10 @@ export async function submitInspection(
           bookingId: booking.id,
           inspectionId: inspection.id,
           type: inspection.type,
-          route: `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+          route:
+            inspection.type === InspectionType.CHECK_IN
+              ? `/customer/bookings/${booking.id}?section=handover`
+              : `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
           damageFlagged: !!damageFlagged,
         });
       }
@@ -2037,23 +2047,17 @@ export async function submitInspection(
     0,
   );
 
-  // Create DAMAGE_CHARGE PENDING component immediately so the customer can pay via VNPAY
-  // while session is still CHECKING_OUT. settleSessionCheckoutBilling will skip re-creation
-  // via its !exists guard when the session is eventually confirmed/completed.
-  if (inspection.type === InspectionType.CHECK_OUT && totalDamageCharge > 0 && booking) {
-    const compRepo = AppDataSource.getRepository(PaymentComponent);
-    const existing = await compRepo.findOne({
-      where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
+  if (booking) {
+    broadcastSessionUpdated({
+      cafeId: booking.cafeId,
+      bookingId: booking.id,
+      sessionId,
+      sessionStatus: session.status,
+      action:
+        inspection.type === InspectionType.CHECK_IN
+          ? 'CHECK_IN_INSPECTION_SUBMITTED'
+          : 'CHECK_OUT_INSPECTION_SUBMITTED',
     });
-    if (!existing) {
-      const damageComp = compRepo.create({
-        bookingId: booking.id,
-        type: PaymentComponentType.DAMAGE_CHARGE,
-        amount: totalDamageCharge,
-        status: PaymentComponentStatus.PENDING,
-      });
-      await compRepo.save(damageComp);
-    }
   }
 
   logger.info('Staff', 'submitInspection', {
@@ -2185,7 +2189,14 @@ function resolveOperatingWindowForBooking(
 function getExtensionBlockedReason(cafe: Cafe, booking: Booking, proposedEnd: Date): string | null {
   const operatingWindow = resolveOperatingWindowForBooking(cafe, booking);
   if (!operatingWindow) return null;
-  if (proposedEnd.getTime() <= operatingWindow.closeAt.getTime()) return null;
+
+  // Dùng đúng phép kiểm của lúc tạo booking: nối các khung giờ liền nhau thay
+  // vì chỉ so với giờ đóng của MỘT ngày. Quán mở 00:00–24:00 mọi ngày là mở
+  // 24/7 — trước đây gia hạn từ 23:00 sang 00:15 bị chặn vì tưởng đã quá giờ
+  // đóng cửa, dù chính quán đó cho phép ĐẶT một đơn 23:00–01:00.
+  if (isRangeWithinOperatingHours(cafe.operatingHours, booking.slotStart, proposedEnd)) {
+    return null;
+  }
   return `Vượt giờ đóng cửa (${formatSlotTime(operatingWindow.closeAt)})`;
 }
 
@@ -2581,7 +2592,7 @@ export async function proposeExtension(
             proposalId: proposal.id,
             extraMinutes,
             additionalFee: Number(additionalFee),
-            route: `/customer/extension/${sessionId}`,
+            route: `/customer/extension-response/${sessionId}`,
           },
         );
 
@@ -2596,6 +2607,14 @@ export async function proposeExtension(
         });
       }
     }
+
+    broadcastSessionUpdated({
+      cafeId: session.cafeId,
+      bookingId: session.bookingId,
+      sessionId,
+      sessionStatus: session.status,
+      action: 'EXTENSION_APPROVED',
+    });
 
     return proposal;
   }
@@ -2620,7 +2639,7 @@ export async function proposeExtension(
         extraMinutes: proposal.durationMinutes,
         additionalFee: Number(proposal.feeAmount),
         expiresAt: expiresAt.toISOString(),
-        route: `/customer/extension/${sessionId}`,
+        route: `/customer/extension-response/${sessionId}`,
       },
     );
 
@@ -2633,6 +2652,14 @@ export async function proposeExtension(
       route: `/customer/extension-response/${sessionId}`,
     });
   }
+
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    sessionId,
+    sessionStatus: session.status,
+    action: 'EXTENSION_PROPOSED',
+  });
 
   return proposal;
 }
@@ -2754,6 +2781,13 @@ export async function addSessionFnbOrder(
     orderType: FnbOrderType.ON_SITE,
     excludeStaffUserId: staffUserId,
   });
+  broadcastFnbOrderUpdated({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    sessionId: session.id,
+    orderId: fnbOrder.id,
+    status: FnbOrderStatus.PENDING,
+  });
 
   // Notify customer of new Fnb order added
   try {
@@ -2853,49 +2887,15 @@ export async function swapSessionVehicle(
   newSV.startedAt = new Date();
   await svRepo.save(newSV);
 
-  return newSV;
-}
-
-export async function simulateClientCheckInResponse(sessionId: string): Promise<any> {
-  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
-  if (!session) {
-    throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
-  }
-
-  const inspectionRepo = AppDataSource.getRepository(Inspection);
-  const checkInInspection = await inspectionRepo.findOne({
-    where: { sessionId, type: InspectionType.CHECK_IN },
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: session.bookingId,
+    sessionId,
+    sessionStatus: session.status,
+    action: 'VEHICLE_SWAPPED',
   });
 
-  if (checkInInspection) {
-    checkInInspection.customerConfirmed = true;
-    checkInInspection.customerConfirmedAt = new Date();
-    await inspectionRepo.save(checkInInspection);
-  }
-
-  session.status = SessionStatus.ACTIVE;
-  session.actualStartAt = new Date();
-  await AppDataSource.getRepository(Session).save(session);
-
-  const svRepo = AppDataSource.getRepository(SessionVehicle);
-  const sessionVehicles = await svRepo.find({ where: { sessionId } });
-  const vehicleRepo = AppDataSource.getRepository(Vehicle);
-
-  for (const sv of sessionVehicles) {
-    sv.status = SessionVehicleStatus.IN_USE;
-    sv.startedAt = new Date();
-    await svRepo.save(sv);
-
-    if (sv.vehicleSource === VehicleSource.RENTAL && sv.vehicleId) {
-      const veh = await vehicleRepo.findOne({ where: { id: sv.vehicleId } });
-      if (veh) {
-        veh.status = VehicleStatus.IN_USE;
-        await vehicleRepo.save(veh);
-      }
-    }
-  }
-
-  return session;
+  return newSV;
 }
 
 export async function simulateClientCheckOutResponse(sessionId: string): Promise<any> {
@@ -2946,21 +2946,7 @@ export async function simulateClientCheckOutResponse(sessionId: string): Promise
     booking.status = BookingStatus.COMPLETED;
     booking.completedAt = new Date();
     await AppDataSource.getRepository(Booking).save(booking);
-    if (booking.source !== BookingSource.STAFF_MANUAL) {
-      await createNotification(
-        booking.customerId,
-        NotificationType.BOOKING_REVIEW_REQUEST,
-        'Đánh giá trải nghiệm của bạn',
-        'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-        {
-          bookingId: booking.id,
-          route: `/customer/review/${booking.id}`,
-        },
-      );
-      wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
-        bookingId: booking.id,
-      });
-    }
+    await notifyCustomerToReviewBooking(booking);
   }
 
   // Settle invoice at checkout — called unconditionally so BYOC sessions
@@ -3052,13 +3038,26 @@ export async function customerConfirmInspection(
   if (!inspection)
     throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
 
-  // CHECK_IN is auto-confirmed by staff submission — customer action not needed
-  if (inspection.type === InspectionType.CHECK_IN) {
+  // Check-in is jointly verified face-to-face before staff creates the record.
+  // Customers can view it later but cannot confirm or dispute it in the app.
+  if (inspection.type !== InspectionType.CHECK_OUT) {
     throw new AppError(
-      'Biên bản bàn giao xe đã được xác nhận tự động khi nhân viên gửi',
+      'Biên bản bàn giao xe đã được xác nhận tại quầy và chỉ có thể xem lại',
       400,
-      'ALREADY_CONFIRMED',
+      'CHECK_IN_INSPECTION_READ_ONLY',
     );
+  }
+  if (session.status !== SessionStatus.CHECKING_OUT) {
+    throw new AppError(
+      'Phiên chạy không ở trạng thái chờ xác nhận trả xe',
+      400,
+      'INVALID_SESSION_STATE',
+    );
+  }
+
+  // Reject duplicate confirmations.
+  if (inspection.customerConfirmed) {
+    throw new AppError('Biên bản đã được xác nhận', 400, 'ALREADY_CONFIRMED');
   }
 
   inspection.customerConfirmed = agreed;
@@ -3111,21 +3110,7 @@ export async function customerConfirmInspection(
           status: BookingStatus.COMPLETED,
           completedAt,
         });
-        if (booking.source !== BookingSource.STAFF_MANUAL) {
-          await createNotification(
-            booking.customerId,
-            NotificationType.BOOKING_REVIEW_REQUEST,
-            'Đánh giá trải nghiệm của bạn',
-            'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-            {
-              bookingId: booking.id,
-              route: `/customer/review/${booking.id}`,
-            },
-          );
-          wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', {
-            bookingId: booking.id,
-          });
-        }
+        await notifyCustomerToReviewBooking(booking);
       }
     }
 
@@ -3143,25 +3128,6 @@ export async function customerConfirmInspection(
         inspectionId,
         sessionStatus: session.status,
       });
-      // Thông báo realtime cho Provider khi khách xác nhận trả xe
-      try {
-        const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-          `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-          [session.cafeId],
-        );
-        if (cafeRow) {
-          wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-            sessionId,
-            sessionStatus: session.status,
-          });
-        }
-      } catch (notifyErr) {
-        logger.error(
-          'StaffService',
-          'Failed to push SESSION_STATUS_CHANGED to provider on customer confirm checkout',
-          notifyErr,
-        );
-      }
     }
   } else {
     // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
@@ -3190,6 +3156,14 @@ export async function customerConfirmInspection(
       });
     }
   }
+
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: booking.id,
+    sessionId,
+    sessionStatus: session.status,
+    action: agreed ? 'CHECK_OUT_CONFIRMED' : 'CHECK_OUT_DISPUTED',
+  });
 
   return { success: true, agreed, sessionStatus: session.status };
 }
@@ -3227,6 +3201,14 @@ export async function customerRespondExtension(
 
     session.status = SessionStatus.ACTIVE;
     await AppDataSource.getRepository(Session).save(session);
+
+    broadcastSessionUpdated({
+      cafeId: session.cafeId,
+      bookingId: booking.id,
+      sessionId,
+      sessionStatus: session.status,
+      action: 'EXTENSION_EXPIRED',
+    });
 
     throw new AppError(
       timing.canExtend
@@ -3300,6 +3282,14 @@ export async function customerRespondExtension(
       newPlannedEnd: session.plannedEndAt.toISOString(),
     });
   }
+
+  broadcastSessionUpdated({
+    cafeId: session.cafeId,
+    bookingId: booking.id,
+    sessionId,
+    sessionStatus: session.status,
+    action: approved ? 'EXTENSION_APPROVED' : 'EXTENSION_REJECTED',
+  });
 
   return {
     success: true,
@@ -3380,7 +3370,7 @@ async function handleVehicleCheckoutMaintenance(
               vehicleName: vehName,
               cafeName: vehInfo.cafeName,
               status: 'PENDING_REPAIR',
-              route: '/provider/cafe-vehicles',
+              route: '/provider/vehicles',
             },
           );
 
@@ -3390,14 +3380,7 @@ async function handleVehicleCheckoutMaintenance(
             vehicleId: sv.vehicleId,
             vehicleName: vehName,
             cafeName: vehInfo.cafeName,
-            route: '/provider/cafe-vehicles',
-          });
-
-          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_STATUS_CHANGED', {
-            vehicleId: sv.vehicleId,
-            cafeId: vehInfo.cafeId,
-            identifier: vehInfo.vehicleIdentifier,
-            status: 'MAINTENANCE',
+            route: '/provider/vehicles',
           });
         }
       } catch (err) {
@@ -3524,25 +3507,13 @@ async function pushCheckoutCompletedEvents(
   if (booking.customerId) {
     wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', payload);
   }
-  // Thông báo realtime cho Provider khi session hoàn tất
-  try {
-    const [cafeRow] = await AppDataSource.query<{ provider_id: string }[]>(
-      `SELECT provider_id FROM cafes WHERE id = $1 LIMIT 1`,
-      [booking.cafeId],
-    );
-    if (cafeRow) {
-      wsService.pushToUser(cafeRow.provider_id, 'SESSION_STATUS_CHANGED', {
-        sessionId,
-        sessionStatus: SessionStatus.COMPLETED,
-      });
-    }
-  } catch (notifyErr) {
-    logger.error(
-      'StaffService',
-      'Failed to push SESSION_STATUS_CHANGED to provider on checkout completed',
-      notifyErr,
-    );
-  }
+  broadcastSessionUpdated({
+    cafeId: booking.cafeId,
+    bookingId: booking.id,
+    sessionId,
+    sessionStatus: SessionStatus.COMPLETED,
+    action: 'CHECK_OUT_COMPLETED',
+  });
 }
 
 // ── STAFF CONFIRM CHECKOUT ────────────────────────────────────────────────────
@@ -3660,6 +3631,14 @@ export async function updateDamageLineItems(
         }),
       );
     }
+
+    broadcastSessionUpdated({
+      cafeId: session.cafeId,
+      bookingId: session.bookingId,
+      sessionId,
+      sessionStatus: session.status,
+      action: 'INSPECTION_UPDATED',
+    });
   }
 
   return {
@@ -3674,52 +3653,6 @@ export async function updateDamageLineItems(
     })),
     totalDamageCharge,
   };
-}
-
-// ── ESCALATE DISPUTE TO PROVIDER ──────────────────────────────────────────────
-
-export async function escalateDisputeToProvider(
-  sessionId: string,
-  inspectionId: string,
-  note: string,
-  staffUserId: string,
-): Promise<any> {
-  const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
-  if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
-
-  const inspRepo = AppDataSource.getRepository(Inspection);
-  const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
-  if (!inspection)
-    throw new AppError('Biên bản kiểm xe không tồn tại', 404, 'INSPECTION_NOT_FOUND');
-
-  inspection.damageDescription =
-    (inspection.damageDescription || '') +
-    ` [Leo thang tranh chấp bởi NV ${staffUserId.substring(0, 8)}: ${note}]`;
-  await inspRepo.save(inspection);
-
-  const booking = await AppDataSource.getRepository(Booking).findOne({
-    where: { id: session.bookingId },
-  });
-  if (booking) {
-    const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } });
-    if (cafe?.providerId) {
-      await createNotification(
-        cafe.providerId,
-        NotificationType.CUSTOMER_INSPECTION_DISPUTED,
-        'Tranh chấp biên bản hư hỏng xe cần xem xét',
-        `Nhân viên báo cáo tranh chấp phiên chơi ${session.id.substring(0, 8)}: "${note}". Vui lòng xem xét và phán quyết.`,
-      );
-      wsService.pushToUser(cafe.providerId, 'CUSTOMER_INSPECTION_DISPUTED', {
-        sessionId,
-        inspectionId,
-        note,
-        staffUserId,
-      });
-    }
-  }
-
-  logger.info('Staff', 'escalateDisputeToProvider', { sessionId, inspectionId, staffUserId });
-  return { success: true, sessionId, inspectionId };
 }
 
 export async function settleSessionCheckoutBilling(
@@ -3764,10 +3697,6 @@ export async function settleSessionCheckoutBilling(
         (sum, li) => sum + Number(li.partsPrice) + Number(li.laborPrice),
         0,
       );
-    } else {
-      // Fallback for legacy records without line items
-      const estimatedCost = Number(inspection.damageCostEstimate) || 0;
-      damageCharge = estimatedCost * 1.5;
     }
   }
 
@@ -4082,7 +4011,7 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
         ...(sessionForNotification
           ? {
               sessionId: sessionForNotification.id,
-              route: `/staff/session/${sessionForNotification.id}`,
+              route: `/staff/sessions/${sessionForNotification.id}`,
             }
           : {}),
         totalCounterBill,
@@ -4101,26 +4030,20 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     logger.error('SettlePendingNotification', 'Failed to notify', err);
   }
 
+  wsService.pushToCafe(booking.cafeId, 'BOOKING_PAYMENT_UPDATED', {
+    bookingId,
+    cafeId: booking.cafeId,
+    ...(sessionForNotification ? { sessionId: sessionForNotification.id } : {}),
+    action: 'COUNTER_PAYMENT_SETTLED',
+    updatedAt: new Date().toISOString(),
+  });
+
   const bookingReconciliation = await reconcileBookingAfterCheckout(booking);
   if (completedSessionIdDuringSettlement) {
     void pushCheckoutCompletedEvents(booking, completedSessionIdDuringSettlement, staffUserId);
   }
-  if (
-    bookingReconciliation.newlyCompleted &&
-    booking.source !== BookingSource.STAFF_MANUAL &&
-    booking.customerId
-  ) {
-    await createNotification(
-      booking.customerId,
-      NotificationType.BOOKING_REVIEW_REQUEST,
-      'Đánh giá trải nghiệm của bạn',
-      'Cảm ơn bạn đã sử dụng dịch vụ! Hãy dành 1 phút đánh giá trải nghiệm của bạn.',
-      {
-        bookingId,
-        route: `/customer/review/${bookingId}`,
-      },
-    ).catch(() => {});
-    wsService.pushToUser(booking.customerId, 'BOOKING_REVIEW_REQUEST', { bookingId });
+  if (bookingReconciliation.newlyCompleted) {
+    await notifyCustomerToReviewBooking(booking).catch(() => {});
   }
 
   return {
@@ -4512,7 +4435,7 @@ export async function updateMaintenanceStatus(
               vehicleName,
               cafeName: vehInfo.cafeName,
               status: 'COMPLETED',
-              route: '/provider/cafe-vehicles',
+              route: '/provider/vehicles',
             },
           );
 
@@ -4522,13 +4445,7 @@ export async function updateMaintenanceStatus(
             vehicleName,
             cafeName: vehInfo.cafeName,
             vehicleId: targetVehicleId,
-            route: '/provider/cafe-vehicles',
-          });
-          // Realtime cập nhật trạng thái xe về AVAILABLE cho provider
-          wsService.pushToUser(vehInfo.providerId, 'VEHICLE_STATUS_CHANGED', {
-            vehicleId: targetVehicleId,
-            identifier: vehInfo.vehicleIdentifier,
-            status: 'AVAILABLE',
+            route: '/provider/vehicles',
           });
         } catch (err) {
           logger.error(
@@ -4580,7 +4497,7 @@ export async function updateMaintenanceStatus(
                 vehicleName,
                 cafeName: vehInfo.cafeName,
                 status: 'RECEIVED',
-                route: '/provider/cafe-vehicles',
+                route: '/provider/vehicles',
               },
             );
 
@@ -4590,7 +4507,7 @@ export async function updateMaintenanceStatus(
               vehicleName,
               cafeName: vehInfo.cafeName,
               vehicleId: targetVehicleId,
-              route: '/provider/cafe-vehicles',
+              route: '/provider/vehicles',
             });
           } catch (err) {
             logger.error(
@@ -4621,4 +4538,287 @@ export async function updateMaintenanceStatus(
   }
 
   return { success: true, logId, status };
+}
+
+export async function lookupCustomerPackages(
+  query: string,
+  staffUserId: string,
+): Promise<{
+  customer: {
+    id: string;
+    fullName: string;
+    phone: string | null;
+    email: string;
+    avatarUrl: string | null;
+    trustScore: number;
+  };
+  activeSubscriptions: any[];
+  purchasedPackages: any[];
+}> {
+  // 1. Lấy cafe_id mà staff được phân công
+  const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffUserId],
+  );
+
+  if (!assignment?.cafe_id) {
+    throw new AppError('Nhân viên chưa được gán vào chi nhánh nào', 403, 'STAFF_CAFE_NOT_ASSIGNED');
+  }
+
+  const assignedCafeId = assignment.cafe_id;
+  const cleanQuery = query.trim();
+
+  // 2. Tìm kiếm khách hàng theo SĐT / email / tên / UUID
+  // Khách hàng đó phải từng mua ít nhất một gói (customer_packages) tại chi nhánh của staff
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanQuery);
+  let queryStr: string;
+  let params: any[];
+
+  if (isUuid) {
+    queryStr = `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.email AS "email",
+       u.phone AS "phone",
+       u.avatar_url AS "avatarUrl",
+       u.trust_score AS "trustScore"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND u.id = $1
+       AND EXISTS (
+         SELECT 1 FROM bookings b
+         WHERE b.customer_id = u.id
+           AND b.cafe_id = $2
+       )
+     LIMIT 1`;
+    params = [cleanQuery, assignedCafeId];
+  } else {
+    queryStr = `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.email AS "email",
+       u.phone AS "phone",
+       u.avatar_url AS "avatarUrl",
+       u.trust_score AS "trustScore"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND (
+         u.phone ILIKE $1 
+         OR u.email ILIKE $1 
+         OR u.full_name ILIKE $1 
+         OR u.full_name ILIKE '% ' || $1
+       )
+       AND EXISTS (
+         SELECT 1 FROM bookings b
+         WHERE b.customer_id = u.id
+           AND b.cafe_id = $2
+       )
+     LIMIT 1`;
+    params = [`${cleanQuery}%`, assignedCafeId];
+  }
+
+  const [customer] = await AppDataSource.query<
+    {
+      customerId: string;
+      fullName: string;
+      email: string;
+      phone: string | null;
+      avatarUrl: string | null;
+      trustScore: string;
+    }[]
+  >(queryStr, params);
+
+  if (!customer) {
+    throw new AppError(
+      'Không tìm thấy khách hàng hoặc khách hàng không có gói dịch vụ nào tại cơ sở của bạn phụ trách.',
+      404,
+      'CUSTOMER_NOT_FOUND',
+    );
+  }
+
+  // 3. Lấy tất cả các gói customer_packages của khách hàng tại cafe_id này
+  const customerPackages = await AppDataSource.query<
+    {
+      customerPackageId: string;
+      packageName: string;
+      purchasedAt: Date;
+      expiresAt: Date | null;
+      slotsRemaining: number;
+      slotsTotal: number;
+      cafeId: string;
+      cafeName: string;
+      billingPeriod: string;
+      status: string;
+    }[]
+  >(
+    `SELECT 
+       cp.id AS "customerPackageId",
+       cp.package_name_snapshot AS "packageName",
+       cp.created_at AS "purchasedAt",
+       cp.expires_at AS "expiresAt",
+       cp.slots_remaining AS "slotsRemaining",
+       cp.slots_total AS "slotsTotal",
+       cp.cafe_id AS "cafeId",
+       c.name AS "cafeName",
+       p.billing_period AS "billingPeriod",
+       cp.status AS "status"
+     FROM customer_packages cp
+     JOIN packages p ON cp.package_id = p.id
+     LEFT JOIN cafes c ON cp.cafe_id = c.id
+     WHERE cp.customer_id = $1 
+       AND cp.cafe_id = $2`,
+    [customer.customerId, assignedCafeId],
+  );
+
+  // 4. Phân loại gói
+  const activeSubscriptions: any[] = [];
+  const purchasedPackages: any[] = [];
+
+  for (const cp of customerPackages) {
+    const isSubscription = cp.billingPeriod === 'WEEK' || cp.billingPeriod === 'MONTH';
+    const mappedItem = {
+      subscriptionId: cp.customerPackageId,
+      customerPackageId: cp.customerPackageId,
+      packageName: cp.packageName,
+      planName: cp.packageName,
+      expiresAt: cp.expiresAt ? cp.expiresAt.toISOString() : null,
+      purchasedAt: cp.purchasedAt.toISOString(),
+      remainingSessions: cp.slotsRemaining,
+      remainingSlots: cp.slotsRemaining,
+      totalSessions: cp.slotsTotal,
+      totalSlots: cp.slotsTotal,
+      cafeId: cp.cafeId,
+      cafeName: cp.cafeName,
+      status: cp.status,
+    };
+
+    if (isSubscription) {
+      activeSubscriptions.push(mappedItem);
+    } else {
+      purchasedPackages.push(mappedItem);
+    }
+  }
+
+  return {
+    customer: {
+      id: customer.customerId,
+      fullName: customer.fullName,
+      phone: customer.phone,
+      email: customer.email,
+      avatarUrl: customer.avatarUrl,
+      trustScore: Number(customer.trustScore),
+    },
+    activeSubscriptions,
+    purchasedPackages,
+  };
+}
+
+export async function getTopCustomersForCafe(staffUserId: string): Promise<
+  {
+    customerId: string;
+    fullName: string;
+    phone: string | null;
+    email: string;
+    avatarUrl: string | null;
+    playCount: number;
+  }[]
+> {
+  const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffUserId],
+  );
+
+  if (!assignment?.cafe_id) {
+    throw new AppError('Nhân viên chưa được gán vào chi nhánh nào', 403, 'STAFF_CAFE_NOT_ASSIGNED');
+  }
+
+  const assignedCafeId = assignment.cafe_id;
+
+  const rows = await AppDataSource.query<any[]>(
+    `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.phone AS "phone",
+       u.email AS "email",
+       u.avatar_url AS "avatarUrl",
+       COUNT(b.id) AS "playCount"
+     FROM bookings b
+     JOIN users u ON b.customer_id = u.id
+     WHERE b.cafe_id = $1
+       AND b.status = 'COMPLETED'
+       AND u.deleted_at IS NULL
+     GROUP BY u.id, u.full_name, u.phone, u.email, u.avatar_url
+     ORDER BY "playCount" DESC
+     LIMIT 5`,
+    [assignedCafeId],
+  );
+
+  return rows.map((row) => ({
+    customerId: row.customerId,
+    fullName: row.fullName,
+    phone: row.phone,
+    email: row.email,
+    avatarUrl: row.avatarUrl,
+    playCount: Number(row.playCount),
+  }));
+}
+
+export async function searchCustomersForCafe(
+  query: string,
+  staffUserId: string,
+): Promise<
+  {
+    customerId: string;
+    fullName: string;
+    phone: string | null;
+    email: string;
+    avatarUrl: string | null;
+  }[]
+> {
+  const [assignment] = await AppDataSource.query<{ cafe_id: string }[]>(
+    `SELECT cafe_id FROM staff_cafe_assignments WHERE staff_id = $1`,
+    [staffUserId],
+  );
+
+  if (!assignment?.cafe_id) {
+    throw new AppError('Nhân viên chưa được gán vào chi nhánh nào', 403, 'STAFF_CAFE_NOT_ASSIGNED');
+  }
+
+  const assignedCafeId = assignment.cafe_id;
+  const cleanQuery = query.trim();
+
+  const rows = await AppDataSource.query<any[]>(
+    `SELECT 
+       u.id AS "customerId",
+       u.full_name AS "fullName",
+       u.phone AS "phone",
+       u.email AS "email",
+       u.avatar_url AS "avatarUrl"
+     FROM users u
+     WHERE u.role = 'CUSTOMER'
+       AND u.deleted_at IS NULL
+       AND (
+         u.phone ILIKE $1 
+         OR u.email ILIKE $1 
+         OR u.full_name ILIKE $1
+         OR u.full_name ILIKE '% ' || $1
+       )
+       AND EXISTS (
+         SELECT 1 FROM bookings b
+         WHERE b.customer_id = u.id
+           AND b.cafe_id = $2
+       )
+     LIMIT 10`,
+    [`${cleanQuery}%`, assignedCafeId],
+  );
+
+  return rows.map((row) => ({
+    customerId: row.customerId,
+    fullName: row.fullName,
+    phone: row.phone,
+    email: row.email,
+    avatarUrl: row.avatarUrl,
+  }));
 }

@@ -1,5 +1,8 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { contestController } from '../controllers/contest.controller';
+import { contestFeeController } from '../controllers/contest-fee.controller';
+import { contestFinanceController } from '../controllers/contest-finance.controller';
 import {
   authenticate,
   authorize,
@@ -9,6 +12,11 @@ import {
 import { UserRole } from '../types';
 
 export const contestRouter = Router();
+
+const bannerUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 contestRouter.get('/contest-catalog/types', contestController.listContestTypes);
 contestRouter.get('/contest-catalog/formats', contestController.listContestFormats);
@@ -40,6 +48,14 @@ contestRouter.patch(
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.updateContest,
+);
+contestRouter.post(
+  '/contests/:contestId/banner',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  bannerUpload.single('file'),
+  contestController.uploadBanner,
 );
 contestRouter.post(
   '/contests/:contestId/open',
@@ -103,6 +119,60 @@ contestRouter.get(
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   requireActiveProvider,
   contestController.getMetrics,
+);
+// Báo cáo tài chính giải — CHỈ provider, không mở cho STAFF như các route trên.
+// Cố ý không gắn `requireActiveProvider`: chủ doanh nghiệp bị tạm khoá vẫn phải
+// xem lại được sổ sách của mình; chặn đọc là giữ con tin dữ liệu tài chính.
+contestRouter.get(
+  '/contests/:contestId/finance',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFinanceController.getFinanceReport,
+);
+
+// ── Sổ thu chi giải ──────────────────────────────────────────────────────────
+// Đăng ký `/ledger-entries/mine` TRƯỚC `/ledger-entries` không cần thiết vì hai
+// path khác độ sâu, nhưng vẫn giữ thứ tự này cho người đọc khỏi phải kiểm lại.
+contestRouter.get(
+  '/contests/:contestId/ledger-entries/mine',
+  authenticate,
+  authorize(UserRole.STAFF),
+  contestFinanceController.listMyEntries,
+);
+contestRouter.get(
+  '/contests/:contestId/ledger-entries',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFinanceController.listEntries,
+);
+contestRouter.post(
+  '/contests/:contestId/ledger-entries',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  contestFinanceController.createEntry,
+);
+contestRouter.post(
+  '/contests/:contestId/ledger-entries/receipt',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  requireActiveProvider,
+  bannerUpload.single('file'),
+  contestFinanceController.uploadReceipt,
+);
+contestRouter.patch(
+  '/contest-ledger-entries/:entryId',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestFinanceController.updateEntry,
+);
+contestRouter.delete(
+  '/contest-ledger-entries/:entryId',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  requireActiveProvider,
+  contestFinanceController.deleteEntry,
 );
 contestRouter.get(
   '/contests/:contestId/staff-assignments',
@@ -239,6 +309,18 @@ contestRouter.post(
   authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
   contestController.cancelRegistration,
 );
+contestRouter.patch(
+  '/contest-registrations/:registrationId/byoc-declaration',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  contestController.updateByocDeclaration,
+);
+contestRouter.get(
+  '/contest-registrations/:registrationId/handover-units',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestController.listHandoverUnits,
+);
 contestRouter.post(
   '/contest-registrations/:registrationId/check-in',
   authenticate,
@@ -264,8 +346,64 @@ contestRouter.post(
   contestController.correctMatchResults,
 );
 contestRouter.post(
+  '/contest-matches/:matchId/walkover',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  contestController.recordMatchWalkover,
+);
+
+contestRouter.post(
   '/contest-matches/:matchId/advance',
   authenticate,
   authorize(UserRole.PROVIDER, UserRole.STAFF),
   contestController.advanceMatch,
+);
+
+// ── Phí tổ chức giải ─────────────────────────────────────────────────────────
+// Đăng ký TRƯỚC các route '/contests/:contestId' động khác thì không cần, vì
+// '/contest-fee-plans' là đường tĩnh riêng biệt.
+contestRouter.get('/contest-fee-plans', authenticate, contestFeeController.listPlans);
+
+contestRouter.get(
+  '/contests/:contestId/fee',
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.ADMIN),
+  contestFeeController.getStatus,
+);
+contestRouter.post(
+  '/contests/:contestId/fee/order',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.createOrder,
+);
+contestRouter.delete(
+  '/contests/:contestId/fee/order',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.cancelOrder,
+);
+contestRouter.post(
+  '/contests/:contestId/fee/transfer',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.submitTransfer,
+);
+
+contestRouter.get(
+  '/admin/contest-fee-orders',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  contestFeeController.listForAdmin,
+);
+contestRouter.post(
+  '/admin/contest-fee-orders/:orderId/confirm',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  contestFeeController.confirm,
+);
+contestRouter.post(
+  '/admin/contest-fee-orders/:orderId/reject',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  contestFeeController.reject,
 );

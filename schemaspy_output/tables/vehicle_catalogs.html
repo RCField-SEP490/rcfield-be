@@ -118,6 +118,11 @@
                                     <td>
                                         <table border='0' cellspacing='0' cellpadding='0'>
                                             <tr>
+                                                <td title="contest_registrations.rental_catalog_id references vehicle_catalogs.id via contest_registrations_rental_catalog_id_fkey"><a href='contest_registrations.html'>contest_registrations</a><span class='relatedKey'>.rental_catalog_id</span></td>
+                                                <td class="constraint detail">contest_registrations_rental_catalog_id_fkey</td>
+                                                <td class="constraint detail"><span title='Null on delete:&#10;Foreign key to parent set to NULL when parent deleted'>N</span></td>
+                                            </tr>
+                                            <tr>
                                                 <td title="vehicle_catalog_images.catalog_id references vehicle_catalogs.id via vehicle_images_catalog_id_fkey"><a href='vehicle_catalog_images.html'>vehicle_catalog_images</a><span class='relatedKey'>.catalog_id</span></td>
                                                 <td class="constraint detail">vehicle_images_catalog_id_fkey</td>
                                                 <td class="constraint detail"><span title='Cascade on delete:&#10;Deletion of parent deletes child'>C</span></td>
@@ -409,45 +414,52 @@
                                 <div class="tab-content no-padding">
                                     <div class="chart tab-pane active" id="oneDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="oneDegreeRelationshipsDiagram" name="oneDegreeRelationshipsDiagram">
-<area shape="rect" id="node1" href="vehicle_catalog_images.html" target="_top" title="vehicle_catalog_images" alt="" coords="949,228,1261,375">
-<area shape="rect" id="node2" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="379,111,905,561">
-<area shape="rect" id="node3" href="cafes.html" target="_top" title="cafes" alt="" coords="5,89,335,441">
-<area shape="rect" id="node4" href="vehicles.html" target="_top" title="vehicles" alt="" coords="977,5,1233,211">
+<area shape="rect" id="node1" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1305,5,1612,504">
+<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="5,253,335,693">
+<area shape="rect" id="node3" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="379,275,905,725">
+<area shape="rect" id="node4" href="vehicles.html" target="_top" title="vehicles" alt="" coords="977,16,1233,221">
+<area shape="rect" id="node5" href="vehicle_catalog_images.html" target="_top" title="vehicle_catalog_images" alt="" coords="949,275,1261,421">
 </map>
                                         <a name='diagram'><img id="oneDegreeImg" src="../diagrams/tables/vehicle_catalogs.1degree.png" usemap="#oneDegreeRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>
                                     <div class="chart tab-pane " id="twodegreesDegreeImg-chart" style="position: relative; overflow-x:auto;">
                                         <map id="twoDegreesRelationshipsDiagram" name="twoDegreesRelationshipsDiagram">
-<area shape="rect" id="node1" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="1644,1396,1895,1484">
-<area shape="rect" id="node2" href="bookings.html" target="_top" title="bookings" alt="" coords="1368,1575,1540,1663">
-<area shape="rect" id="node3" href="vehicles.html" target="_top" title="vehicles" alt="" coords="1027,476,1189,564">
-<area shape="rect" id="node4" href="cafes.html" target="_top" title="cafes" alt="" coords="185,1416,337,1504">
-<area shape="rect" id="node5" href="users.html" target="_top" title="users" alt="" coords="5,1860,141,1948">
-<area shape="rect" id="node6" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="970,1575,1246,1663">
-<area shape="rect" id="node7" href="promotions.html" target="_top" title="promotions" alt="" coords="547,1860,742,1948">
-<area shape="rect" id="node8" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="537,1965,752,2053">
-<area shape="rect" id="node9" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="977,1469,1239,1557">
-<area shape="rect" id="node29" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="381,788,908,1239">
-<area shape="rect" id="node19" href="packages.html" target="_top" title="packages" alt="" coords="557,1505,733,1593">
-<area shape="rect" id="node10" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="500,225,789,313">
-<area shape="rect" id="node11" href="cafe_closures.html" target="_top" title="cafe_closures" alt="" coords="537,2071,752,2159">
-<area shape="rect" id="node12" href="cafe_holiday_overrides.html" target="_top" title="cafe_holiday_overrides" alt="" coords="955,1273,1261,1361">
-<area shape="rect" id="node13" href="holiday_dates.html" target="_top" title="holiday_dates" alt="" coords="536,1256,753,1344">
-<area shape="rect" id="node14" href="cafe_images.html" target="_top" title="cafe_images" alt="" coords="543,367,747,455">
-<area shape="rect" id="node15" href="cafe_pricing_rules.html" target="_top" title="cafe_pricing_rules" alt="" coords="515,472,774,560">
-<area shape="rect" id="node16" href="cafe_widget_configs.html" target="_top" title="cafe_widget_configs" alt="" coords="505,577,785,665">
-<area shape="rect" id="node17" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1308,120,1600,208">
-<area shape="rect" id="node18" href="contests.html" target="_top" title="contests" alt="" coords="561,120,728,208">
-<area shape="rect" id="node20" href="kb_chunks.html" target="_top" title="kb_chunks" alt="" coords="1015,1735,1201,1823">
-<area shape="rect" id="node21" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="533,1755,757,1843">
-<area shape="rect" id="node22" href="menu_items.html" target="_top" title="menu_items" alt="" coords="544,683,745,771">
-<area shape="rect" id="node23" href="reviews.html" target="_top" title="reviews" alt="" coords="1690,1643,1849,1731">
-<area shape="rect" id="node24" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="1985,544,2229,632">
-<area shape="rect" id="node25" href="sessions.html" target="_top" title="sessions" alt="" coords="1686,476,1853,564">
-<area shape="rect" id="node26" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="489,2228,800,2316">
-<area shape="rect" id="node27" href="staff_shifts.html" target="_top" title="staff_shifts" alt="" coords="549,2333,741,2421">
-<area shape="rect" id="node28" href="vehicle_catalog_images.html" target="_top" title="vehicle_catalog_images" alt="" coords="952,761,1264,908">
-<area shape="rect" id="node30" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="1939,403,2276,491">
+<area shape="rect" id="node1" href="ai_analysis_logs.html" target="_top" title="ai_analysis_logs" alt="" coords="427,397,665,485">
+<area shape="rect" id="node2" href="cafes.html" target="_top" title="cafes" alt="" coords="195,1248,347,1336">
+<area shape="rect" id="node3" href="users.html" target="_top" title="users" alt="" coords="5,1907,151,1995">
+<area shape="rect" id="node4" href="booking_vehicles.html" target="_top" title="booking_vehicles" alt="" coords="1693,607,1943,695">
+<area shape="rect" id="node5" href="bookings.html" target="_top" title="bookings" alt="" coords="1386,1436,1558,1524">
+<area shape="rect" id="node6" href="vehicles.html" target="_top" title="vehicles" alt="" coords="1391,431,1553,519">
+<area shape="rect" id="node7" href="contests.html" target="_top" title="contests" alt="" coords="925,2023,1092,2111">
+<area shape="rect" id="node8" href="customer_packages.html" target="_top" title="customer_packages" alt="" coords="871,1007,1147,1095">
+<area shape="rect" id="node9" href="promotions.html" target="_top" title="promotions" alt="" coords="449,1829,643,1917">
+<area shape="rect" id="node10" href="subscriptions.html" target="_top" title="subscriptions" alt="" coords="439,1724,653,1812">
+<area shape="rect" id="node11" href="cafe_track_configs.html" target="_top" title="cafe_track_configs" alt="" coords="877,1112,1140,1200">
+<area shape="rect" id="node23" href="vehicle_catalogs.html" target="_top" title="vehicle_catalogs" alt="" coords="745,397,1272,848">
+<area shape="rect" id="node24" href="packages.html" target="_top" title="packages" alt="" coords="458,999,634,1087">
+<area shape="rect" id="node12" href="cafe_announcements.html" target="_top" title="cafe_announcements" alt="" coords="401,503,691,591">
+<area shape="rect" id="node13" href="cafe_holiday_overrides.html" target="_top" title="cafe_holiday_overrides" alt="" coords="856,1253,1161,1341">
+<area shape="rect" id="node14" href="holiday_dates.html" target="_top" title="holiday_dates" alt="" coords="437,1212,655,1300">
+<area shape="rect" id="node15" href="cafe_images.html" target="_top" title="cafe_images" alt="" coords="444,1441,648,1529">
+<area shape="rect" id="node16" href="cafe_pricing_rules.html" target="_top" title="cafe_pricing_rules" alt="" coords="417,716,675,804">
+<area shape="rect" id="node17" href="contest_audit_logs.html" target="_top" title="contest_audit_logs" alt="" coords="2051,1973,2317,2061">
+<area shape="rect" id="node18" href="contest_matches.html" target="_top" title="contest_matches" alt="" coords="1348,1897,1596,1985">
+<area shape="rect" id="node19" href="contest_registrations.html" target="_top" title="contest_registrations" alt="" coords="1672,1439,1964,1527">
+<area shape="rect" id="node22" href="customer_vehicles.html" target="_top" title="customer_vehicles" alt="" coords="1341,325,1603,413">
+<area shape="rect" id="node20" href="contest_cafes.html" target="_top" title="contest_cafes" alt="" coords="1363,1592,1581,1680">
+<area shape="rect" id="node21" href="contest_match_participants.html" target="_top" title="contest_match_participants" alt="" coords="2008,1436,2360,1524">
+<area shape="rect" id="node25" href="kb_chunks.html" target="_top" title="kb_chunks" alt="" coords="916,1583,1101,1671">
+<area shape="rect" id="node26" href="kb_documents.html" target="_top" title="kb_documents" alt="" coords="434,1619,658,1707">
+<area shape="rect" id="node27" href="menu_categories.html" target="_top" title="menu_categories" alt="" coords="421,857,671,945">
+<area shape="rect" id="node28" href="menu_items.html" target="_top" title="menu_items" alt="" coords="908,865,1109,953">
+<area shape="rect" id="node29" href="payment_transactions.html" target="_top" title="payment_transactions" alt="" coords="2034,1236,2334,1324">
+<area shape="rect" id="node30" href="sessions.html" target="_top" title="sessions" alt="" coords="1735,501,1901,589">
+<area shape="rect" id="node31" href="race_records.html" target="_top" title="race_records" alt="" coords="2404,529,2612,617">
+<area shape="rect" id="node32" href="reviews.html" target="_top" title="reviews" alt="" coords="1739,1723,1897,1811">
+<area shape="rect" id="node33" href="session_vehicles.html" target="_top" title="session_vehicles" alt="" coords="2062,461,2306,549">
+<area shape="rect" id="node34" href="staff_cafe_assignments.html" target="_top" title="staff_cafe_assignments" alt="" coords="391,2111,701,2199">
+<area shape="rect" id="node35" href="vehicle_catalog_images.html" target="_top" title="vehicle_catalog_images" alt="" coords="1316,536,1628,683">
+<area shape="rect" id="node36" href="vehicle_maintenance_logs.html" target="_top" title="vehicle_maintenance_logs" alt="" coords="2015,356,2353,444">
 </map>
                                         <a name='diagram'><img id="twodegreesDegreeImg" src="../diagrams/tables/vehicle_catalogs.2degrees.png" usemap="#twoDegreesRelationshipsDiagram" class="diagram" border="0" align="left"></a>
                                     </div>

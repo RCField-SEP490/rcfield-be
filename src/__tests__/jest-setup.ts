@@ -37,6 +37,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await AppDataSource.query(`
     TRUNCATE TABLE
+      featured_popups,
+      contest_fee_orders,
       race_records,
       achievement_definitions,
       contest_bans,
@@ -44,6 +46,7 @@ beforeEach(async () => {
       contest_staff_assignments,
       contest_match_participants,
       contest_matches,
+      contest_ledger_entries,
       contest_registrations,
       contest_cafes,
       contests,
@@ -58,6 +61,7 @@ beforeEach(async () => {
       inspection_checklists,
       inspection_photos,
       inspections,
+      bank_transactions,
       payment_transactions,
       payment_components,
       promotion_usages,
@@ -67,6 +71,7 @@ beforeEach(async () => {
       vehicle_catalog_images,
       vehicles,
       staff_cafe_assignments,
+      cafe_payment_settings,
       cafe_announcements,
       cafe_images,
       kb_chunks,

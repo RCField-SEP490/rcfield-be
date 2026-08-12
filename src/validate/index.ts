@@ -7,6 +7,9 @@ import {
   BookingStatus,
   CafeStatus,
   ContestBanScopeType,
+  ContestLedgerDirection,
+  ContestLedgerExpenseCategory,
+  ContestLedgerIncomeCategory,
   FeaturedPopupAudienceScope,
   FeaturedPopupPlacement,
   ContestParticipantStatus,
@@ -72,7 +75,11 @@ export const LogoutSchema = z.object({
 export const UpdateMeSchema = z
   .object({
     full_name: z.string().min(2).max(255).optional(),
-    phone: z.string().min(9).max(20).nullable().optional(),
+    phone: z
+      .string()
+      .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không đúng định dạng')
+      .nullable()
+      .optional(),
     avatar_url: z.string().url().nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
@@ -274,6 +281,12 @@ export const CafeListQuerySchema = z.object({
             .filter(Boolean);
     }),
   status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
+  /** Chỉ giữ chi nhánh còn slot đặt được trong ngày này (giờ Việt Nam). */
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải theo định dạng YYYY-MM-DD')
+    .optional()
+    .openapi({ example: '2026-08-20' }),
 });
 
 const CafeUpsertBaseSchema = z.object({
@@ -552,16 +565,13 @@ export const UpdateContestSchema = ContestUpsertBaseSchema.partial()
   );
 
 export const CreateContestRegistrationSchema = z.object({
-  booking_id: z.string().uuid().optional(),
-  vehicle_id: z.string().uuid().optional(),
   vehicle_source: z.nativeEnum(VehicleSource).default(VehicleSource.RENTAL),
-  rental_slot: z
+  // Thuê xe của quán chỉ cần chi nhánh và dòng xe: khung giờ do lịch thi đấu
+  // quyết định, chiếc xe cụ thể do nhân viên gán lúc giao xe.
+  rental: z
     .object({
       cafe_id: z.string().uuid(),
-      slot_start: z.coerce.date(),
-      slot_end: z.coerce.date(),
-      track_config_id: z.string().uuid().optional().nullable(),
-      vehicle_catalog_id: z.string().uuid().optional().nullable(),
+      vehicle_catalog_id: z.string().uuid(),
     })
     .optional()
     .nullable(),
@@ -569,10 +579,29 @@ export const CreateContestRegistrationSchema = z.object({
   byoc_vehicle_brand: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_class: z.string().trim().min(1).max(120).optional(),
   byoc_vehicle_notes: z.string().trim().max(1000).optional(),
+  // Ảnh xe do VĐV tự chụp lúc đăng ký. Ban tổ chức duyệt xe cá nhân dựa vào
+  // đây; chỉ có mỗi tên xe gõ tay thì không đủ căn cứ để nói đạt hay không đạt.
+  byoc_vehicle_photos: z.array(z.string().trim().url().max(2048)).max(6).optional(),
+});
+
+export const UpdateByocDeclarationSchema = z.object({
+  vehicle_name: z.string().trim().min(2).max(120),
+  vehicle_brand: z.string().trim().min(1).max(120).nullable().optional(),
+  vehicle_class: z.string().trim().min(1).max(120).nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+  photos: z.array(z.string().trim().url().max(2048)).max(6).optional(),
 });
 
 export const ContestRegistrationActionSchema = z.object({
   reason: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * Từ chối là quyết định gạt một người ra khỏi giải, và lý do được gửi thẳng vào
+ * thông báo cho họ — nên bắt buộc phải viết, khác với ghi chú thu tiền hay huỷ.
+ */
+export const ContestRejectRegistrationSchema = z.object({
+  reason: z.string().trim().min(5, 'Cần nêu lý do từ chối (tối thiểu 5 ký tự)').max(1000),
 });
 
 export const ContestMarkFeePaidSchema = z.object({
@@ -581,6 +610,69 @@ export const ContestMarkFeePaidSchema = z.object({
 
 export const ContestAssignStaffSchema = z.object({
   staff_id: z.string().uuid(),
+});
+
+// ── sổ thu chi giải đấu ──────────────────────────────────────────────────────
+
+/**
+ * Trường dùng chung cho mọi bút toán.
+ *
+ * `amount` là số nguyên dương: tiền Việt không có phần thập phân trong thực tế
+ * vận hành, và DB đã có `CHECK (amount > 0)` làm lưới thứ hai. Muốn ghi giảm
+ * thì tạo một khoản ở chiều ngược lại, không nhập số âm.
+ */
+const ContestLedgerBaseFields = {
+  title: z.string().trim().min(1, 'Cần nhập tiêu đề khoản').max(255),
+  amount: z
+    .number()
+    .int('Số tiền phải là số nguyên')
+    .positive('Số tiền phải lớn hơn 0. Muốn ghi giảm thì tạo khoản ở chiều ngược lại.'),
+  occurred_at: z.string().datetime({ offset: true }),
+  note: z.string().trim().max(1000).optional(),
+  receipt_url: z.string().url().max(2000).optional().nullable(),
+};
+
+/**
+ * Tập `category` hợp lệ phụ thuộc `direction`, nên phải dùng discriminated union
+ * chứ không phải một enum phẳng — nếu không, khoản thu sẽ nhận được loại
+ * `PRIZE_CASH` và ngược lại.
+ */
+export const CreateContestLedgerEntrySchema = z.discriminatedUnion('direction', [
+  z.object({
+    direction: z.literal(ContestLedgerDirection.IN),
+    category: z.nativeEnum(ContestLedgerIncomeCategory),
+    ...ContestLedgerBaseFields,
+  }),
+  z.object({
+    direction: z.literal(ContestLedgerDirection.OUT),
+    category: z.nativeEnum(ContestLedgerExpenseCategory),
+    ...ContestLedgerBaseFields,
+  }),
+]);
+
+/**
+ * `direction` cố ý KHÔNG sửa được: đổi chiều làm mọi con số trong nhật ký thao
+ * tác mất nghĩa. Muốn đổi thì xoá rồi tạo lại.
+ */
+export const UpdateContestLedgerEntrySchema = z
+  .object({
+    category: z.string().trim().min(1).max(30),
+    title: z.string().trim().min(1).max(255),
+    amount: z.number().int().positive(),
+    occurred_at: z.string().datetime({ offset: true }),
+    note: z.string().trim().max(1000).nullable(),
+    receipt_url: z.string().url().max(2000).nullable(),
+  })
+  .partial()
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'Cần ít nhất một trường để cập nhật',
+  });
+
+export const ContestLedgerListQuerySchema = z.object({
+  direction: z.nativeEnum(ContestLedgerDirection).optional(),
+  category: z.string().trim().max(30).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
 });
 
 export const ContestBanCreateSchema = z.object({
@@ -596,7 +688,33 @@ export const ContestBanLiftSchema = z.object({
 });
 
 export const ContestCheckInSchema = z.object({
+  // Chiếc xe cụ thể nhân viên giao cho VĐV thuê xe, chọn ngay lúc điểm danh.
+  rental_vehicle_id: z.string().uuid().optional().nullable(),
   checked_in_cafe_id: z.string().uuid(),
+  byoc_confirmed: z.boolean().optional(),
+  byoc_inspection: z
+    .object({
+      photos: z
+        .array(
+          z.object({
+            url: z.string().url(),
+            angle: z.string().trim().max(50).optional(),
+            notes: z.string().trim().max(500).optional(),
+          }),
+        )
+        .optional(),
+      checklist: z
+        .array(
+          z.object({
+            itemKey: z.string().trim().min(1).max(50),
+            itemLabel: z.string().trim().min(1).max(120),
+            status: z.enum(['OK', 'NOT_OK', 'NA']).optional(),
+            note: z.string().trim().max(500).optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 const FeaturedPopupBaseSchema = z.object({
@@ -640,10 +758,59 @@ export const FeaturedPopupListQuerySchema = z.object({
   is_active: z.coerce.boolean().optional(),
 });
 
+/**
+ * Xử thua vắng mặt.
+ *
+ * Lý do bắt buộc vì đây là quyết định loại một người khỏi giải mà họ không được
+ * thi đấu — phải có căn cứ ghi lại để đối chiếu khi có khiếu nại.
+ */
+export const FeaturedPopupReviewSchema = z.object({
+  approve: z.boolean(),
+  notes: z.string().trim().max(1000).optional(),
+});
+
+export const ContestFeeOrderCreateSchema = z.object({
+  plan_id: z.string().uuid('Gói tổ chức giải không hợp lệ'),
+});
+
+export const ContestFeeTransferSchema = z.object({
+  transfer_reference: z
+    .string()
+    .trim()
+    .min(3, 'Nhập mã giao dịch hoặc nội dung chuyển khoản')
+    .max(255),
+  transfer_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày chuyển khoản không hợp lệ'),
+  transfer_amount: z.number().positive('Số tiền chuyển khoản phải lớn hơn 0'),
+});
+
+export const ContestFeeOrderReviewSchema = z.object({
+  notes: z.string().trim().max(1000).optional(),
+});
+
+export const ContestFeeOrderRejectSchema = z.object({
+  reason: z.string().trim().min(5, 'Cần nêu lý do từ chối (tối thiểu 5 ký tự)').max(1000),
+});
+
+export const ContestMatchWalkoverSchema = z.object({
+  absent: z
+    .array(
+      z.object({
+        registration_id: z.string().uuid(),
+        status: z.enum(['DNS', 'DNF', 'DQ'], {
+          message: 'Lý do vắng mặt phải là DNS, DNF hoặc DQ',
+        }),
+      }),
+    )
+    .min(1, 'Cần chọn ít nhất một người vắng mặt'),
+  reason: z.string().trim().min(5, 'Cần nêu lý do xử thua (tối thiểu 5 ký tự)').max(1000),
+});
+
 export const ContestGenerateMatchesSchema = z.object({
   cafe_id: z.string().uuid(),
   track_config_id: z.string().uuid().nullable().optional(),
-  registration_ids: z.array(z.string().uuid()).min(1),
+  // Bỏ trống thì hệ thống tự lấy toàn bộ người đủ điều kiện của giải — đúng
+  // cách bốc thăm: ban tổ chức không chọn ai vào ai ra.
+  registration_ids: z.array(z.string().uuid()).optional(),
   drivers_per_match: z.number().int().positive().max(64).optional(),
   seeding_mode: z.enum(['MANUAL', 'CHECK_IN_ORDER']).optional(),
 });
@@ -1081,10 +1248,35 @@ export const RegisterProviderSchema = z.object({
   phone: z.string().min(9).max(20).optional(),
   business_name: z.string().min(2).max(255),
   business_description: z.string().max(1000).optional(),
+  // Mã số thuế Việt Nam: 10 số, hoặc 13 số khi có mã đơn vị phụ thuộc (dạng
+  // 0123456789-001). Nhận cả khi người dùng gõ kèm dấu cách rồi tự chuẩn hoá.
+  tax_code: z
+    .string()
+    .trim()
+    .transform((value) => value.replace(/\s+/g, ''))
+    .pipe(z.string().regex(/^\d{10}(-\d{3})?$/, 'Mã số thuế phải là 10 số, hoặc 10 số kèm -001')),
+  business_email: z.string().trim().email('Email doanh nghiệp không hợp lệ').max(255),
   business_type: z.enum(['INDIVIDUAL', 'BUSINESS'], {
     errorMap: () => ({ message: 'business_type phải là INDIVIDUAL hoặc BUSINESS' }),
   }),
 });
+
+/** Provider tự sửa hồ sơ doanh nghiệp của mình. */
+export const UpdateProviderProfileSchema = z
+  .object({
+    business_name: z.string().min(2).max(255).optional(),
+    business_description: z.string().max(1000).nullable().optional(),
+    tax_code: z
+      .string()
+      .trim()
+      .transform((value) => value.replace(/\s+/g, ''))
+      .pipe(z.string().regex(/^\d{10}(-\d{3})?$/, 'Mã số thuế phải là 10 số, hoặc 10 số kèm -001'))
+      .optional(),
+    business_email: z.string().trim().email('Email doanh nghiệp không hợp lệ').max(255).optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'Không có thông tin nào để cập nhật',
+  });
 
 export const SubmitPaymentRequestSchema = z.object({
   plan_id: z.string().uuid('plan_id phải là UUID hợp lệ'),
@@ -1094,6 +1286,15 @@ export const SubmitPaymentRequestSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'transfer_date phải có định dạng YYYY-MM-DD'),
   transfer_amount: z.number().positive('Số tiền phải lớn hơn 0'),
 });
+
+export const GetPayOSLinkSchema = z
+  .object({
+    plan_id: z.string().uuid('plan_id phải là UUID hợp lệ').optional(),
+    payment_request_id: z.string().uuid('payment_request_id phải là UUID hợp lệ').optional(),
+  })
+  .refine((data) => data.plan_id || data.payment_request_id, {
+    message: 'Cần truyền plan_id hoặc payment_request_id',
+  });
 
 export const AdminRejectSchema = z.object({
   reason: z.string().min(1).max(500),
@@ -1352,6 +1553,10 @@ export const CancelBookingSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+export const ConfirmRefundSchema = z.object({
+  method: z.enum(['CASH', 'BANK_TRANSFER']),
+});
+
 export const CreateContestRentalBookingSchema = z.object({
   contest_id: z.string().uuid(),
   cafe_id: z.string().uuid(),
@@ -1361,12 +1566,51 @@ export const CreateContestRentalBookingSchema = z.object({
   vehicle_catalog_id: z.string().uuid().optional(),
 });
 
-export const ListCafeBookingsSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  status: z.nativeEnum(BookingStatus).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
+export const ListCafeBookingsSchema = z
+  .object({
+    // `date` is retained for clients that request one day. Omitting every
+    // date field intentionally returns the booking history with pagination.
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    from: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    to: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    status: z.nativeEnum(BookingStatus).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .superRefine((value, context) => {
+    if (value.date && (value.from || value.to)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['date'],
+        message: 'Chỉ dùng date hoặc cặp from/to, không dùng đồng thời.',
+      });
+    }
+
+    if ((value.from && !value.to) || (!value.from && value.to)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: value.from ? ['to'] : ['from'],
+        message: 'Cần cung cấp cả from và to khi lọc theo khoảng ngày.',
+      });
+    }
+
+    if (value.from && value.to && value.from > value.to) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['to'],
+        message: 'Ngày kết thúc phải sau hoặc bằng ngày bắt đầu.',
+      });
+    }
+  });
 
 export const ListCafeSessionsSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -1569,7 +1813,43 @@ export const UpdateDamageItemsSchema = z.object({
   damageLineItems: z.array(DamageLineItemInputSchema).min(0),
 });
 
-export const EscalateDisputeSchema = z.object({
-  inspectionId: z.string().uuid('inspectionId phải là UUID hợp lệ'),
-  note: z.string().min(1, 'Vui lòng nhập mô tả tranh chấp'),
+// ── cafe_payment_settings / bank_transactions ─────────────────────────────────
+
+export const UpdateCafePaymentSettingsSchema = z
+  .object({
+    method: z.enum(['VNPAY', 'BANK_TRANSFER']),
+    bank_code: z.string().min(1).max(20).optional().nullable(),
+    account_number: z
+      .string()
+      .regex(/^\d{4,19}$/, 'Số tài khoản chỉ gồm chữ số, 4–19 ký tự')
+      .optional()
+      .nullable(),
+    account_name: z.string().min(2).max(160).optional().nullable(),
+  })
+  .refine(
+    (body) =>
+      body.method !== 'BANK_TRANSFER' ||
+      Boolean(body.bank_code && body.account_number && body.account_name),
+    {
+      message:
+        'Chọn nhận chuyển khoản thì phải khai đủ ngân hàng, số tài khoản và tên chủ tài khoản',
+      path: ['method'],
+    },
+  );
+
+export const AssignBankTransactionSchema = z.object({
+  booking_id: z.string().uuid('booking_id phải là UUID hợp lệ'),
+  note: z.string().max(1000).optional(),
+});
+
+export const IgnoreBankTransactionSchema = z.object({
+  // Bắt buộc: đánh dấu một khoản tiền thật là "không liên quan" phải kèm lý do,
+  // vì sau này không ai nhớ được vì sao nó bị bỏ qua.
+  note: z.string().min(1, 'Phải ghi lý do bỏ qua khoản tiền này').max(1000),
+});
+
+export const ListBankTransactionsQuerySchema = z.object({
+  status: z.enum(['MATCHED', 'NEEDS_REVIEW', 'IGNORED']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });

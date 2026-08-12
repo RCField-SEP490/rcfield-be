@@ -46,6 +46,19 @@ export class PaymentTransaction {
   @Column({ name: 'txn_ref', type: 'varchar', length: 100, unique: true })
   txnRef: string;
 
+  /**
+   * Mã tham chiếu ngắn nhúng vào nội dung chuyển khoản, dạng `RCF7K2M9`.
+   *
+   * Chỉ có giá trị với cổng `bank_transfer`; giao dịch VNPay để NULL.
+   *
+   * Cố ý gắn vào transaction chứ không vào booking: `createCheckoutUrl` tạo
+   * transaction mới và đánh dấu transaction cũ FAILED mỗi lần khách đổi phương
+   * thức thanh toán, nên một mã QR đã in ra tự hết hiệu lực theo. Gắn vào
+   * booking thì mã sống dai hơn phiên thanh toán và khách có thể bị thu hai lần.
+   */
+  @Column({ name: 'payment_ref_code', type: 'varchar', length: 16, nullable: true })
+  paymentRefCode: string | null;
+
   @Column({ name: 'amount', type: 'numeric', precision: 15, scale: 2 })
   amount: number;
 

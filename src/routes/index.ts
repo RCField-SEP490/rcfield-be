@@ -5,6 +5,7 @@ import { systemRouter } from './system.routes';
 import { fbChannelRouter } from './fb-channel.routes';
 import { fbWebhookRouter } from './fb-webhook.routes';
 import { providerOnboardingRouter } from './provider-onboarding.routes';
+import { businessLookupRouter } from './business-lookup.routes';
 import { adminProviderRouter } from './admin-provider.routes';
 import { adminPaymentRequestRouter } from './admin-payment-request.routes';
 import { notificationRouter } from './notification.routes';
@@ -14,6 +15,7 @@ import { staffRouter } from './staff.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { adminAmenityRouter } from './admin-amenity.routes';
 import { cafeRouter } from './cafe.routes';
+import { bankTransactionRouter, banksRouter, cafeBankPaymentRouter } from './bank-payment.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
@@ -21,6 +23,7 @@ import { adminTrackTypeRouter } from './admin-track-type.routes';
 import { adminDashboardRouter } from './admin-dashboard.routes';
 import { adminFeatureFlagsRouter } from './admin-feature-flags.routes';
 import { vnpayRouter } from './vnpay.routes';
+import { payosRouter } from './payos.routes';
 import { bookingRouter } from './booking.routes';
 import { bookingController } from '../controllers/booking.controller';
 import { customerPackageRouter } from './customer-package.routes';
@@ -32,6 +35,7 @@ import { favoriteRouter } from './favorite.routes';
 import { contestRouter } from './contest.routes';
 import { racingNetworkRouter } from './racing-network.routes';
 import { featuredPopupRouter } from './featured-popup.routes';
+import { seoController } from '../controllers/seo.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -40,6 +44,9 @@ import { AmenityCatalog } from '../models/amenity-catalog.entity';
 import { TrackType } from '../models/track-type.entity';
 
 const router = Router();
+
+// Công khai, không xác thực: bot tìm kiếm không đăng nhập được.
+router.get('/seo/sitemap.xml', seoController.getSitemap);
 
 router.get('/health', (_req, res) => {
   res.json({ success: true, message: 'RCField API is running' });
@@ -109,6 +116,7 @@ router.get('/track-types', async (_req, res, next) => {
 router.use('/auth', authRouter);
 router.use('/auth/staff-invite', staffInviteRouter);
 router.use('/auth', providerOnboardingRouter);
+router.use('/business-lookup', businessLookupRouter);
 router.use('/admin/providers', adminProviderRouter);
 router.use('/admin/payment-requests', adminPaymentRequestRouter);
 router.use('/admin/subscription-plans', adminSubscriptionPlanRouter);
@@ -124,6 +132,12 @@ router.use('/provider', providerSubscriptionRouter);
 router.use('/staff', staffRouter);
 router.use('/system', systemRouter);
 router.use('/uploads', uploadRouter);
+// Mount TRƯỚC `cafeRouter`: cả hai cùng nhận `/cafes/:cafeId/...`, và Express
+// duyệt theo thứ tự đăng ký. Đặt sau thì `cafeRouter` có thể nuốt mất đường dẫn
+// bằng một route bắt chung nào đó.
+router.use('/cafes/:cafeId', cafeBankPaymentRouter);
+router.use('/banks', banksRouter);
+router.use('/bank-transactions', bankTransactionRouter);
 router.use('/cafes', cafeRouter);
 router.use('/', cafeImagesRouter);
 router.use('/cafes/:cafeId/vehicle-catalogs', vehicleCatalogRouter);
@@ -131,6 +145,7 @@ router.use('/cafes/:cafeId', chatRouter);
 router.use('/channels/facebook', fbChannelRouter);
 router.use('/webhook/facebook', fbWebhookRouter);
 router.use('/payments/vnpay', vnpayRouter);
+router.use('/payments/payos', payosRouter);
 router.use('/bookings', bookingRouter);
 router.use('/sessions', sessionRouter);
 router.use('/', contestRouter);

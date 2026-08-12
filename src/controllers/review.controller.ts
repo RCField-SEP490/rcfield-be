@@ -40,6 +40,21 @@ export async function dismissReview(
   }
 }
 
+// POST /api/v1/customer/reviews/:bookingId/snooze  [auth]
+export async function snoozeReviewReminder(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+    await reviewService.snoozeReviewReminder(req.user.userId, req.params.bookingId);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/v1/customer/reviews/pending  [auth]
 export async function listPending(
   req: AuthRequest,
@@ -48,7 +63,8 @@ export async function listPending(
 ): Promise<void> {
   try {
     if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-    const data = await reviewService.getPendingReviews(req.user.userId);
+    const includeSnoozed = req.query.include_snoozed === 'true';
+    const data = await reviewService.getPendingReviews(req.user.userId, includeSnoozed);
     res.json({ success: true, data });
   } catch (err) {
     next(err);

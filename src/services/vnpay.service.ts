@@ -6,6 +6,18 @@ const VNPAY_VERSION = '2.1.0';
 const VNPAY_COMMAND = 'pay';
 const DEFAULT_PAYMENT_TTL_MINUTES = 15;
 
+/**
+ * Thông tin cổng dùng cho một giao dịch.
+ *
+ * Không truyền nghĩa là dùng cấu hình cấp nền tảng trong biến môi trường —
+ * đúng hành vi có từ trước. Truyền vào là đi qua cổng riêng của chi nhánh.
+ */
+export interface VnpayGatewayCredentials {
+  tmnCode: string;
+  hashSecret: string;
+  paymentUrl: string;
+}
+
 export interface CreateVnpayPaymentInput {
   amount: number;
   txnRef: string;
@@ -14,6 +26,7 @@ export interface CreateVnpayPaymentInput {
   ipAddr: string;
   bankCode?: string;
   returnUrl?: string;
+  credentials?: VnpayGatewayCredentials;
 }
 
 export interface VnpayVerificationResult {
@@ -31,10 +44,16 @@ export interface VnpayVerificationResult {
 
 type VnpayParams = Record<string, string>;
 
-function assertConfigured(): void {
-  if (!env.vnpay.tmnCode || !env.vnpay.hashSecret || !env.vnpay.paymentUrl) {
+function resolveCredentials(credentials?: VnpayGatewayCredentials): VnpayGatewayCredentials {
+  const resolved = credentials ?? {
+    tmnCode: env.vnpay.tmnCode,
+    hashSecret: env.vnpay.hashSecret,
+    paymentUrl: env.vnpay.paymentUrl,
+  };
+  if (!resolved.tmnCode || !resolved.hashSecret || !resolved.paymentUrl) {
     throw new AppError('VNPay is not configured', 500, 'VNPAY_NOT_CONFIGURED');
   }
+  return resolved;
 }
 
 function formatVnpayDate(date = new Date()): string {
@@ -89,13 +108,13 @@ function normalizeIp(ipAddr: string): string {
 }
 
 export function createPaymentUrl(input: CreateVnpayPaymentInput): string {
-  assertConfigured();
+  const credentials = resolveCredentials(input.credentials);
 
   const createDate = new Date();
   const params: VnpayParams = {
     vnp_Version: VNPAY_VERSION,
     vnp_Command: VNPAY_COMMAND,
-    vnp_TmnCode: env.vnpay.tmnCode,
+    vnp_TmnCode: credentials.tmnCode,
     vnp_Amount: String(Math.round(input.amount) * 100),
     vnp_CurrCode: env.vnpay.currCode,
     vnp_TxnRef: input.txnRef,
@@ -113,14 +132,14 @@ export function createPaymentUrl(input: CreateVnpayPaymentInput): string {
   }
 
   // Build URL using URL API — same URLSearchParams encoding used for signing
-  const redirectUrl = new URL(env.vnpay.paymentUrl);
+  const redirectUrl = new URL(credentials.paymentUrl);
   Object.entries(filterParams(params)).forEach(([key, value]) =>
     redirectUrl.searchParams.append(key, value),
   );
 
   const signData = redirectUrl.search.slice(1); // query string without leading '?'
   const secureHash = crypto
-    .createHmac('sha512', env.vnpay.hashSecret)
+    .createHmac('sha512', credentials.hashSecret)
     .update(Buffer.from(signData, 'utf-8'))
     .digest('hex');
 
@@ -128,8 +147,11 @@ export function createPaymentUrl(input: CreateVnpayPaymentInput): string {
   return redirectUrl.toString();
 }
 
-export function verifyVnpayParams(params: Record<string, unknown>): VnpayVerificationResult {
-  assertConfigured();
+export function verifyVnpayParams(
+  params: Record<string, unknown>,
+  credentials?: VnpayGatewayCredentials,
+): VnpayVerificationResult {
+  const resolved = resolveCredentials(credentials);
 
   const receivedHash = String(params.vnp_SecureHash ?? '');
   const signingParams = Object.entries(params).reduce<VnpayParams>((acc, [key, value]) => {
@@ -146,7 +168,7 @@ export function verifyVnpayParams(params: Record<string, unknown>): VnpayVerific
 
   const signData = buildSignData(signingParams);
   const expectedHash = crypto
-    .createHmac('sha512', env.vnpay.hashSecret)
+    .createHmac('sha512', resolved.hashSecret)
     .update(Buffer.from(signData, 'utf-8'))
     .digest('hex');
 

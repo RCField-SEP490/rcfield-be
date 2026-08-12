@@ -70,4 +70,25 @@ export const customerPackageController = {
       next(err);
     }
   },
+
+  // POST /api/v1/customers/me/packages/:customerPackageId/repay  [auth]
+  async getRepayUrl(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const viewer = customerViewer(req);
+      const ipAddr =
+        (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+        req.socket.remoteAddress ??
+        '127.0.0.1';
+      const returnUrl = typeof req.body?.return_url === 'string' ? req.body.return_url : undefined;
+      const data = await customerPackageService.getRepayUrl(
+        req.params.customerPackageId,
+        viewer.userId,
+        ipAddr,
+        returnUrl,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

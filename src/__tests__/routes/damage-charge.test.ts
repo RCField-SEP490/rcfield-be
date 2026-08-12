@@ -357,12 +357,12 @@ describe('POST /api/v1/staff/sessions/:id/confirm-checkout', () => {
     expect(damage).toBeUndefined();
   });
 
-  it('Scenario legacy: damageNoted=true nhưng không có line items → fallback damageCostEstimate × 1.5', async () => {
+  it('Scenario legacy: damageNoted=true nhưng không có line items → không tạo damage charge (fallback đã bị xóa)', async () => {
     // Legacy record: damageNoted nhưng không có line items, có damageCostEstimate = 100k
     const { staffToken, session, inspection, booking } = await seedCheckoutScenario({
       depositAmount: 500000,
       lineItems: [], // không có line items
-      damageCostEstimate: 100000, // legacy field
+      damageCostEstimate: 100000, // legacy field, không còn được dùng để tính phí
     });
     // inspection.damageNoted đã được set = true trong seedCheckoutScenario khi damageCostEstimate != null
 
@@ -378,10 +378,8 @@ describe('POST /api/v1/staff/sessions/:id/confirm-checkout', () => {
     )) as PaymentComponentRow[];
     const damage = comps.find((c) => c.type === PaymentComponentType.DAMAGE_CHARGE);
 
-    // fallback: 100k × 1.5 = 150k, deposit 500k covers fully → DISBURSED
-    expect(damage).toBeDefined();
-    expect(Number(damage?.amount)).toBe(150000);
-    expect(damage?.status).toBe(PaymentComponentStatus.DISBURSED);
+    // Sau khi xóa fallback, không có line items thì không tạo DAMAGE_CHARGE
+    expect(damage).toBeUndefined();
   });
 
   it('session chuyển sang COMPLETED sau khi confirm', async () => {

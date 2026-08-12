@@ -1,7 +1,15 @@
+import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { FeaturedPopup } from '../models/featured-popup.entity';
 import { Contest } from '../models/contest.entity';
-import { AppError, FeaturedPopupAudienceScope, FeaturedPopupPlacement, UserRole } from '../types';
+import { mapContestPayload } from './contest/payload';
+import {
+  AppError,
+  FeaturedPopupAudienceScope,
+  FeaturedPopupPlacement,
+  FeaturedPopupReviewStatus,
+  UserRole,
+} from '../types';
 
 type Viewer = {
   userId: string;
@@ -42,6 +50,9 @@ function mapFeaturedPopup(popup: FeaturedPopup) {
     starts_at: popup.startsAt,
     ends_at: popup.endsAt,
     is_active: popup.isActive,
+    review_status: popup.reviewStatus,
+    review_notes: popup.reviewNotes,
+    contest_fee_order_id: popup.contestFeeOrderId,
     priority: popup.priority,
     created_by: popup.createdBy,
     updated_by: popup.updatedBy,
@@ -131,6 +142,12 @@ export async function getActiveFeaturedPopup(placement = FeaturedPopupPlacement.
     .createQueryBuilder('popup')
     .where('popup.placement = :placement', { placement })
     .andWhere('popup.is_active = TRUE')
+    // Suất provider trả phí chỉ lên trang khi admin đã duyệt nội dung. Lọc cả
+    // hai điều kiện chứ không chỉ is_active: bật nhầm cờ hiển thị không được
+    // phép đẩy nội dung chưa duyệt ra trước khách.
+    .andWhere('popup.review_status = :approved', {
+      approved: FeaturedPopupReviewStatus.APPROVED,
+    })
     .andWhere('popup.starts_at <= :now', { now })
     .andWhere('popup.ends_at >= :now', { now })
     .orderBy('popup.priority', 'DESC')
@@ -138,4 +155,85 @@ export async function getActiveFeaturedPopup(placement = FeaturedPopupPlacement.
     .getOne();
 
   return popup ? mapFeaturedPopup(popup) : null;
+}
+
+/**
+ * Mọi suất quảng bá đang chạy của một vị trí, kèm dữ liệu giải đấu liên kết.
+ *
+ * Dùng cho dải carousel ở trang khám phá. Khác `getActiveFeaturedPopup` ở chỗ
+ * trả về danh sách thay vì một suất, nhưng dùng **đúng bộ điều kiện lọc** — đặc
+ * biệt là `review_status = APPROVED`, để nội dung provider trả tiền vẫn phải qua
+ * kiểm duyệt mới ra trước mặt khách.
+ *
+ * Giải không mua gói quảng bá sẽ không có hàng nào trong `featured_popups`, nên
+ * mặc nhiên không xuất hiện — không cần lọc thêm ở tầng nào khác.
+ */
+export async function listActiveFeaturedPopups(placement = FeaturedPopupPlacement.EXPLORE) {
+  const now = new Date();
+  const popups = await AppDataSource.getRepository(FeaturedPopup)
+    .createQueryBuilder('popup')
+    .where('popup.placement = :placement', { placement })
+    .andWhere('popup.is_active = TRUE')
+    .andWhere('popup.review_status = :approved', {
+      approved: FeaturedPopupReviewStatus.APPROVED,
+    })
+    .andWhere('popup.starts_at <= :now', { now })
+    .andWhere('popup.ends_at >= :now', { now })
+    .orderBy('popup.priority', 'DESC')
+    .addOrderBy('popup.starts_at', 'DESC')
+    .getMany();
+
+  if (popups.length === 0) return [];
+
+  const contestIds = popups
+    .map((popup) => popup.contestId)
+    .filter((id): id is string => Boolean(id));
+
+  const contests = contestIds.length
+    ? await AppDataSource.getRepository(Contest).findBy({ id: In(contestIds) })
+    : [];
+  const mappedContests = contests.length ? await mapContestPayload(contests) : [];
+  const contestMap = new Map(mappedContests.map((contest) => [contest.id, contest]));
+
+  return popups.map((popup) => ({
+    ...mapFeaturedPopup(popup),
+    contest: popup.contestId ? (contestMap.get(popup.contestId) ?? null) : null,
+  }));
+}
+
+/**
+ * Suất quảng bá do provider trả phí, đang chờ admin xem nội dung.
+ *
+ * Tách riêng khỏi `listFeaturedPopups` để admin có một hàng đợi rõ ràng thay vì
+ * phải lọc thủ công giữa các suất tự tạo.
+ */
+export async function listPendingFeaturedPopups() {
+  const rows = await AppDataSource.getRepository(FeaturedPopup).find({
+    where: { reviewStatus: FeaturedPopupReviewStatus.PENDING },
+    order: { createdAt: 'ASC' },
+  });
+  return rows.map(mapFeaturedPopup);
+}
+
+export async function reviewFeaturedPopup(
+  popupId: string,
+  viewer: Viewer,
+  body: { approve: boolean; notes?: string },
+) {
+  const repo = AppDataSource.getRepository(FeaturedPopup);
+  const popup = await repo.findOne({ where: { id: popupId } });
+  if (!popup) throw new AppError('Suất quảng bá không tồn tại', 404, 'FEATURED_POPUP_NOT_FOUND');
+  if (popup.reviewStatus !== FeaturedPopupReviewStatus.PENDING) {
+    throw new AppError('Suất quảng bá này đã được xử lý', 409, 'FEATURED_POPUP_ALREADY_REVIEWED');
+  }
+
+  popup.reviewStatus = body.approve
+    ? FeaturedPopupReviewStatus.APPROVED
+    : FeaturedPopupReviewStatus.REJECTED;
+  popup.isActive = body.approve;
+  popup.reviewNotes = body.notes ?? null;
+  popup.updatedBy = viewer.userId;
+
+  const saved = await repo.save(popup);
+  return mapFeaturedPopup(saved);
 }

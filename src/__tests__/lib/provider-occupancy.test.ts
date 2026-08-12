@@ -2,6 +2,7 @@ import {
   getBookableSlotMinutes,
   getOccupancyRate,
   getVietnamCurrentMonthRange,
+  getVietnamCurrentMonthToDateRange,
 } from '../../lib/provider-occupancy';
 
 describe('provider occupancy helpers', () => {
@@ -45,6 +46,13 @@ describe('provider occupancy helpers', () => {
     expect(getVietnamCurrentMonthRange(new Date('2026-07-31T18:00:00.000Z'))).toEqual({
       from: '2026-07-31T17:00:00.000Z',
       to: '2026-08-31T17:00:00.000Z',
+    });
+  });
+
+  it('creates month-to-date bounds without counting future capacity', () => {
+    expect(getVietnamCurrentMonthToDateRange(new Date('2026-08-09T04:30:00.000Z'))).toEqual({
+      from: '2026-07-31T17:00:00.000Z',
+      to: '2026-08-09T04:30:00.000Z',
     });
   });
 });

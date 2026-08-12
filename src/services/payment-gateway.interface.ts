@@ -6,14 +6,28 @@ export interface CreatePaymentUrlInput {
   returnUrl?: string;
   orderType?: string;
   bankCode?: string;
+  /**
+   * Thông tin cổng riêng của chi nhánh. Bỏ trống là dùng cấu hình cấp nền tảng.
+   * Chỉ VNPay đọc tới; các cổng khác bỏ qua.
+   */
+  credentials?: {
+    tmnCode: string;
+    hashSecret: string;
+    paymentUrl: string;
+  };
 }
 
 export interface PaymentUrlResult {
   payment_url: string;
   txn_ref: string;
   gateway: string;
-  /** Human-readable hint for the frontend (e.g. 'redirect' or 'mock_page'). */
-  flow: 'redirect' | 'mock_page';
+  /**
+   * Cách frontend xử lý kết quả.
+   *
+   * `redirect` — chuyển hướng sang cổng thanh toán, hành vi có từ trước.
+   * `bank_transfer` — giữ khách ở lại, hiện mã QR, chờ webhook báo tiền về.
+   */
+  flow: 'redirect' | 'mock_page' | 'bank_transfer';
 }
 
 export interface PaymentVerificationResult {
@@ -32,7 +46,10 @@ export interface PaymentVerificationResult {
 export interface PaymentGateway {
   readonly name: string;
   createPaymentUrl(input: CreatePaymentUrlInput): PaymentUrlResult;
-  verifyCallback(params: Record<string, unknown>): PaymentVerificationResult;
+  verifyCallback(
+    params: Record<string, unknown>,
+    credentials?: CreatePaymentUrlInput['credentials'],
+  ): PaymentVerificationResult;
 }
 
 export interface ProcessConfirmationResult {
@@ -42,7 +59,7 @@ export interface ProcessConfirmationResult {
 }
 
 /** Gateways supported by the booking payment flow. */
-export const SUPPORTED_PAYMENT_GATEWAYS = ['vnpay', 'mock'] as const;
+export const SUPPORTED_PAYMENT_GATEWAYS = ['vnpay', 'mock', 'bank_transfer'] as const;
 export type SupportedPaymentGateway = (typeof SUPPORTED_PAYMENT_GATEWAYS)[number];
 
 export function isSupportedPaymentGateway(value: string): value is SupportedPaymentGateway {

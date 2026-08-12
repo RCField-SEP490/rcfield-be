@@ -79,6 +79,7 @@ export const cafeController = {
         sort_by,
         popular_filters,
         status,
+        date,
       } = CafeListQuerySchema.parse(normalizeCafeListQuery(req.query));
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
@@ -100,6 +101,7 @@ export const cafeController = {
         sort_by,
         popular_filters,
         status: visibleStatus,
+        date,
         viewer: viewerFromRequest(req),
       });
       res.json({
@@ -378,7 +380,6 @@ export const cafeController = {
             catalog_name: catalog.name,
             tier: catalog.tier,
             rental_fee_per_hour: Number(catalog.hourlyRate),
-            security_deposit: Number(catalog.securityDeposit),
           };
         }),
       );

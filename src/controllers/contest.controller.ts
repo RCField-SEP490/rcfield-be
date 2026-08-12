@@ -16,10 +16,13 @@ import {
   ContestMatchParticipantsUpdateSchema,
   ContestRegistrationsQuerySchema,
   ContestRegistrationActionSchema,
+  ContestMatchWalkoverSchema,
+  ContestRejectRegistrationSchema,
   ContestSubmitResultsSchema,
   CreateContestRegistrationSchema,
   CreateContestSchema,
   MyContestRegistrationsQuerySchema,
+  UpdateByocDeclarationSchema,
   UpdateContestSchema,
 } from '../validate';
 import * as contestService from '../services/contest.service';
@@ -261,7 +264,7 @@ export const contestController = {
   async rejectRegistration(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const viewer = requireViewer(req);
-      const body = ContestRegistrationActionSchema.parse(req.body);
+      const body = ContestRejectRegistrationSchema.parse(req.body);
       const data = await contestService.rejectRegistration(
         req.params.registrationId,
         viewer,
@@ -281,6 +284,21 @@ export const contestController = {
         req.params.registrationId,
         viewer,
         body.reason,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async updateByocDeclaration(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = UpdateByocDeclarationSchema.parse(req.body);
+      const data = await contestService.updateByocDeclaration(
+        req.params.registrationId,
+        viewer,
+        body,
       );
       res.json({ success: true, data });
     } catch (error) {
@@ -311,6 +329,22 @@ export const contestController = {
       const data = await contestService.checkInRegistration(
         req.params.registrationId,
         body.checked_in_cafe_id,
+        viewer,
+        body.rental_vehicle_id ?? null,
+        body.byoc_confirmed,
+        body.byoc_inspection,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async listHandoverUnits(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestService.listRegistrationHandoverUnits(
+        req.params.registrationId,
         viewer,
       );
       res.json({ success: true, data });
@@ -380,6 +414,22 @@ export const contestController = {
       const viewer = requireViewer(req);
       const body = ContestCorrectResultsSchema.parse(req.body);
       const data = await contestRuntimeService.correctMatchResults(
+        req.params.matchId,
+        viewer,
+        body,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // POST /api/v1/contest-matches/:matchId/walkover  [auth]
+  async recordMatchWalkover(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestMatchWalkoverSchema.parse(req.body);
+      const data = await contestRuntimeService.recordMatchWalkover(
         req.params.matchId,
         viewer,
         body,
@@ -591,19 +641,34 @@ export const contestController = {
   async getAvailableRentalVehicles(req: AuthRequest, res: Response, next: NextFunction) {
     try {
       requireViewer(req);
-      const { cafe_id, slot_start, slot_end, track_config_id, vehicle_catalog_id } = req.query;
-      const slot: contestRentalService.ContestRentalSlotInput = {
-        cafe_id: String(cafe_id),
-        slot_start: String(slot_start),
-        slot_end: String(slot_end),
-        track_config_id: track_config_id ? String(track_config_id) : null,
-        vehicle_catalog_id: vehicle_catalog_id ? String(vehicle_catalog_id) : null,
-      };
+      // Chỉ cần chi nhánh: khung giờ do lịch thi đấu quyết định nên không còn
+      // tham số slot, và khách chọn dòng xe chứ không chọn từng chiếc.
+      const cafeId = String(req.query.cafe_id ?? '').trim();
+      if (!cafeId) throw new AppError('Thiếu cafe_id', 400, 'CAFE_ID_REQUIRED');
       const data = await contestRentalService.getContestAvailableRentalVehicles(
         req.params.contestId,
-        slot,
+        cafeId,
       );
       res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async uploadBanner(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const file = req.file;
+      if (!file) throw new AppError('File là bắt buộc.', 400, 'FILE_REQUIRED');
+      const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/jpg']);
+      if (!allowed.has(file.mimetype)) {
+        throw new AppError('Chỉ hỗ trợ ảnh JPG, PNG, WEBP.', 422, 'UNSUPPORTED_FORMAT');
+      }
+      const data = await contestService.uploadContestBanner(req.params.contestId, viewer, {
+        buffer: file.buffer,
+        mimetype: file.mimetype,
+      });
+      res.status(201).json({ success: true, data });
     } catch (error) {
       next(error);
     }

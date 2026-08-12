@@ -1,10 +1,11 @@
-import { Brackets, FindOptionsWhere, In, SelectQueryBuilder } from 'typeorm';
+import { Brackets, FindOptionsWhere, In, LessThan, MoreThan, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { Cafe } from '../models/cafe.entity';
 import { AmenityCatalog } from '../models/amenity-catalog.entity';
 import { TrackType } from '../models/track-type.entity';
 import {
   AppError,
+  BookingStatus,
   CafeOperatingHours,
   CafeStatus,
   DiscountType,
@@ -13,6 +14,10 @@ import {
   UserRole,
 } from '../types';
 import { checkBranchQuota } from './subscription.service';
+import { Booking } from '../models/booking.entity';
+import { ProviderProfile } from '../models/provider-profile.entity';
+import { DAY_MS } from '../lib/vietnam-time';
+import { hasFreeSlotOnDay, type OccupyingBooking } from '../lib/cafe-day-availability';
 
 export interface Viewer {
   userId: string;
@@ -35,6 +40,8 @@ interface ListOptions {
   sort_by?: 'popularity' | 'price_asc' | 'price_desc' | 'rating';
   popular_filters?: string[];
   status?: CafeStatus;
+  /** 'YYYY-MM-DD' theo giờ Việt Nam. Chỉ giữ chi nhánh còn slot trống ngày đó. */
+  date?: string;
   viewer?: Viewer;
 }
 
@@ -112,7 +119,14 @@ async function makeUniqueSlug(name: string): Promise<string> {
   return slug;
 }
 
-function assertCafeOwner(cafe: Cafe, providerId: string): void {
+/**
+ * Chỉ chủ sở hữu chi nhánh đi qua được.
+ *
+ * ⚠️ Khác `getManagedCafeOrThrow`, hàm này KHÔNG cho STAFF qua. Với dữ liệu
+ * nhạy cảm như tài khoản ngân hàng nhận tiền, đó là khác biệt quyết định —
+ * dùng nhầm hàm kia là để nhân viên đọc và sửa được số tài khoản của chủ quán.
+ */
+export function assertCafeOwner(cafe: Cafe, providerId: string): void {
   if (cafe.providerId !== providerId) {
     throw new AppError('Bạn chỉ có thể cập nhật cafe thuộc sở hữu của mình', 403, 'FORBIDDEN');
   }
@@ -315,7 +329,16 @@ function applyBrowseFilters(qb: SelectQueryBuilder<Cafe>, options: ListOptions) 
 
   if (slug) qb.andWhere('cafe.slug = :slug', { slug });
   if (district) qb.andWhere('cafe.district = :district', { district });
-  if (city) qb.andWhere('cafe.city = :city', { city });
+  // So khớp CHỨA chứ không bằng tuyệt đối.
+  //
+  // Tên tỉnh thành trong dữ liệu không thống nhất tiền tố: có bản ghi lưu
+  // 'TP. Hồ Chí Minh', có bản ghi 'Thành phố Hồ Chí Minh'. Ô chọn ở giao diện
+  // gửi lên tên trần 'Hồ Chí Minh', nên so bằng dấu `=` thì không khớp bản ghi
+  // nào và lọc theo thành phố luôn trả về rỗng.
+  //
+  // Cột này vốn đã được tìm bằng ILIKE ở câu tìm kiếm tự do ngay trên, nên đây
+  // là cách cư xử nhất quán chứ không phải ngoại lệ.
+  if (city) qb.andWhere('cafe.city ILIKE :city', { city: `%${city}%` });
   if (track_type) qb.andWhere(':trackType = ANY(cafe.track_types)', { trackType: track_type });
   if (price_min !== undefined)
     qb.andWhere('cafe.slot_fee_rate >= :priceMin', { priceMin: price_min });
@@ -509,17 +532,139 @@ export async function listCafes(
   }
 
   applyBrowseFilters(qb, options);
-  const [data, total] = await Promise.all([qb.clone().getMany(), qb.clone().getCount()]);
+  const data = await qb.getMany();
 
-  const hydrated = await hydrateCafeBrowsePayload(data);
+  // Lọc theo ngày TRƯỚC khi cắt trang, và lấy tổng từ tập đã lọc — lọc sau khi
+  // cắt thì trang 1 còn 2 kết quả trong khi vẫn ghi "tìm thấy 4 nơi".
+  const matching = options.date ? await filterCafesWithFreeSlot(data, options.date) : data;
+
+  const hydrated = await hydrateCafeBrowsePayload(matching);
   const sortedHydrated = sortBrowseItems(hydrated, options.sort_by);
   const start = (page - 1) * limit;
   const end = start + limit;
 
-  return { data: sortedHydrated.slice(start, end), total };
+  return { data: sortedHydrated.slice(start, end), total: matching.length };
 }
 
-export async function getCafeDetail(id: string, viewer?: Viewer): Promise<CafeBrowseItem> {
+/**
+ * Giữ lại các chi nhánh còn ít nhất một slot đặt được trong ngày `dateIso`.
+ *
+ * Một truy vấn duy nhất lấy toàn bộ đơn đang giữ chỗ của mọi chi nhánh ứng
+ * viên, rồi đối chiếu trong bộ nhớ — thay vì hỏi cơ sở dữ liệu cho từng chi
+ * nhánh từng slot.
+ */
+async function filterCafesWithFreeSlot(cafes: Cafe[], dateIso: string): Promise<Cafe[]> {
+  if (cafes.length === 0) return cafes;
+
+  // Chuỗi 'YYYY-MM-DD' được đọc theo giờ Việt Nam, không theo giờ máy chủ.
+  const dayMidnightUtcMs = Date.parse(`${dateIso}T00:00:00+07:00`);
+  if (Number.isNaN(dayMidnightUtcMs)) return cafes;
+
+  const now = new Date();
+  // Quét rộng sang ngày kế tiếp vì quán bán qua nửa đêm thì slot cuối của ngày
+  // hôm trước vẫn còn chiếm chỗ sang ngày đang xét.
+  const rangeStart = new Date(dayMidnightUtcMs - DAY_MS);
+  const rangeEnd = new Date(dayMidnightUtcMs + 2 * DAY_MS);
+
+  const bookings = await AppDataSource.getRepository(Booking).find({
+    where: {
+      cafeId: In(cafes.map((cafe) => cafe.id)),
+      status: In([BookingStatus.PENDING, BookingStatus.CONFIRMED]),
+      slotStart: LessThan(rangeEnd),
+      slotEnd: MoreThan(rangeStart),
+    },
+    select: ['cafeId', 'slotStart', 'slotEnd'],
+  });
+
+  const bookingsByCafe = new Map<string, OccupyingBooking[]>();
+  for (const booking of bookings) {
+    const list = bookingsByCafe.get(booking.cafeId);
+    const entry = {
+      cafeId: booking.cafeId,
+      slotStart: booking.slotStart,
+      slotEnd: booking.slotEnd,
+    };
+    if (list) list.push(entry);
+    else bookingsByCafe.set(booking.cafeId, [entry]);
+  }
+
+  return cafes.filter((cafe) =>
+    hasFreeSlotOnDay(
+      {
+        cafeId: cafe.id,
+        operatingHours: cafe.operatingHours,
+        slotDurationMinutes: cafe.slotDurationMinutes,
+        maxConcurrentBookings: cafe.maxConcurrentBookings,
+        minBookingNoticeMinutes: cafe.minBookingNoticeMinutes,
+        maxAdvanceBookingDays: cafe.maxAdvanceBookingDays,
+      },
+      dayMidnightUtcMs,
+      now,
+      bookingsByCafe.get(cafe.id) ?? [],
+    ),
+  );
+}
+
+/**
+ * Thông tin doanh nghiệp của chi nhánh, phần được phép công khai.
+ *
+ * ⚠️ DANH SÁCH TRẮNG, không phải danh sách đen. `provider_profiles` chứa cả
+ * `kyc_documents` — ảnh căn cước và giấy phép kinh doanh đã tải lên — cùng
+ * `rejection_reason`, `suspended_reason`, `registration_status`. Trả nguyên bản
+ * ghi ra là phát tán giấy tờ tuỳ thân của chủ quán lên một trang ai cũng xem
+ * được. Vì thế hàm dưới liệt kê từng trường một; thêm cột mới vào bảng sẽ KHÔNG
+ * tự động lọt ra ngoài.
+ *
+ * Các trường ở đây là danh tính doanh nghiệp theo hồ sơ công khai — đúng nhóm
+ * thông tin mà nghị định thương mại điện tử yêu cầu sàn phải hiển thị về người
+ * bán: tên, địa chỉ, mã số thuế, đầu mối liên hệ.
+ */
+export interface CafeProviderBusiness {
+  business_name: string;
+  /** Tên pháp lý theo dữ liệu Cục Thuế, có thể khác tên thương hiệu. */
+  business_legal_name: string | null;
+  tax_code: string | null;
+  /** Địa chỉ đăng ký kinh doanh — khác địa chỉ chi nhánh. */
+  business_address: string | null;
+  business_email: string | null;
+  business_type: string | null;
+  /** Mã số thuế đã đối chiếu được với Cục Thuế hay chưa. */
+  tax_verified: boolean;
+}
+
+export type CafeDetailItem = CafeBrowseItem & {
+  provider_business: CafeProviderBusiness | null;
+};
+
+async function loadProviderBusiness(providerId: string): Promise<CafeProviderBusiness | null> {
+  const profile = await AppDataSource.getRepository(ProviderProfile).findOne({
+    where: { userId: providerId },
+    // Chỉ đọc đúng những cột sẽ trả ra. Giấy tờ KYC không được nạp vào bộ nhớ
+    // ngay từ đầu, nên không có đường nào lọt ra do sơ ý ở tầng trên.
+    select: [
+      'businessName',
+      'businessLegalName',
+      'taxCode',
+      'businessAddress',
+      'businessEmail',
+      'businessType',
+      'taxVerifiedAt',
+    ],
+  });
+  if (!profile) return null;
+
+  return {
+    business_name: profile.businessName,
+    business_legal_name: profile.businessLegalName,
+    tax_code: profile.taxCode,
+    business_address: profile.businessAddress,
+    business_email: profile.businessEmail,
+    business_type: profile.businessType,
+    tax_verified: profile.taxVerifiedAt !== null,
+  };
+}
+
+export async function getCafeDetail(id: string, viewer?: Viewer): Promise<CafeDetailItem> {
   const cafe = await getCafeOrThrow(id);
   const canViewInactive =
     viewer?.role === UserRole.ADMIN ||
@@ -528,8 +673,11 @@ export async function getCafeDetail(id: string, viewer?: Viewer): Promise<CafeBr
   if (cafe.status !== CafeStatus.ACTIVE && !canViewInactive) {
     throw new AppError('Cafe không tồn tại', 404, 'CAFE_NOT_FOUND');
   }
-  const result = await hydrateCafeBrowsePayload([cafe]);
-  return result[0]!;
+  const [result, providerBusiness] = await Promise.all([
+    hydrateCafeBrowsePayload([cafe]),
+    loadProviderBusiness(cafe.providerId),
+  ]);
+  return { ...result[0]!, provider_business: providerBusiness };
 }
 
 export async function updateCafe(

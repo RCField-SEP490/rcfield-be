@@ -33,6 +33,15 @@ export class ContestRegistration {
   @Column({ name: 'customer_vehicle_id', type: 'uuid', nullable: true })
   customerVehicleId: string | null;
 
+  /** Dòng xe VĐV chọn mượn lúc đăng ký; chiếc cụ thể gán lúc check-in. */
+  @Column({ name: 'rental_catalog_id', type: 'uuid', nullable: true })
+  rentalCatalogId: string | null;
+
+  /** Chi nhánh VĐV sẽ thi đấu và nhận xe. */
+  @Column({ name: 'rental_cafe_id', type: 'uuid', nullable: true })
+  rentalCafeId: string | null;
+
+  /** Phiếu mượn xe 0đ, sinh lúc check-in để chạy inspection/damage. */
   @Column({ name: 'booking_id', type: 'uuid', nullable: true })
   bookingId: string | null;
 
@@ -84,6 +93,18 @@ export class ContestRegistration {
 
   @Column({ name: 'entry_fee_marked_paid_at', type: 'timestamptz', nullable: true })
   entryFeeMarkedPaidAt: Date | null;
+
+  /**
+   * Đường tiền lệ phí đi vào: ONLINE | CASH | TRANSFER.
+   *
+   * Chỉ có nghĩa khi `paymentStatus = MARKED_PAID`; ở mọi trạng thái khác phải
+   * là null. Cần để đối chiếu báo cáo tài chính với sao kê ngân hàng — tiền mặt
+   * nằm trong két còn tiền online nằm trên sao kê, không lẫn được.
+   *
+   * Bản ghi cũ giữ null và được gom vào nhóm "chưa rõ phương thức".
+   */
+  @Column({ name: 'entry_fee_payment_method', type: 'varchar', length: 20, nullable: true })
+  entryFeePaymentMethod: string | null;
 
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, unknown>;

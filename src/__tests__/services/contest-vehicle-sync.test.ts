@@ -1,12 +1,19 @@
-import { ContestRegistrationStatus } from '../../types';
+import { ContestRegistrationStatus, ContestStatus } from '../../types';
 
 const mockRegistrationRepo = {
   findOne: jest.fn(),
   save: jest.fn(),
+  update: jest.fn(),
 };
 const mockAuditRepo = {
   create: jest.fn((payload: unknown) => payload),
   save: jest.fn(),
+};
+const mockContestRepo = {
+  findOne: jest.fn(),
+};
+const mockBanRepo = {
+  find: jest.fn(),
 };
 
 jest.mock('../../config/database', () => ({
@@ -15,6 +22,8 @@ jest.mock('../../config/database', () => ({
       const name = entity?.name ?? '';
       if (name === 'ContestRegistration') return mockRegistrationRepo;
       if (name === 'ContestAuditLog') return mockAuditRepo;
+      if (name === 'Contest') return mockContestRepo;
+      if (name === 'ContestBan') return mockBanRepo;
       throw new Error(`Unexpected repository: ${name}`);
     }),
   },
@@ -37,6 +46,18 @@ const contestBooking = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Default: the atomic CONFIRMED → CHECKED_IN conditional update hits one row.
+  mockRegistrationRepo.update.mockResolvedValue({ affected: 1 });
+  // Default: no active contest bans.
+  mockBanRepo.find.mockResolvedValue([]);
+  // Default: a check-in ready contest (RUNNING, inside the time window, no entry fee).
+  mockContestRepo.findOne.mockResolvedValue({
+    id: 'contest-1',
+    status: ContestStatus.RUNNING,
+    startsAt: new Date(Date.now() - 60 * 60 * 1000),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000),
+    entryFee: 0,
+  });
 });
 
 describe('syncContestRegistrationOnVehicleCheckIn', () => {
@@ -77,15 +98,16 @@ describe('syncContestRegistrationOnVehicleCheckIn', () => {
       synced: true,
       previousStatus: ContestRegistrationStatus.CONFIRMED,
     });
-    expect(mockRegistrationRepo.save).toHaveBeenCalledWith(
+    expect(mockRegistrationRepo.update).toHaveBeenCalledWith(
+      { id: 'reg-1', status: ContestRegistrationStatus.CONFIRMED },
       expect.objectContaining({
-        id: 'reg-1',
         status: ContestRegistrationStatus.CHECKED_IN,
         checkedInCafeId: 'cafe-1',
         checkedInBy: 'staff-1',
-        checkedInAt: expect.any(Date),
+        checkedInAt: expect.any(Function),
       }),
     );
+    expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
     expect(mockAuditRepo.save).toHaveBeenCalledWith(
       expect.objectContaining({
         contestId: 'contest-1',
@@ -114,6 +136,29 @@ describe('syncContestRegistrationOnVehicleCheckIn', () => {
     expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
   });
 
+  it('returns synced=false when a concurrent check-in already transitioned the row', async () => {
+    mockRegistrationRepo.findOne.mockResolvedValue({
+      id: 'reg-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'NOT_REQUIRED',
+    });
+    // Simulate the race: the conditional UPDATE ... WHERE status='CONFIRMED'
+    // matches 0 rows because someone else checked the registration in first.
+    mockRegistrationRepo.update.mockResolvedValue({ affected: 0 });
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(mockRegistrationRepo.update).toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
   it('does not block check-in for unexpected statuses (e.g. PENDING)', async () => {
     mockRegistrationRepo.findOne.mockResolvedValue({
       id: 'reg-1',
@@ -127,6 +172,103 @@ describe('syncContestRegistrationOnVehicleCheckIn', () => {
       synced: false,
       previousStatus: ContestRegistrationStatus.PENDING,
     });
+    expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps registration CONFIRMED when the entry fee is unpaid', async () => {
+    mockContestRepo.findOne.mockResolvedValue({
+      id: 'contest-1',
+      status: ContestStatus.RUNNING,
+      startsAt: new Date(Date.now() - 60 * 60 * 1000),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      entryFee: 100000,
+    });
+    const registration = {
+      id: 'reg-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'PENDING_PAYMENT',
+    };
+    mockRegistrationRepo.findOne.mockResolvedValue(registration);
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(registration.status).toBe(ContestRegistrationStatus.CONFIRMED);
+    expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('skips the sync when the participant is banned from the contest', async () => {
+    mockContestRepo.findOne.mockResolvedValue({
+      id: 'contest-1',
+      providerId: 'provider-1',
+      status: ContestStatus.RUNNING,
+      startsAt: new Date(Date.now() - 60 * 60 * 1000),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      entryFee: 0,
+    });
+    mockRegistrationRepo.findOne.mockResolvedValue({
+      id: 'reg-1',
+      userId: 'customer-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'NOT_REQUIRED',
+    });
+    mockBanRepo.find.mockResolvedValue([
+      {
+        userId: 'customer-1',
+        providerId: 'provider-1',
+        contestId: 'contest-1',
+        scopeType: 'CONTEST',
+        liftedAt: null,
+        expiresAt: null,
+      },
+    ]);
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(mockRegistrationRepo.update).not.toHaveBeenCalled();
+    expect(mockAuditRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps registration CONFIRMED when the contest is not check-in ready', async () => {
+    mockContestRepo.findOne.mockResolvedValue({
+      id: 'contest-1',
+      status: ContestStatus.OPEN,
+      startsAt: new Date(Date.now() - 60 * 60 * 1000),
+      endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      entryFee: 0,
+    });
+    const registration = {
+      id: 'reg-1',
+      status: ContestRegistrationStatus.CONFIRMED,
+      paymentStatus: 'NOT_REQUIRED',
+    };
+    mockRegistrationRepo.findOne.mockResolvedValue(registration);
+
+    const result = await syncContestRegistrationOnVehicleCheckIn(contestBooking, {
+      staffUserId: 'staff-1',
+    });
+
+    expect(result).toEqual({
+      registrationId: 'reg-1',
+      synced: false,
+      previousStatus: ContestRegistrationStatus.CONFIRMED,
+    });
+    expect(registration.status).toBe(ContestRegistrationStatus.CONFIRMED);
     expect(mockRegistrationRepo.save).not.toHaveBeenCalled();
     expect(mockAuditRepo.save).not.toHaveBeenCalled();
   });

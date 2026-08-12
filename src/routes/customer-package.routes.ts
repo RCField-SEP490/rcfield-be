@@ -28,3 +28,11 @@ customerPackageRouter.get(
   authorize(UserRole.CUSTOMER),
   customerPackageController.getUsageHistory,
 );
+
+// POST /api/v1/customers/me/packages/:customerPackageId/repay
+customerPackageRouter.post(
+  '/customers/me/packages/:customerPackageId/repay',
+  authenticate,
+  authorize(UserRole.CUSTOMER),
+  customerPackageController.getRepayUrl,
+);

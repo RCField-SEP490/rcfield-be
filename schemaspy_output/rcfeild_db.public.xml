@@ -4,6 +4,51 @@
       <sequence increment="1" name="migrations_id_seq" startValue="1"/>
    </sequences>
    <tables>
+      <table name="achievement_definitions" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="160" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="badge_icon_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="title_label" nullable="true" remarks="" size="120" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="rule_code" nullable="false" remarks="" size="80" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="7" name="rule_config" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="8" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="9" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="achievement_definitions_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="achievement_definitions_code_key" unique="true">
+            <column ascending="true" name="code"/>
+         </index>
+      </table>
+      <table name="ai_analysis_logs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="ai_analysis_logs_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="ai_analysis_logs_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="period_from" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="period_to" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="status" nullable="false" remarks="" size="2147483647" type="ai_analysis_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="tokens_used" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="duration_ms" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="requested_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="ai_analysis_logs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_ai_analysis_logs_provider_month" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="requested_at"/>
+         </index>
+      </table>
       <table name="amenity_catalog" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="title" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
@@ -79,10 +124,11 @@
             <column ascending="true" name="booking_id"/>
          </index>
       </table>
-      <table name="bookings" numRows="6" remarks="" schema="public" type="TABLE">
+      <table name="bookings" numRows="41" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="booking_id" foreignKey="booking_participants_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="booking_participants"/>
             <child column="booking_id" foreignKey="booking_vehicles_booking_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="booking_vehicles"/>
+            <child column="booking_id" foreignKey="contest_registrations_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
             <child column="booking_id" foreignKey="disputes_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="disputes"/>
             <child column="booking_id" foreignKey="fnb_orders_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
             <child column="booking_id" foreignKey="notification_logs_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="notification_logs"/>
@@ -132,6 +178,11 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="24" name="customer_package_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="bookings_customer_package_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
          </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="25" name="completed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="26" name="review_dismissed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="27" name="contest_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_bookings_contest_id" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="bookings_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -149,6 +200,12 @@
             <column ascending="true" name="cafe_id"/>
             <column ascending="true" name="status"/>
             <column ascending="true" name="slot_start"/>
+         </index>
+         <index name="idx_bookings_completed_at" unique="false">
+            <column ascending="true" name="completed_at"/>
+         </index>
+         <index name="idx_bookings_contest_id" unique="false">
+            <column ascending="true" name="contest_id"/>
          </index>
          <index name="idx_bookings_customer_id" unique="false">
             <column ascending="true" name="customer_id"/>
@@ -227,29 +284,6 @@
             <column ascending="true" name="channel_type"/>
          </index>
       </table>
-      <table name="cafe_closures" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="cafe_closures_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="closed_date" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="reason" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="cafe_closures_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
-         </column>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <primaryKey column="id" sequenceNumberInPK="1"/>
-         <index name="cafe_closures_pkey" unique="true">
-            <column ascending="true" name="id"/>
-         </index>
-         <index name="idx_cafe_closures_cafe_id" unique="false">
-            <column ascending="true" name="cafe_id"/>
-         </index>
-         <index name="idx_cafe_closures_date" unique="true">
-            <column ascending="true" name="cafe_id"/>
-            <column ascending="true" name="closed_date"/>
-         </index>
-      </table>
       <table name="cafe_holiday_overrides" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
@@ -325,6 +359,8 @@
       <table name="cafe_track_configs" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="track_config_id" foreignKey="bookings_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="track_config_id" foreignKey="contest_matches_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+            <child column="track_config_id" foreignKey="race_records_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
          </column>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="cafe_track_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
@@ -354,55 +390,32 @@
          </index>
          <checkConstraint constraint="(((max_concurrent &gt; 0) OR (byoc_capacity &gt; 0)))" name="track_has_at_least_one_mode"/>
       </table>
-      <table name="cafe_widget_configs" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="cafe_widget_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
-         </column>
-         <column autoUpdated="false" defaultValue="'#1a73e8'::character varying" digits="0" id="2" name="primary_color" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="'BOTTOM_RIGHT'::widget_position_enum" digits="0" id="3" name="position" nullable="false" remarks="" size="2147483647" type="widget_position_enum" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="avatar_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="'Xin chào! Tôi có thể giúp gì cho bạn?'::text" digits="0" id="5" name="welcome_message" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="'[]'::jsonb" digits="0" id="6" name="quick_replies" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="greeting_message" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="true" digits="0" id="8" name="is_enabled" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="system_prompt" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="false" digits="0" id="12" name="full_page_enabled" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
-         <primaryKey column="id" sequenceNumberInPK="1"/>
-         <index name="cafe_widget_configs_pkey" unique="true">
-            <column ascending="true" name="id"/>
-         </index>
-         <index name="cafe_widget_configs_cafe_id_key" unique="true">
-            <column ascending="true" name="cafe_id"/>
-         </index>
-         <index name="idx_cafe_widget_configs_cafe_id" unique="false">
-            <column ascending="true" name="cafe_id"/>
-         </index>
-      </table>
-      <table name="cafes" numRows="4" remarks="" schema="public" type="TABLE">
+      <table name="cafes" numRows="6" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="cafe_id" foreignKey="ai_analysis_logs_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="ai_analysis_logs"/>
             <child column="cafe_id" foreignKey="bookings_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
             <child column="cafe_id" foreignKey="cafe_announcements_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_announcements"/>
-            <child column="cafe_id" foreignKey="cafe_closures_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_closures"/>
             <child column="cafe_id" foreignKey="fk_cafe_holiday_overrides_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafe_holiday_overrides"/>
             <child column="cafe_id" foreignKey="cafe_images_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafe_images"/>
             <child column="cafe_id" foreignKey="fk_cafe_pricing_rules_cafe" implied="false" onDeleteCascade="false" schema="public" table="cafe_pricing_rules"/>
             <child column="cafe_id" foreignKey="cafe_track_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafe_track_configs"/>
-            <child column="cafe_id" foreignKey="cafe_widget_configs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="cafe_widget_configs"/>
+            <child column="cafe_id" foreignKey="contest_cafes_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_cafes"/>
+            <child column="cafe_id" foreignKey="contest_matches_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+            <child column="checked_in_cafe_id" foreignKey="contest_registrations_checked_in_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="rental_cafe_id" foreignKey="contest_registrations_rental_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
             <child column="cafe_id" foreignKey="contests_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
             <child column="cafe_id" foreignKey="fk_customer_packages_cafe" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
             <child column="cafe_id" foreignKey="fk_holiday_dates_cafe" implied="false" onDeleteCascade="false" schema="public" table="holiday_dates"/>
             <child column="cafe_id" foreignKey="kb_chunks_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="kb_chunks"/>
             <child column="cafe_id" foreignKey="kb_documents_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="kb_documents"/>
+            <child column="cafe_id" foreignKey="FK_menu_categories_cafe" implied="false" onDeleteCascade="true" schema="public" table="menu_categories"/>
             <child column="cafe_id" foreignKey="menu_items_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="menu_items"/>
             <child column="cafe_id" foreignKey="packages_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="packages"/>
             <child column="cafe_id" foreignKey="promotions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotions"/>
+            <child column="cafe_id" foreignKey="race_records_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
             <child column="cafe_id" foreignKey="reviews_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="reviews"/>
             <child column="cafe_id" foreignKey="sessions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
             <child column="cafe_id" foreignKey="staff_cafe_assignments_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_cafe_assignments"/>
-            <child column="cafe_id" foreignKey="fk_staff_shifts_cafe" implied="false" onDeleteCascade="true" schema="public" table="staff_shifts"/>
             <child column="cafe_id" foreignKey="subscriptions_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="subscriptions"/>
             <child column="cafe_id" foreignKey="vehicle_catalogs_cafe_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicle_catalogs"/>
             <child column="cafe_id" foreignKey="vehicles_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicles"/>
@@ -433,9 +446,14 @@
          <column autoUpdated="false" defaultValue="'{}'::uuid[]" digits="0" id="22" name="amenity_ids" nullable="false" remarks="" size="2147483647" type="_uuid" typeCode="2003"/>
          <column autoUpdated="false" defaultValue="'{}'::text[]" digits="0" id="23" name="rules" nullable="false" remarks="" size="2147483647" type="_text" typeCode="2003"/>
          <column autoUpdated="false" defaultValue="'{}'::uuid[]" digits="0" id="24" name="track_types" nullable="false" remarks="" size="2147483647" type="_uuid" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="'{&quot;position&quot;: &quot;BOTTOM_RIGHT&quot;, &quot;avatarUrl&quot;: null, &quot;isEnabled&quot;: false, &quot;primaryColor&quot;: &quot;#2563EB&quot;, &quot;quickReplies&quot;: [], &quot;systemPrompt&quot;: null, &quot;welcomeMessage&quot;: &quot;Xin chào! Tôi có thể giúp gì cho bạn?&quot;, &quot;fullPageEnabled&quot;: false, &quot;greetingMessage&quot;: &quot;Xin chào! Tôi có thể giúp gì cho bạn?&quot;}'::jsonb" digits="0" id="25" name="widget_config" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="30" digits="0" id="26" name="max_advance_booking_days" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="cafes_pkey" unique="true">
             <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_cafes_amenity_ids_gin" unique="false">
+            <column ascending="true" name="amenity_ids"/>
          </index>
          <index name="idx_cafes_city_district" unique="false">
             <column ascending="true" name="city"/>
@@ -454,15 +472,317 @@
          <index name="idx_cafes_provider_id" unique="false">
             <column ascending="true" name="provider_id"/>
          </index>
+         <index name="IDX_cafes_slot_fee_rate" unique="false">
+            <column ascending="true" name="slot_fee_rate"/>
+         </index>
          <index name="idx_cafes_slug" unique="true">
             <column ascending="true" name="slug"/>
          </index>
          <index name="idx_cafes_status" unique="false">
             <column ascending="true" name="status"/>
          </index>
+         <index name="IDX_cafes_track_types_gin" unique="false">
+            <column ascending="true" name="track_types"/>
+         </index>
+         <checkConstraint constraint="(((max_advance_booking_days &gt;= 1) AND (max_advance_booking_days &lt;= 365)))" name="chk_cafes_max_advance_booking_days"/>
+      </table>
+      <table name="contest_audit_logs" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_audit_logs_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="registration_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_audit_logs_registration_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="match_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_audit_logs_match_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="actor_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_audit_logs_actor_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="actor_role" nullable="true" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="event_type" nullable="false" remarks="" size="80" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="before_json" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="after_json" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="reason" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="10" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_audit_logs_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_audit_logs_contest_created" unique="false">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="false" name="created_at"/>
+         </index>
+         <index name="idx_contest_audit_logs_event_type" unique="false">
+            <column ascending="true" name="event_type"/>
+         </index>
+         <index name="idx_contest_audit_logs_match" unique="false">
+            <column ascending="true" name="match_id"/>
+         </index>
+         <index name="idx_contest_audit_logs_registration" unique="false">
+            <column ascending="true" name="registration_id"/>
+         </index>
+      </table>
+      <table name="contest_bans" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_bans_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="contest_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_bans_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_bans_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'CONTEST'::character varying" digits="0" id="4" name="scope_type" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="reason" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="6" name="evidence" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_bans_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="expires_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="lifted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="lifted_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_bans_lifted_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="lift_reason" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_bans_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_bans_active_lookup" unique="false">
+            <column ascending="true" name="user_id"/>
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="lifted_at"/>
+            <column ascending="true" name="expires_at"/>
+         </index>
+         <index name="idx_contest_bans_contest" unique="false">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="false" name="created_at"/>
+         </index>
+         <index name="uq_contest_bans_active_scope" unique="true">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="user_id"/>
+         </index>
+      </table>
+      <table name="contest_cafes" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_cafes_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_cafes_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'HOST'::character varying" digits="0" id="3" name="role" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="capacity_override" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="5" name="check_in_enabled" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="6" name="display_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_cafes_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_cafes_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="idx_contest_cafes_unique" unique="true">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="contest_fee_orders" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_fee_order_id" foreignKey="featured_popups_contest_fee_order_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="featured_popups"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_fee_orders_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_fee_orders_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="plan_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_fee_orders_plan_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_fee_plans"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'PENDING_PAYMENT'::contest_fee_order_status_enum" digits="0" id="4" name="status" nullable="false" remarks="" size="2147483647" type="contest_fee_order_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="5" name="amount" nullable="false" remarks="" size="12" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="6" name="featured_days" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="transfer_reference" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="transfer_date" nullable="true" remarks="" size="13" type="date" typeCode="91"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="9" name="transfer_amount" nullable="true" remarks="" size="12" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="admin_notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="reviewed_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_fee_orders_reviewed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="12" name="reviewed_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="13" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="14" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_fee_orders_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_fee_orders_active" unique="true">
+            <column ascending="true" name="contest_id"/>
+         </index>
+         <index name="idx_contest_fee_orders_provider" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+      </table>
+      <table name="contest_fee_plans" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="plan_id" foreignKey="contest_fee_orders_plan_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_fee_orders"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="40" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="120" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="price" nullable="false" remarks="" size="12" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="5" name="featured_days" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="6" name="display_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="7" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_fee_plans_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="contest_fee_plans_code_key" unique="true">
+            <column ascending="true" name="code"/>
+         </index>
+      </table>
+      <table name="contest_formats" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_format_id" foreignKey="contest_templates_contest_format_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_templates"/>
+            <child column="contest_format_id" foreignKey="fk_contests_contest_format_id" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="80" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="160" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="4" name="supports_bracket" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="5" name="supports_time_attack" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="6" name="supports_multi_round" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="7" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="8" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="9" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="12" name="is_released" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_formats_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="contest_formats_code_key" unique="true">
+            <column ascending="true" name="code"/>
+         </index>
+      </table>
+      <table name="contest_match_participants" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_match_participant_id" foreignKey="race_records_contest_match_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="match_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_match_participants_match_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_matches"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="registration_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_match_participants_registration_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="slot_no" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="lane" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="grid_position" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="seed_no" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="'READY'::character varying" digits="0" id="7" name="status" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="8" name="score" nullable="true" remarks="" size="10" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="finish_position" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="best_lap_ms" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="total_time_ms" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="12" name="is_winner" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="result_note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="14" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="15" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="16" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="3" id="17" name="best_lap_seconds" nullable="true" remarks="" size="10" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="3" id="18" name="total_time_seconds" nullable="true" remarks="" size="10" type="numeric" typeCode="2"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_match_participants_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_match_participants_registration" unique="true">
+            <column ascending="true" name="match_id"/>
+            <column ascending="true" name="registration_id"/>
+         </index>
+         <index name="idx_match_participants_registration_id" unique="false">
+            <column ascending="true" name="registration_id"/>
+         </index>
+         <index name="idx_match_participants_slot" unique="true">
+            <column ascending="true" name="match_id"/>
+            <column ascending="true" name="slot_no"/>
+         </index>
+      </table>
+      <table name="contest_matches" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="match_id" foreignKey="contest_audit_logs_match_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_audit_logs"/>
+            <child column="match_id" foreignKey="contest_match_participants_match_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_match_participants"/>
+            <child column="next_match_id" foreignKey="contest_matches_next_match_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+            <child column="match_id" foreignKey="race_records_match_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_matches_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_matches_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="track_config_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_matches_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_track_configs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="round_no" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="match_no" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="name" nullable="true" remarks="" size="120" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="match_type" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'DRAFT'::character varying" digits="0" id="8" name="status" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="scheduled_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="started_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="11" name="ended_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="next_match_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_matches_next_match_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="13" name="advancement_rule" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="14" name="result_summary" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="15" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="16" name="created_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_matches_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="17" name="decided_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_matches_decided_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="18" name="decided_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="19" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="20" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_matches_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_matches_contest_status" unique="false">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="idx_contest_matches_next_match" unique="false">
+            <column ascending="true" name="next_match_id"/>
+         </index>
+         <index name="idx_contest_matches_unique" unique="true">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="round_no"/>
+            <column ascending="true" name="match_no"/>
+         </index>
       </table>
       <table name="contest_registrations" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="registration_id" foreignKey="contest_audit_logs_registration_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_audit_logs"/>
+            <child column="registration_id" foreignKey="contest_match_participants_registration_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_match_participants"/>
+            <child column="contest_registration_id" foreignKey="payment_transactions_contest_registration_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_transactions"/>
+         </column>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="contest_registrations_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
          </column>
@@ -479,21 +799,162 @@
          <column autoUpdated="false" defaultValue="'PENDING'::contest_registration_status_enum" digits="0" id="6" name="status" nullable="false" remarks="" size="2147483647" type="contest_registration_status_enum" typeCode="12"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'CUSTOMER'::character varying" digits="0" id="9" name="participant_role_snapshot" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="booking_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="check_in_code" nullable="true" remarks="" size="64" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="checked_in_cafe_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_checked_in_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="checked_in_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_checked_in_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="14" name="checked_in_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="15" name="cancelled_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_cancelled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="16" name="cancelled_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="17" name="cancellation_reason" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'NOT_REQUIRED'::character varying" digits="0" id="18" name="payment_status" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="19" name="entry_fee_amount" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="20" name="entry_fee_due_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="21" name="entry_fee_marked_paid_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_entry_fee_marked_paid_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="22" name="entry_fee_marked_paid_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="23" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="24" name="rental_catalog_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_rental_catalog_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="vehicle_catalogs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="25" name="rental_cafe_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_registrations_rental_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="contest_registrations_pkey" unique="true">
             <column ascending="true" name="id"/>
          </index>
+         <index name="idx_contest_registrations_booking_id" unique="false">
+            <column ascending="true" name="booking_id"/>
+         </index>
+         <index name="idx_contest_registrations_check_in_code" unique="true">
+            <column ascending="true" name="check_in_code"/>
+         </index>
          <index name="idx_contest_registrations_contest_id" unique="false">
             <column ascending="true" name="contest_id"/>
+         </index>
+         <index name="idx_contest_registrations_contest_status" unique="false">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="idx_contest_registrations_rental_catalog" unique="false">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="rental_catalog_id"/>
          </index>
          <index name="idx_contest_registrations_unique" unique="true">
             <column ascending="true" name="contest_id"/>
             <column ascending="true" name="user_id"/>
          </index>
+         <index name="idx_contest_registrations_user_id" unique="false">
+            <column ascending="true" name="user_id"/>
+         </index>
+         <index name="uq_contest_registrations_check_in_code" unique="true">
+            <column ascending="true" name="check_in_code"/>
+         </index>
+      </table>
+      <table name="contest_staff_assignments" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_staff_assignments_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="staff_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_staff_assignments_staff_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="assigned_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_staff_assignments_assigned_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="assigned_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_staff_assignments_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_contest_staff_assignments_staff" unique="false">
+            <column ascending="true" name="staff_id"/>
+            <column ascending="true" name="contest_id"/>
+         </index>
+         <index name="idx_contest_staff_assignments_unique" unique="true">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="staff_id"/>
+         </index>
+      </table>
+      <table name="contest_templates" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_template_id" foreignKey="fk_contests_contest_template_id" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="contest_type_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_templates_contest_type_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_types"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="contest_format_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="contest_templates_contest_format_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_formats"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="code" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="name" nullable="false" remarks="" size="160" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="6" name="default_config" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="'[]'::jsonb" digits="0" id="7" name="vehicle_policy_options" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="8" name="feature_flags" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="9" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="10" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="11" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="12" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_templates_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="contest_templates_code_key" unique="true">
+            <column ascending="true" name="code"/>
+         </index>
+         <index name="idx_contest_templates_unique_mapping" unique="true">
+            <column ascending="true" name="contest_type_id"/>
+            <column ascending="true" name="contest_format_id"/>
+            <column ascending="true" name="code"/>
+         </index>
+      </table>
+      <table name="contest_types" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_type_id" foreignKey="contest_templates_contest_type_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_templates"/>
+            <child column="contest_type_id" foreignKey="fk_contests_contest_type_id" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="80" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="160" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="4" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="5" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="6" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="contest_types_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="contest_types_code_key" unique="true">
+            <column ascending="true" name="code"/>
+         </index>
       </table>
       <table name="contests" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="contest_id" foreignKey="fk_bookings_contest_id" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
+            <child column="contest_id" foreignKey="contest_audit_logs_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_audit_logs"/>
+            <child column="contest_id" foreignKey="contest_bans_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_bans"/>
+            <child column="contest_id" foreignKey="contest_cafes_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_cafes"/>
+            <child column="contest_id" foreignKey="contest_fee_orders_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_fee_orders"/>
+            <child column="contest_id" foreignKey="contest_matches_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_matches"/>
             <child column="contest_id" foreignKey="contest_registrations_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="contest_id" foreignKey="contest_staff_assignments_contest_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_staff_assignments"/>
+            <child column="contest_id" foreignKey="featured_popups_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="featured_popups"/>
+            <child column="contest_id" foreignKey="race_records_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
          </column>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="contests_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
@@ -512,6 +973,26 @@
          </column>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="12" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="13" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="14" name="provider_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_contests_provider_id" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="15" name="track_type_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_contests_track_type_id" implied="false" onDeleteCascade="false" schema="public" table="track_types"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="16" name="registration_opens_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="17" name="registration_closes_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="18" name="banner_image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="19" name="contest_type_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_contests_contest_type_id" implied="false" onDeleteCascade="false" schema="public" table="contest_types"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="20" name="contest_format_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_contests_contest_format_id" implied="false" onDeleteCascade="false" schema="public" table="contest_formats"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="21" name="contest_template_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="fk_contests_contest_template_id" implied="false" onDeleteCascade="false" schema="public" table="contest_templates"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="22" name="config" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="23" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="contests_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -519,8 +1000,28 @@
          <index name="idx_contests_cafe_id" unique="false">
             <column ascending="true" name="cafe_id"/>
          </index>
+         <index name="idx_contests_provider_status" unique="false">
+            <column ascending="true" name="provider_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="idx_contests_registration_window" unique="false">
+            <column ascending="true" name="registration_opens_at"/>
+            <column ascending="true" name="registration_closes_at"/>
+         </index>
          <index name="idx_contests_status" unique="false">
             <column ascending="true" name="status"/>
+         </index>
+         <index name="idx_contests_status_registration_closes_at" unique="false">
+            <column ascending="true" name="status"/>
+            <column ascending="true" name="registration_closes_at"/>
+         </index>
+         <index name="idx_contests_status_starts" unique="false">
+            <column ascending="true" name="status"/>
+            <column ascending="true" name="starts_at"/>
+         </index>
+         <index name="idx_contests_type_format" unique="false">
+            <column ascending="true" name="contest_type_id"/>
+            <column ascending="true" name="contest_format_id"/>
          </index>
       </table>
       <table name="customer_packages" remarks="" schema="public" type="TABLE">
@@ -584,6 +1085,26 @@
          </index>
          <index name="idx_customer_vehicles_customer_id" unique="false">
             <column ascending="true" name="customer_id"/>
+         </index>
+      </table>
+      <table name="damage_line_items" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="inspection_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="damage_line_items_inspection_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="inspections"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="part_type" nullable="false" remarks="" size="2147483647" type="damage_part_type" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="custom_part_name" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="4" name="parts_price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="0" digits="2" id="5" name="labor_price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="damage_line_items_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_damage_line_items_inspection_id" unique="false">
+            <column ascending="true" name="inspection_id"/>
          </index>
       </table>
       <table name="disputes" remarks="" schema="public" type="TABLE">
@@ -681,7 +1202,48 @@
             <column ascending="true" name="entity_id"/>
          </index>
       </table>
-      <table name="fnb_order_items" remarks="" schema="public" type="TABLE">
+      <table name="featured_popups" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="uuid_generate_v4()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="title" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="subtitle" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="cta_label" nullable="false" remarks="" size="80" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="cta_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="contest_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="featured_popups_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'EXPLORE'::character varying" digits="0" id="7" name="placement" nullable="false" remarks="" size="40" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'ALL'::character varying" digits="0" id="8" name="audience_scope" nullable="false" remarks="" size="40" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="starts_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="ends_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="11" name="is_active" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="100" digits="0" id="12" name="priority" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="created_by" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="featured_popups_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="14" name="updated_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="featured_popups_updated_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="15" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="16" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'APPROVED'::featured_popup_review_status_enum" digits="0" id="17" name="review_status" nullable="false" remarks="" size="2147483647" type="featured_popup_review_status_enum" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="18" name="contest_fee_order_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="featured_popups_contest_fee_order_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_fee_orders"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="19" name="review_notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="featured_popups_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_featured_popups_active_window" unique="false">
+            <column ascending="true" name="placement"/>
+            <column ascending="true" name="is_active"/>
+            <column ascending="true" name="starts_at"/>
+            <column ascending="true" name="ends_at"/>
+            <column ascending="false" name="priority"/>
+         </index>
+      </table>
+      <table name="fnb_order_items" numRows="27" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="menu_item_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="fnb_order_items_menu_item_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="menu_items"/>
@@ -693,12 +1255,19 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="fnb_order_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="2" id="7" name="subtotal" nullable="true" remarks="" size="15" type="numeric" typeCode="2"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="notes" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="menu_item_variant_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_fnb_order_items_variant" implied="false" onDeleteCascade="false" schema="public" table="menu_item_variants"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="variant_name_snapshot" nullable="true" remarks="" size="80" type="varchar" typeCode="12"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="fnb_order_items_pkey" unique="true">
             <column ascending="true" name="id"/>
          </index>
          <index name="IDX_fnb_order_items_fnb_order_id" unique="false">
             <column ascending="true" name="fnb_order_id"/>
+         </index>
+         <index name="IDX_fnb_order_items_variant_id" unique="false">
+            <column ascending="true" name="menu_item_variant_id"/>
          </index>
          <checkConstraint constraint="((quantity &gt; 0))" name="fnb_order_items_quantity_check"/>
       </table>
@@ -799,7 +1368,7 @@
             <column ascending="true" name="status"/>
          </index>
       </table>
-      <table name="inspection_checklists" remarks="" schema="public" type="TABLE">
+      <table name="inspection_checklists" numRows="142" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="inspection_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="inspection_checklists_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspections"/>
@@ -818,7 +1387,7 @@
             <column ascending="true" name="inspection_id"/>
          </index>
       </table>
-      <table name="inspection_photos" remarks="" schema="public" type="TABLE">
+      <table name="inspection_photos" numRows="78" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="inspection_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="inspection_photos_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspections"/>
@@ -838,8 +1407,9 @@
             <column ascending="true" name="inspection_id"/>
          </index>
       </table>
-      <table name="inspections" remarks="" schema="public" type="TABLE">
+      <table name="inspections" numRows="36" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="inspection_id" foreignKey="damage_line_items_inspection_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="damage_line_items"/>
             <child column="inspection_id" foreignKey="inspection_checklists_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspection_checklists"/>
             <child column="inspection_id" foreignKey="inspection_photos_inspection_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="inspection_photos"/>
          </column>
@@ -925,9 +1495,87 @@
             <column ascending="true" name="status"/>
          </index>
       </table>
-      <table name="menu_items" remarks="" schema="public" type="TABLE">
+      <table name="menu_categories" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="category_id" foreignKey="FK_menu_items_category" implied="false" onDeleteCascade="false" schema="public" table="menu_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_menu_categories_cafe" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="3" name="display_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="5" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="PK_menu_categories" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_menu_categories_cafe_id" unique="false">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="UQ_menu_categories_cafe_name" unique="true">
+            <column ascending="true" name="cafe_id"/>
+         </index>
+      </table>
+      <table name="menu_item_components" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="combo_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_mic_combo" implied="false" onDeleteCascade="true" schema="public" table="menu_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="item_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_mic_item" implied="false" onDeleteCascade="true" schema="public" table="menu_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="1" digits="0" id="3" name="quantity" nullable="false" remarks="" size="5" type="int2" typeCode="5"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="variant_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_menu_item_components_variant" implied="false" onDeleteCascade="false" schema="public" table="menu_item_variants"/>
+         </column>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="PK_menu_item_components" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_mic_combo_id" unique="false">
+            <column ascending="true" name="combo_id"/>
+         </index>
+      </table>
+      <table name="menu_item_variants" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="menu_item_variant_id" foreignKey="FK_fnb_order_items_variant" implied="false" onDeleteCascade="false" schema="public" table="fnb_order_items"/>
+            <child column="variant_id" foreignKey="FK_menu_item_components_variant" implied="false" onDeleteCascade="false" schema="public" table="menu_item_components"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="menu_item_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_menu_item_variants_item" implied="false" onDeleteCascade="true" schema="public" table="menu_items"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="80" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="3" name="price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="0" digits="0" id="4" name="display_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="5" name="is_available" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="PK_menu_item_variants" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_menu_item_variants_item_available" unique="false">
+            <column ascending="true" name="menu_item_id"/>
+            <column ascending="true" name="is_available"/>
+         </index>
+         <index name="IDX_menu_item_variants_item_order" unique="false">
+            <column ascending="true" name="menu_item_id"/>
+            <column ascending="true" name="display_order"/>
+         </index>
+         <index name="UQ_menu_item_variants_item_name" unique="true">
+            <column ascending="true" name="menu_item_id"/>
+         </index>
+         <checkConstraint constraint="((price &gt;= (0)::numeric))" name="menu_item_variants_price_check"/>
+      </table>
+      <table name="menu_items" numRows="22" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="menu_item_id" foreignKey="fnb_order_items_menu_item_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_order_items"/>
+            <child column="combo_id" foreignKey="FK_mic_combo" implied="false" onDeleteCascade="true" schema="public" table="menu_item_components"/>
+            <child column="item_id" foreignKey="FK_mic_item" implied="false" onDeleteCascade="true" schema="public" table="menu_item_components"/>
+            <child column="menu_item_id" foreignKey="FK_menu_item_variants_item" implied="false" onDeleteCascade="true" schema="public" table="menu_item_variants"/>
          </column>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="menu_items_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
@@ -935,12 +1583,15 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="255" type="varchar" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="description" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="2" id="4" name="price" nullable="false" remarks="" size="15" type="numeric" typeCode="2"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="category" nullable="true" remarks="" size="100" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="true" digits="0" id="7" name="is_available" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="image_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="true" digits="0" id="6" name="is_available" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="9" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="false" digits="0" id="10" name="is_combo" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="category_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_menu_items_category" implied="false" onDeleteCascade="false" schema="public" table="menu_categories"/>
+         </column>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="menu_items_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -951,6 +1602,9 @@
          </index>
          <index name="idx_menu_items_cafe_id" unique="false">
             <column ascending="true" name="cafe_id"/>
+         </index>
+         <index name="IDX_menu_items_category_id" unique="false">
+            <column ascending="true" name="category_id"/>
          </index>
       </table>
       <table name="migrations" remarks="" schema="public" type="TABLE">
@@ -992,7 +1646,7 @@
             <column ascending="true" name="user_id"/>
          </index>
       </table>
-      <table name="notifications" remarks="" schema="public" type="TABLE">
+      <table name="notifications" numRows="28" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="notifications_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
@@ -1003,6 +1657,7 @@
          <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="read_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="data" nullable="true" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="notifications_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -1081,7 +1736,7 @@
             <column ascending="true" name="token"/>
          </index>
       </table>
-      <table name="payment_components" numRows="2" remarks="" schema="public" type="TABLE">
+      <table name="payment_components" numRows="62" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="payment_components_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
@@ -1142,7 +1797,7 @@
             <column ascending="true" name="id"/>
          </index>
       </table>
-      <table name="payment_transactions" numRows="7" remarks="" schema="public" type="TABLE">
+      <table name="payment_transactions" numRows="60" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="booking_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="payment_transactions_booking_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
@@ -1163,6 +1818,10 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="customer_package_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="payment_transactions_customer_package_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
          </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="14" name="contest_registration_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="payment_transactions_contest_registration_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'BOOKING'::character varying" digits="0" id="15" name="subject_type" nullable="false" remarks="" size="40" type="varchar" typeCode="12"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="payment_transactions_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -1170,16 +1829,22 @@
          <index name="idx_payment_transactions_booking_id" unique="false">
             <column ascending="true" name="booking_id"/>
          </index>
+         <index name="idx_payment_transactions_contest_registration_id" unique="false">
+            <column ascending="true" name="contest_registration_id"/>
+         </index>
          <index name="IDX_payment_transactions_customer_package_id" unique="false">
             <column ascending="true" name="customer_package_id"/>
          </index>
          <index name="idx_payment_transactions_gateway_txn" unique="false">
             <column ascending="true" name="gateway_transaction_id"/>
          </index>
+         <index name="idx_payment_transactions_subject_type" unique="false">
+            <column ascending="true" name="subject_type"/>
+         </index>
          <index name="UQ_payment_transactions_txn_ref" unique="true">
             <column ascending="true" name="txn_ref"/>
          </index>
-         <checkConstraint constraint="(((((booking_id IS NOT NULL))::integer + ((customer_package_id IS NOT NULL))::integer) = 1))" name="chk_payment_tx_source"/>
+         <checkConstraint constraint="((((((booking_id IS NOT NULL))::integer + ((customer_package_id IS NOT NULL))::integer) + ((contest_registration_id IS NOT NULL))::integer) = 1))" name="chk_payment_tx_source"/>
       </table>
       <table name="promotion_usages" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
@@ -1211,7 +1876,7 @@
             <column ascending="true" name="booking_id"/>
          </index>
       </table>
-      <table name="promotions" remarks="" schema="public" type="TABLE">
+      <table name="promotions" numRows="1" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="promotion_id" foreignKey="bookings_promotion_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
             <child column="promotion_id" foreignKey="promotion_usages_promotion_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotion_usages"/>
@@ -1246,6 +1911,10 @@
          <index name="promotions_pkey" unique="true">
             <column ascending="true" name="id"/>
          </index>
+         <index name="IDX_promotions_browse_active" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="false" name="starts_at"/>
+         </index>
          <index name="idx_promotions_cafe_code" unique="true">
             <column ascending="true" name="cafe_id"/>
             <column ascending="true" name="code"/>
@@ -1257,7 +1926,7 @@
             <column ascending="true" name="expires_at"/>
          </index>
       </table>
-      <table name="provider_profiles" remarks="" schema="public" type="TABLE">
+      <table name="provider_profiles" numRows="2" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="provider_profiles_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
@@ -1271,9 +1940,21 @@
          <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="null" digits="6" id="10" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="business_type" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'[]'::jsonb" digits="0" id="12" name="kyc_documents" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="13" name="kyc_submitted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="14" name="tax_code" nullable="true" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="15" name="business_email" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="16" name="business_legal_name" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="17" name="business_address" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="18" name="tax_status" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="19" name="tax_verified_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="provider_profiles_pkey" unique="true">
             <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_provider_profiles_tax_code" unique="true">
+            <column ascending="true" name="tax_code"/>
          </index>
          <index name="provider_profiles_user_id_key" unique="true">
             <column ascending="true" name="user_id"/>
@@ -1309,7 +1990,97 @@
             <column ascending="true" name="status"/>
          </index>
       </table>
-      <table name="refresh_tokens" numRows="161" remarks="" schema="public" type="TABLE">
+      <table name="push_tokens" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="uuid_generate_v4()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="FK_push_tokens_user" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="token" nullable="false" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="platform" nullable="true" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="device_id" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="device_name" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="app_version" nullable="true" remarks="" size="50" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="last_seen_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="revoked_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="10" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="PK_push_tokens" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="IDX_push_tokens_user_revoked" unique="false">
+            <column ascending="true" name="user_id"/>
+            <column ascending="true" name="revoked_at"/>
+         </index>
+         <index name="UQ_push_tokens_token" unique="true">
+            <column ascending="true" name="token"/>
+         </index>
+      </table>
+      <table name="race_records" remarks="" schema="public" type="TABLE">
+         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_cafe_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="track_config_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_track_config_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_track_configs"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="contest_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_contest_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="6" name="match_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_match_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="7" name="contest_match_participant_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_contest_match_participant_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_match_participants"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="8" name="session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
+         </column>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="vehicle_source" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="source_type" nullable="false" remarks="" size="30" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="'PENDING'::character varying" digits="0" id="11" name="verification_status" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="best_lap_ms" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="total_time_ms" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="2" id="14" name="score" nullable="true" remarks="" size="10" type="numeric" typeCode="2"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="15" name="finish_position" nullable="true" remarks="" size="10" type="int4" typeCode="4"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="16" name="recorded_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="17" name="verified_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="18" name="verified_by" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <parent column="id" foreignKey="race_records_verified_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
+         </column>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="19" name="metadata" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="20" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="now()" digits="6" id="21" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <primaryKey column="id" sequenceNumberInPK="1"/>
+         <index name="race_records_pkey" unique="true">
+            <column ascending="true" name="id"/>
+         </index>
+         <index name="idx_race_records_contest_participant_active" unique="true">
+            <column ascending="true" name="contest_match_participant_id"/>
+         </index>
+         <index name="idx_race_records_contest_source" unique="false">
+            <column ascending="true" name="contest_id"/>
+            <column ascending="true" name="match_id"/>
+         </index>
+         <index name="idx_race_records_driver_time" unique="false">
+            <column ascending="true" name="user_id"/>
+            <column ascending="false" name="recorded_at"/>
+         </index>
+         <index name="idx_race_records_leaderboard" unique="false">
+            <column ascending="true" name="verification_status"/>
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="track_config_id"/>
+            <column ascending="true" name="vehicle_source"/>
+            <column ascending="true" name="best_lap_ms"/>
+         </index>
+      </table>
+      <table name="refresh_tokens" numRows="205" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="user_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="refresh_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="users"/>
@@ -1343,6 +2114,11 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="comment" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
          <column autoUpdated="false" defaultValue="true" digits="0" id="6" name="is_visible" nullable="false" remarks="" size="1" type="bool" typeCode="-7"/>
          <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'VISIBLE'::character varying" digits="0" id="8" name="status" nullable="false" remarks="" size="20" type="varchar" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="vehicle_score" nullable="true" remarks="" size="5" type="int2" typeCode="5"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="staff_score" nullable="true" remarks="" size="5" type="int2" typeCode="5"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="11" name="facility_score" nullable="true" remarks="" size="5" type="int2" typeCode="5"/>
+         <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="note" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="reviews_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -1354,6 +2130,13 @@
             <column ascending="true" name="cafe_id"/>
             <column ascending="true" name="is_visible"/>
             <column ascending="false" name="created_at"/>
+         </index>
+         <index name="idx_reviews_cafe_status" unique="false">
+            <column ascending="true" name="cafe_id"/>
+            <column ascending="true" name="status"/>
+         </index>
+         <index name="idx_reviews_customer_id" unique="false">
+            <column ascending="true" name="customer_id"/>
          </index>
          <index name="reviews_booking_id_key" unique="true">
             <column ascending="true" name="booking_id"/>
@@ -1388,7 +2171,7 @@
             <column ascending="true" name="session_id"/>
          </index>
       </table>
-      <table name="session_vehicles" remarks="" schema="public" type="TABLE">
+      <table name="session_vehicles" numRows="25" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="session_vehicle_id" foreignKey="inspections_session_vehicle_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="inspections"/>
          </column>
@@ -1422,7 +2205,7 @@
             <column ascending="true" name="session_id"/>
          </index>
       </table>
-      <table name="sessions" remarks="" schema="public" type="TABLE">
+      <table name="sessions" numRows="25" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="session_id" foreignKey="extension_proposals_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="extension_proposals"/>
             <child column="session_id" foreignKey="fnb_orders_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
@@ -1431,6 +2214,7 @@
             <child column="session_id" foreignKey="notification_logs_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="notification_logs"/>
             <child column="session_id" foreignKey="payment_components_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_components"/>
             <child column="session_id" foreignKey="payment_transactions_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="payment_transactions"/>
+            <child column="session_id" foreignKey="race_records_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
             <child column="session_id" foreignKey="session_participants_session_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="session_participants"/>
             <child column="session_id" foreignKey="session_vehicles_session_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="session_vehicles"/>
             <child column="session_id" foreignKey="trust_score_logs_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
@@ -1468,50 +2252,6 @@
          </index>
          <index name="idx_sessions_status" unique="false">
             <column ascending="true" name="status"/>
-         </index>
-      </table>
-      <table name="shift_positions" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <child column="position_id" foreignKey="staff_shifts_position_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_shifts"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="shift_positions_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="120" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="3" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="4" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="5" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <primaryKey column="id" sequenceNumberInPK="1"/>
-         <index name="shift_positions_pkey" unique="true">
-            <column ascending="true" name="id"/>
-         </index>
-         <index name="idx_shift_positions_provider_name_active" unique="true">
-            <column ascending="true" name="provider_id"/>
-         </index>
-      </table>
-      <table name="shift_time_presets" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="fk_shift_time_presets_provider" implied="false" onDeleteCascade="true" schema="public" table="users"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="label" nullable="false" remarks="" size="120" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="3" name="start_time" nullable="false" remarks="" size="15" type="time" typeCode="92"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="4" name="end_time" nullable="false" remarks="" size="15" type="time" typeCode="92"/>
-         <column autoUpdated="false" defaultValue="0" digits="0" id="5" name="sort_order" nullable="false" remarks="" size="10" type="int4" typeCode="4"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="6" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="7" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="8" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <primaryKey column="id" sequenceNumberInPK="1"/>
-         <index name="shift_time_presets_pkey" unique="true">
-            <column ascending="true" name="id"/>
-         </index>
-         <index name="idx_shift_time_presets_provider_label_active" unique="true">
-            <column ascending="true" name="provider_id"/>
-            <column ascending="true" name="label"/>
-         </index>
-         <index name="idx_shift_time_presets_provider_sort" unique="false">
-            <column ascending="true" name="provider_id"/>
-            <column ascending="true" name="sort_order"/>
          </index>
       </table>
       <table name="staff_cafe_assignments" remarks="" schema="public" type="TABLE">
@@ -1555,43 +2295,6 @@
          </index>
          <index name="idx_staff_invite_tokens_user_id" unique="false">
             <column ascending="true" name="user_id"/>
-         </index>
-      </table>
-      <table name="staff_shifts" remarks="" schema="public" type="TABLE">
-         <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="provider_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="staff_shifts_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="position_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="staff_shifts_position_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="shift_positions"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="3" name="staff_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="staff_shifts_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="users"/>
-         </column>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="4" name="shift_date" nullable="false" remarks="" size="13" type="date" typeCode="91"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="5" name="shift_label" nullable="true" remarks="" size="120" type="varchar" typeCode="12"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="6" name="start_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
-         <column autoUpdated="false" defaultValue="null" digits="6" id="7" name="end_time" nullable="true" remarks="" size="15" type="time" typeCode="92"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="8" name="created_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="now()" digits="6" id="9" name="updated_at" nullable="false" remarks="" size="35" type="timestamptz" typeCode="93"/>
-         <column autoUpdated="false" defaultValue="null" digits="0" id="10" name="cafe_id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
-            <parent column="id" foreignKey="fk_staff_shifts_cafe" implied="false" onDeleteCascade="true" schema="public" table="cafes"/>
-         </column>
-         <primaryKey column="id" sequenceNumberInPK="1"/>
-         <index name="staff_shifts_pkey" unique="true">
-            <column ascending="true" name="id"/>
-         </index>
-         <index name="idx_staff_shifts_cell_staff" unique="false">
-            <column ascending="true" name="provider_id"/>
-            <column ascending="true" name="cafe_id"/>
-            <column ascending="true" name="position_id"/>
-            <column ascending="true" name="shift_date"/>
-            <column ascending="true" name="staff_id"/>
-         </index>
-         <index name="idx_staff_shifts_provider_cafe_week" unique="false">
-            <column ascending="true" name="provider_id"/>
-            <column ascending="true" name="cafe_id"/>
-            <column ascending="true" name="shift_date"/>
          </index>
       </table>
       <table name="subscription_plans" remarks="" schema="public" type="TABLE">
@@ -1651,6 +2354,7 @@
       <table name="track_types" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <child column="track_type_id" foreignKey="cafe_track_configs_track_type_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_track_configs"/>
+            <child column="track_type_id" foreignKey="fk_contests_track_type_id" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
          </column>
          <column autoUpdated="false" defaultValue="null" digits="0" id="1" name="code" nullable="false" remarks="" size="50" type="varchar" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="2" name="name" nullable="false" remarks="" size="100" type="varchar" typeCode="12"/>
@@ -1698,16 +2402,31 @@
             <column ascending="true" name="user_id"/>
          </index>
       </table>
-      <table name="users" numRows="5" remarks="" schema="public" type="TABLE">
+      <table name="users" numRows="14" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="provider_id" foreignKey="ai_analysis_logs_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="ai_analysis_logs"/>
             <child column="user_id" foreignKey="booking_participants_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="booking_participants"/>
             <child column="cancelled_by" foreignKey="bookings_cancelled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
             <child column="customer_id" foreignKey="bookings_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="bookings"/>
             <child column="created_by" foreignKey="cafe_announcements_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_announcements"/>
-            <child column="created_by" foreignKey="cafe_closures_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafe_closures"/>
             <child column="provider_id" foreignKey="cafes_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="cafes"/>
+            <child column="actor_id" foreignKey="contest_audit_logs_actor_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_audit_logs"/>
+            <child column="created_by" foreignKey="contest_bans_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_bans"/>
+            <child column="lifted_by" foreignKey="contest_bans_lifted_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_bans"/>
+            <child column="provider_id" foreignKey="contest_bans_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_bans"/>
+            <child column="user_id" foreignKey="contest_bans_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_bans"/>
+            <child column="provider_id" foreignKey="contest_fee_orders_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_fee_orders"/>
+            <child column="reviewed_by" foreignKey="contest_fee_orders_reviewed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_fee_orders"/>
+            <child column="created_by" foreignKey="contest_matches_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+            <child column="decided_by" foreignKey="contest_matches_decided_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_matches"/>
+            <child column="cancelled_by" foreignKey="contest_registrations_cancelled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="checked_in_by" foreignKey="contest_registrations_checked_in_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="entry_fee_marked_paid_by" foreignKey="contest_registrations_entry_fee_marked_paid_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
             <child column="user_id" foreignKey="contest_registrations_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
+            <child column="assigned_by" foreignKey="contest_staff_assignments_assigned_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_staff_assignments"/>
+            <child column="staff_id" foreignKey="contest_staff_assignments_staff_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="contest_staff_assignments"/>
             <child column="created_by" foreignKey="contests_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
+            <child column="provider_id" foreignKey="fk_contests_provider_id" implied="false" onDeleteCascade="false" schema="public" table="contests"/>
             <child column="customer_id" foreignKey="fk_customer_packages_customer" implied="false" onDeleteCascade="false" schema="public" table="customer_packages"/>
             <child column="customer_id" foreignKey="customer_vehicles_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="customer_vehicles"/>
             <child column="opened_by" foreignKey="disputes_opened_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="disputes"/>
@@ -1715,6 +2434,8 @@
             <child column="proposed_by" foreignKey="extension_proposals_proposed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="extension_proposals"/>
             <child column="responded_by" foreignKey="extension_proposals_responded_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="extension_proposals"/>
             <child column="enabled_by" foreignKey="feature_flags_enabled_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="feature_flags"/>
+            <child column="created_by" foreignKey="featured_popups_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="featured_popups"/>
+            <child column="updated_by" foreignKey="featured_popups_updated_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="featured_popups"/>
             <child column="confirmed_by" foreignKey="fnb_orders_confirmed_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
             <child column="created_by" foreignKey="fnb_orders_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="fnb_orders"/>
             <child column="reported_by" foreignKey="incidents_reported_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="incidents"/>
@@ -1732,18 +2453,18 @@
             <child column="created_by" foreignKey="promotions_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="promotions"/>
             <child column="user_id" foreignKey="provider_profiles_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="provider_profiles"/>
             <child column="provider_id" foreignKey="provider_subscriptions_provider_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="provider_subscriptions"/>
+            <child column="user_id" foreignKey="FK_push_tokens_user" implied="false" onDeleteCascade="true" schema="public" table="push_tokens"/>
+            <child column="provider_id" foreignKey="race_records_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
+            <child column="user_id" foreignKey="race_records_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="race_records"/>
+            <child column="verified_by" foreignKey="race_records_verified_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="race_records"/>
             <child column="user_id" foreignKey="refresh_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="refresh_tokens"/>
             <child column="customer_id" foreignKey="reviews_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="reviews"/>
             <child column="user_id" foreignKey="session_participants_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="session_participants"/>
             <child column="checked_in_by" foreignKey="sessions_checked_in_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
             <child column="checked_out_by" foreignKey="sessions_checked_out_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
-            <child column="provider_id" foreignKey="shift_positions_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="shift_positions"/>
-            <child column="provider_id" foreignKey="fk_shift_time_presets_provider" implied="false" onDeleteCascade="true" schema="public" table="shift_time_presets"/>
             <child column="assigned_by" foreignKey="staff_cafe_assignments_assigned_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_cafe_assignments"/>
             <child column="staff_id" foreignKey="staff_cafe_assignments_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_cafe_assignments"/>
             <child column="user_id" foreignKey="staff_invite_tokens_user_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="staff_invite_tokens"/>
-            <child column="provider_id" foreignKey="staff_shifts_provider_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_shifts"/>
-            <child column="staff_id" foreignKey="staff_shifts_staff_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="staff_shifts"/>
             <child column="customer_id" foreignKey="subscriptions_customer_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="subscriptions"/>
             <child column="created_by" foreignKey="trust_score_logs_created_by_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
             <child column="user_id" foreignKey="trust_score_logs_user_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="trust_score_logs"/>
@@ -1762,6 +2483,9 @@
          <column autoUpdated="false" defaultValue="null" digits="6" id="11" name="deleted_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="12" name="google_id" nullable="true" remarks="" size="255" type="varchar" typeCode="12"/>
          <column autoUpdated="false" defaultValue="null" digits="0" id="13" name="avatar_url" nullable="true" remarks="" size="2147483647" type="text" typeCode="12"/>
+         <column autoUpdated="false" defaultValue="null" digits="6" id="14" name="last_active_at" nullable="true" remarks="" size="35" type="timestamptz" typeCode="93"/>
+         <column autoUpdated="false" defaultValue="'{}'::uuid[]" digits="0" id="15" name="favorite_cafe_ids" nullable="false" remarks="" size="2147483647" type="_uuid" typeCode="2003"/>
+         <column autoUpdated="false" defaultValue="'{}'::jsonb" digits="0" id="16" name="racing_profile" nullable="false" remarks="" size="2147483647" type="jsonb" typeCode="1111"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="users_pkey" unique="true">
             <column ascending="true" name="id"/>
@@ -1772,6 +2496,8 @@
          <index name="idx_users_google_id" unique="true">
             <column ascending="true" name="google_id"/>
          </index>
+         <index name="idx_users_racing_profile_handle" unique="false"/>
+         <index name="idx_users_racing_profile_handle_unique" unique="true"/>
          <index name="idx_users_role" unique="false">
             <column ascending="true" name="role"/>
          </index>
@@ -1794,6 +2520,7 @@
       </table>
       <table name="vehicle_catalogs" remarks="" schema="public" type="TABLE">
          <column autoUpdated="false" defaultValue="gen_random_uuid()" digits="0" id="0" name="id" nullable="false" remarks="" size="2147483647" type="uuid" typeCode="1111">
+            <child column="rental_catalog_id" foreignKey="contest_registrations_rental_catalog_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="contest_registrations"/>
             <child column="catalog_id" foreignKey="vehicle_images_catalog_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicle_catalog_images"/>
             <child column="catalog_id" foreignKey="vehicles_catalog_id_fkey" implied="false" onDeleteCascade="true" schema="public" table="vehicles"/>
          </column>
@@ -1836,6 +2563,7 @@
          <column autoUpdated="false" defaultValue="null" digits="0" id="9" name="related_session_id" nullable="true" remarks="" size="2147483647" type="uuid" typeCode="1111">
             <parent column="id" foreignKey="vehicle_maintenance_logs_related_session_id_fkey" implied="false" onDeleteCascade="false" schema="public" table="sessions"/>
          </column>
+         <column autoUpdated="false" defaultValue="'PENDING_REPAIR'::character varying" digits="0" id="10" name="status" nullable="true" remarks="" size="50" type="varchar" typeCode="12"/>
          <primaryKey column="id" sequenceNumberInPK="1"/>
          <index name="vehicle_maintenance_logs_pkey" unique="true">
             <column ascending="true" name="id"/>

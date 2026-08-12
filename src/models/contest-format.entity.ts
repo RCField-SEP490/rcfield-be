@@ -34,6 +34,14 @@ export class ContestFormat {
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 
+  /**
+   * Đã dùng được để tạo giải hay chưa. Khác `isActive`: thể thức chưa phát hành
+   * vẫn hiện trong catalog kèm nhãn "Sắp có" để provider thấy lộ trình, nhưng
+   * không chọn được — tránh cảnh trả phí tổ chức xong mới biết chế độ còn dở.
+   */
+  @Column({ name: 'is_released', type: 'boolean', default: true })
+  isReleased: boolean;
+
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder: number;
 

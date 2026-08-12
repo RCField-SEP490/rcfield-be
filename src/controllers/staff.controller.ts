@@ -8,8 +8,8 @@ import {
   CreateWalkInBookingSchema,
   SubmitInspectionV2Schema,
   ConfirmCheckoutSchema,
+  ConfirmRefundSchema,
   UpdateDamageItemsSchema,
-  EscalateDisputeSchema,
   StaffBookingsQuerySchema,
   AddSessionFnbOrderSchema,
 } from '../validate';
@@ -352,17 +352,6 @@ export const staffController = {
     }
   },
 
-  // POST /api/v1/staff/sessions/:sessionId/simulate-check-in-response [auth]
-  async simulateClientCheckIn(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const data = await staffService.simulateClientCheckInResponse(req.params.sessionId);
-      res.json({ success: true, data });
-    } catch (err) {
-      next(err);
-    }
-  },
-
   // POST /api/v1/staff/sessions/:sessionId/simulate-check-out-response [auth]
   async simulateClientCheckOut(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -408,7 +397,8 @@ export const staffController = {
   async confirmRefund(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      await confirmRefund(req.params.bookingId);
+      const body = ConfirmRefundSchema.parse(req.body);
+      await confirmRefund(req.params.bookingId, req.user.userId, body);
       res.json({ success: true, message: 'Đã xác nhận hoàn tiền thành công' });
     } catch (err) {
       next(err);
@@ -450,28 +440,6 @@ export const staffController = {
         staffId: req.user.userId,
         sessionId: req.params.sessionId,
         inspectionId: req.params.inspectionId,
-      });
-      res.json({ success: true, data });
-    } catch (err) {
-      next(err);
-    }
-  },
-
-  // POST /api/v1/staff/sessions/:sessionId/escalate-dispute [auth]
-  async escalateDispute(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const { inspectionId, note } = EscalateDisputeSchema.parse(req.body);
-      const data = await staffService.escalateDisputeToProvider(
-        req.params.sessionId,
-        inspectionId,
-        note,
-        req.user.userId,
-      );
-      logger.info('Staff', 'escalateDispute', {
-        staffId: req.user.userId,
-        sessionId: req.params.sessionId,
-        inspectionId,
       });
       res.json({ success: true, data });
     } catch (err) {
@@ -524,6 +492,47 @@ export const staffController = {
         req.params.id,
         req.body,
       );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/packages/lookup [auth]
+  async lookupCustomerPackages(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const query = req.query.query;
+      if (typeof query !== 'string' || !query.trim()) {
+        throw new AppError('Từ khóa tìm kiếm không hợp lệ', 400, 'INVALID_QUERY');
+      }
+      const data = await staffService.lookupCustomerPackages(query, req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/packages/top-customers [auth]
+  async getTopCustomers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.getTopCustomersForCafe(req.user.userId);
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/staff/packages/search-customers [auth]
+  async searchCustomers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const query = req.query.query;
+      if (typeof query !== 'string' || !query.trim()) {
+        throw new AppError('Từ khóa tìm kiếm không hợp lệ', 400, 'INVALID_QUERY');
+      }
+      const data = await staffService.searchCustomersForCafe(query, req.user.userId);
       res.json({ success: true, data });
     } catch (err) {
       next(err);

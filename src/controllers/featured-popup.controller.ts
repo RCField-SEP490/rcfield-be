@@ -3,6 +3,7 @@ import { AuthRequest, AppError, FeaturedPopupPlacement, UserRole } from '../type
 import {
   CreateFeaturedPopupSchema,
   FeaturedPopupListQuerySchema,
+  FeaturedPopupReviewSchema,
   UpdateFeaturedPopupSchema,
 } from '../validate';
 import * as featuredPopupService from '../services/featured-popup.service';
@@ -50,10 +51,45 @@ export const featuredPopupController = {
     }
   },
 
+  // GET /api/v1/admin/featured-popups/pending  [auth]
+  async listPending(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      requireAdminViewer(req);
+      const data = await featuredPopupService.listPendingFeaturedPopups();
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // POST /api/v1/admin/featured-popups/:popupId/review  [auth]
+  async review(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireAdminViewer(req);
+      const body = FeaturedPopupReviewSchema.parse(req.body);
+      const data = await featuredPopupService.reviewFeaturedPopup(req.params.popupId, viewer, body);
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   // GET /api/v1/explore/featured-popup  [public]
   async getActive(_req: AuthRequest, res: Response, next: NextFunction) {
     try {
       const data = await featuredPopupService.getActiveFeaturedPopup(
+        FeaturedPopupPlacement.EXPLORE,
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // GET /api/v1/explore/featured-popups
+  async listActive(_req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const data = await featuredPopupService.listActiveFeaturedPopups(
         FeaturedPopupPlacement.EXPLORE,
       );
       res.json({ success: true, data });

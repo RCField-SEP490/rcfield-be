@@ -18,6 +18,7 @@ type ReminderCandidate = {
   contest_starts_at: string;
   contest_status: ContestStatus;
   host_branch_name: string | null;
+  host_branch_address: string | null;
   customer_email: string;
   customer_name: string | null;
 };
@@ -43,6 +44,7 @@ export async function processContestReminders() {
             c.starts_at AS contest_starts_at,
             c.status AS contest_status,
             host.name AS host_branch_name,
+            host.address AS host_branch_address,
             u.email AS customer_email,
             u.full_name AS customer_name
        FROM contest_registrations cr
@@ -77,10 +79,10 @@ export async function processContestReminders() {
 
       if (diffHours <= 2.25 && diffHours > 0 && !reminderState.reminder2hSentAt) {
         reminderKey = 'reminder_2h_sent_at';
-        reminderLabel = 'Con 2 gio';
+        reminderLabel = 'Còn 2 giờ';
       } else if (diffHours <= 24.25 && diffHours > 2.25 && !reminderState.reminder24hSentAt) {
         reminderKey = 'reminder_24h_sent_at';
-        reminderLabel = 'Con 24 gio';
+        reminderLabel = 'Còn 24 giờ';
       }
 
       if (!reminderKey || !reminderLabel) continue;
@@ -88,8 +90,8 @@ export async function processContestReminders() {
       await createNotification(
         row.user_id,
         NotificationType.CONTEST_REMINDER,
-        `Nhac lich ${row.contest_name}`,
-        `${reminderLabel} nua ${row.contest_name} se bat dau. Hay chuan bi den dia diem thi dau dung gio.`,
+        `Nhắc lịch: ${row.contest_name}`,
+        `${reminderLabel} nữa là ${row.contest_name} bắt đầu. Nhớ mang mã điểm danh và có mặt đúng giờ.`,
         {
           contest_id: row.contest_id,
           registration_id: row.registration_id,
@@ -104,6 +106,7 @@ export async function processContestReminders() {
           contestName: row.contest_name,
           contestId: row.contest_id,
           hostBranchName: row.host_branch_name,
+          hostBranchAddress: row.host_branch_address,
           startsAt,
           reminderLabel,
           checkInCode: row.check_in_code,

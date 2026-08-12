@@ -95,7 +95,6 @@ export interface InvoiceData {
   discountAmount: number;
   promoCode?: string | null;
   totalAmount: number; // post-discount
-  depositAmount: number; // shown in orange note
 }
 
 export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
@@ -380,7 +379,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
                       border: [false, false, false, false],
                     },
                   ],
-                  ...(grossTotal !== data.totalAmount + data.depositAmount
+                  ...(grossTotal !== data.totalAmount
                     ? [
                         [
                           {
@@ -444,37 +443,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
         margin: [0, 0, 0, 12],
       },
 
-      // ── Deposit note (only if deposit > 0) ─────────────────────────────────
-      ...(data.depositAmount > 0
-        ? [
-            {
-              table: {
-                widths: ['*'],
-                body: [
-                  [
-                    {
-                      stack: [
-                        {
-                          text: `⚠  Tiền cọc ${vnd(data.depositAmount)} sẽ được hoàn trả sau khi check-out thành công.`,
-                          fontSize: 9,
-                          color: '#92400e',
-                        },
-                      ],
-                      margin: [8, 6, 8, 6],
-                      border: [false, false, false, false],
-                    },
-                  ],
-                ],
-              },
-              layout: {
-                hLineWidth: () => 0,
-                vLineWidth: () => 0,
-                fillColor: () => '#fffbeb',
-              },
-              margin: [0, 0, 0, 16],
-            } as Content,
-          ]
-        : [{ text: ' ', margin: [0, 0, 0, 16] } as Content]),
+      { text: ' ', margin: [0, 0, 0, 16] } as Content,
 
       // ── Footer ──────────────────────────────────────────────────────────────
       {

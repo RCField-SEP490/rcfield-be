@@ -19,17 +19,27 @@ type SendStaffInviteInput = {
   inviteUrl: string;
 };
 
-type SendContestRegistrationEmailInput = {
+type SendContestRegistrationPendingPaymentInput = {
   to: string;
   customerName: string;
   contestName: string;
   contestId: string;
-  contestStatusLabel: string;
   hostBranchName: string | null;
   startsAt: Date;
-  registrationStatusLabel: string;
-  paymentStatusLabel: string;
   entryFeeAmount: number;
+  entryFeeDueAt: Date | null;
+};
+
+type SendContestRegistrationApprovedInput = {
+  to: string;
+  customerName: string;
+  contestName: string;
+  contestId: string;
+  hostBranchName: string | null;
+  hostBranchAddress: string | null;
+  startsAt: Date;
+  checkInCode: string | null;
+  vehicleLabel: string | null;
 };
 
 type SendContestReminderEmailInput = {
@@ -38,10 +48,55 @@ type SendContestReminderEmailInput = {
   contestName: string;
   contestId: string;
   hostBranchName: string | null;
+  /** Có địa chỉ thì email kèm được link chỉ đường — thứ cần nhất khi sắp phải đi. */
+  hostBranchAddress: string | null;
   startsAt: Date;
   reminderLabel: string;
   checkInCode: string | null;
 };
+
+/** Ngày giờ tiếng Việt theo múi giờ Việt Nam — dùng chung cho email giải đấu. */
+function formatContestDateTime(value: Date): string {
+  return value.toLocaleString('vi-VN', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
+}
+
+/**
+ * Tên giải và tên chi nhánh do provider tự đặt, nên có thể chứa `<`, `&`.
+ * Nhét thẳng vào HTML thì nhẹ là vỡ layout, nặng là chèn được thẻ vào email.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Giờ và ngày tách riêng, để email nhắc lịch cho giờ cỡ chữ lớn hơn ngày. */
+function formatContestTimeParts(value: Date): { time: string; date: string } {
+  return {
+    time: value.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }),
+    date: value.toLocaleDateString('vi-VN', {
+      weekday: 'long',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }),
+  };
+}
 
 class EmailService {
   private async brevoSend(payload: object): Promise<void> {
@@ -276,11 +331,10 @@ class EmailService {
       identifier: string | null;
       color: string | null;
       rental_fee_snapshot: string;
-      security_deposit_snapshot: string;
     };
     const vehicleRows = (await ds.query(
       `SELECT vc.name AS catalog_name, vc.tier, v.identifier, v.color,
-              bv.rental_fee_snapshot, bv.security_deposit_snapshot
+              bv.rental_fee_snapshot
          FROM booking_vehicles bv
          LEFT JOIN vehicles v ON v.id = bv.vehicle_id
          LEFT JOIN vehicle_catalogs vc ON vc.id = v.catalog_id
@@ -320,14 +374,6 @@ class EmailService {
           total: v.rental_fee,
         });
       }
-      if (v.security_deposit > 0) {
-        lineItems.push({
-          description: `Cọc xe — ${vehicleName}`,
-          qty: 1,
-          unitPrice: v.security_deposit,
-          total: v.security_deposit,
-        });
-      }
     }
 
     if (snapshot.fnb_total > 0) {
@@ -346,8 +392,6 @@ class EmailService {
     }
 
     const discountAmount = snapshot.discount_amount ?? 0;
-    const depositAmount = vehicleSnapshots.reduce((sum, v) => sum + v.security_deposit, 0);
-
     const pdfBuffer = await generateInvoicePdf({
       invoiceNumber: shortRef,
       issuedAt: new Date(r.paid_at),
@@ -368,7 +412,6 @@ class EmailService {
       discountAmount,
       promoCode: promoApplied?.code ?? null,
       totalAmount: snapshot.total_charged,
-      depositAmount,
     });
 
     const pdfBase64 = pdfBuffer.toString('base64');
@@ -463,14 +506,6 @@ class EmailService {
               </tr>
             </table>
 
-            ${
-              depositAmount > 0
-                ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#92400e">
-              ⚠ Tiền cọc xe <strong>${depositAmount.toLocaleString('vi-VN')} ₫</strong> sẽ được hoàn trả sau khi check-out thành công.
-            </div>`
-                : ''
-            }
-
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
               Vui lòng lưu hóa đơn này để đối chiếu khi cần. Mọi thắc mắc liên hệ chi nhánh trực tiếp.
             </p>
@@ -488,81 +523,77 @@ class EmailService {
     logger.info('EmailService', 'invoice email sent', { bookingId, email: r.customer_email });
   }
 
-  async sendContestRegistrationConfirmation(
-    input: SendContestRegistrationEmailInput,
+  /**
+   * Đã nhận đăng ký nhưng chưa chắc suất: còn lệ phí phải trả.
+   *
+   * Cố ý KHÔNG nói "đăng ký thành công" — người nhận chưa trả tiền và chưa được
+   * ban tổ chức duyệt, nói thành công ở đây là hứa quá tay. Mã check-in cũng chưa
+   * gửi ở bước này vì suất thi đấu chưa chắc chắn.
+   */
+  async sendContestRegistrationPendingPayment(
+    input: SendContestRegistrationPendingPaymentInput,
   ): Promise<void> {
-    const startsAtLabel = input.startsAt.toLocaleString('vi-VN', {
-      weekday: 'long',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Ho_Chi_Minh',
-    });
+    const startsAtLabel = formatContestDateTime(input.startsAt);
+    const dueLabel = input.entryFeeDueAt ? formatContestDateTime(input.entryFeeDueAt) : null;
 
     await this.brevoSend({
       sender: { email: env.email.fromEmail, name: env.email.fromName },
       to: [{ email: input.to, name: input.customerName }],
-      subject: `Xac nhan dang ky giai ${input.contestName} | RCField`,
+      subject: `Đã nhận đăng ký giải ${input.contestName} — cần thanh toán lệ phí | RCField`,
       htmlContent: `
         <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
           <div style="background:#111827;padding:24px 32px">
             <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
           </div>
           <div style="padding:32px">
-            <h2 style="margin:0 0 8px">Dang ky giai dau thanh cong</h2>
+            <h2 style="margin:0 0 8px">Đã nhận đăng ký của bạn</h2>
             <p style="color:#6b7280;margin:0 0 24px">
-              Xin chao <strong>${input.customerName}</strong>, ban da gui dang ky cho
-              <strong>${input.contestName}</strong>.
+              Xin chào <strong>${input.customerName}</strong>, RCField đã nhận đăng ký
+              <strong>${input.contestName}</strong>. Suất thi đấu được giữ sau khi bạn thanh toán lệ phí.
             </p>
 
             <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
               <tr>
-                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giai dau</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giải đấu</td>
                 <td style="padding:8px 0;font-size:13px;font-weight:600">${input.contestName}</td>
               </tr>
               <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chi nhanh</td>
-                <td style="padding:8px 0;font-size:13px">${input.hostBranchName ?? 'Dang cap nhat'}</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chi nhánh</td>
+                <td style="padding:8px 0;font-size:13px">${input.hostBranchName ?? 'Đang cập nhật'}</td>
               </tr>
               <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Bat dau</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Bắt đầu thi đấu</td>
                 <td style="padding:8px 0;font-size:13px">${startsAtLabel}</td>
               </tr>
               <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Trang thai dang ky</td>
-                <td style="padding:8px 0;font-size:13px">${input.registrationStatusLabel}</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Lệ phí cần thanh toán</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:700">${input.entryFeeAmount.toLocaleString('vi-VN')} ₫</td>
               </tr>
-              <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Le phi</td>
-                <td style="padding:8px 0;font-size:13px">${
-                  input.entryFeeAmount > 0
-                    ? `${input.entryFeeAmount.toLocaleString('vi-VN')} VND`
-                    : 'Mien phi'
-                }</td>
-              </tr>
-              <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Trang thai phi</td>
-                <td style="padding:8px 0;font-size:13px">${input.paymentStatusLabel}</td>
-              </tr>
+              ${
+                dueLabel
+                  ? `<tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Hạn thanh toán</td>
+                <td style="padding:8px 0;font-size:13px;color:#b45309;font-weight:600">${dueLabel}</td>
+              </tr>`
+                  : ''
+              }
             </table>
 
-            <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb">
-              <p style="margin:0 0 8px;font-size:14px;font-weight:700">Buoc tiep theo</p>
-              <ul style="margin:0;padding-left:18px;color:#4b5563;font-size:13px;line-height:1.7">
-                <li>Theo doi thong bao trong ung dung de biet dang ky da duoc duyet hay chua.</li>
-                <li>Neu giai co le phi, vui long hoan tat thanh toan theo huong dan.</li>
-                <li>Gan den gio thi dau, RCField se gui nhac lich cho ban.</li>
-              </ul>
+            <div style="border:1px solid #fde68a;background:#fffbeb;border-radius:12px;padding:20px">
+              <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#92400e">Bạn cần làm gì tiếp</p>
+              <ol style="margin:0;padding-left:18px;color:#92400e;font-size:13px;line-height:1.7">
+                <li>Thanh toán lệ phí giải để giữ suất thi đấu.</li>
+                <li>Ban tổ chức duyệt danh sách sau khi lệ phí được ghi nhận.</li>
+                <li>Khi được duyệt, RCField gửi email kèm <strong>mã check-in</strong> của bạn.</li>
+              </ol>
               <a href="${env.frontendUrl}/contests/${input.contestId}"
-                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
-                Xem chi tiet giai dau
+                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#b45309;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
+                Thanh toán lệ phí
               </a>
             </div>
 
             <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:24px 0 0">
-              Email nay xac nhan thong tin dang ky va lich giai dau hien tai.
+              Chưa thanh toán trước hạn thì suất đăng ký sẽ được nhường cho người khác.
             </p>
           </div>
         </div>
@@ -570,70 +601,207 @@ class EmailService {
     });
   }
 
-  async sendContestReminder(input: SendContestReminderEmailInput): Promise<void> {
-    const startsAtLabel = input.startsAt.toLocaleString('vi-VN', {
-      weekday: 'long',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: 'Asia/Ho_Chi_Minh',
-    });
+  /**
+   * Suất thi đấu đã chắc chắn: lệ phí xong và ban tổ chức đã duyệt.
+   *
+   * Đây mới là email "thành công", và là email duy nhất mang mã check-in —
+   * thứ VĐV thực sự cần cầm theo trong ngày thi.
+   */
+  async sendContestRegistrationApproved(
+    input: SendContestRegistrationApprovedInput,
+  ): Promise<void> {
+    const startsAtLabel = formatContestDateTime(input.startsAt);
 
     await this.brevoSend({
       sender: { email: env.email.fromEmail, name: env.email.fromName },
       to: [{ email: input.to, name: input.customerName }],
-      subject: `Nhac lich thi dau ${input.contestName} | RCField`,
+      subject: `Bạn đã có suất thi đấu ${input.contestName} | RCField`,
       htmlContent: `
         <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
           <div style="background:#111827;padding:24px 32px">
             <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
           </div>
           <div style="padding:32px">
-            <h2 style="margin:0 0 8px">Sap den gio thi dau</h2>
+            <h2 style="margin:0 0 8px">Bạn đã có suất thi đấu</h2>
             <p style="color:#6b7280;margin:0 0 24px">
-              Xin chao <strong>${input.customerName}</strong>, ${input.reminderLabel.toLowerCase()} den gio bat dau
-              <strong>${input.contestName}</strong>.
+              Xin chào <strong>${input.customerName}</strong>, ban tổ chức đã duyệt đăng ký của bạn tại
+              <strong>${input.contestName}</strong>. Hẹn gặp bạn ở vạch xuất phát.
             </p>
 
             <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
               <tr>
-                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giai dau</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Giải đấu</td>
                 <td style="padding:8px 0;font-size:13px;font-weight:600">${input.contestName}</td>
               </tr>
               <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Chi nhanh</td>
-                <td style="padding:8px 0;font-size:13px">${input.hostBranchName ?? 'Dang cap nhat'}</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Địa điểm</td>
+                <td style="padding:8px 0;font-size:13px">
+                  <strong>${input.hostBranchName ?? 'Đang cập nhật'}</strong>
+                  ${input.hostBranchAddress ? `<br /><span style="color:#6b7280">${input.hostBranchAddress}</span>` : ''}
+                </td>
               </tr>
               <tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Bat dau</td>
-                <td style="padding:8px 0;font-size:13px">${startsAtLabel}</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Giờ thi đấu</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:600">${startsAtLabel}</td>
               </tr>
               ${
-                input.checkInCode
+                input.vehicleLabel
                   ? `<tr style="border-top:1px solid #f3f4f6">
-                <td style="padding:8px 0;color:#6b7280;font-size:13px">Check-in code</td>
-                <td style="padding:8px 0;font-size:13px;font-weight:700">${input.checkInCode}</td>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Xe thi đấu</td>
+                <td style="padding:8px 0;font-size:13px">${input.vehicleLabel}</td>
               </tr>`
                   : ''
               }
             </table>
 
+            ${
+              input.checkInCode
+                ? `<div style="text-align:center;border:1px solid #e5e7eb;border-radius:12px;padding:24px;margin-bottom:24px">
+              <p style="margin:0 0 4px;font-size:13px;font-weight:600">Mã check-in của bạn</p>
+              <p style="margin:0 0 16px;font-size:12px;color:#6b7280">Đọc mã này cho nhân viên khi tới nơi để được xác nhận có mặt</p>
+              <p style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.2em">${input.checkInCode}</p>
+            </div>`
+                : ''
+            }
+
             <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb">
-              <p style="margin:0 0 8px;font-size:14px;font-weight:700">Luu y truoc khi den</p>
+              <p style="margin:0 0 8px;font-size:14px;font-weight:700">Khi tới thi đấu</p>
               <ul style="margin:0;padding-left:18px;color:#4b5563;font-size:13px;line-height:1.7">
-                <li>Den som de check-in va xac nhan thong tin thi dau.</li>
-                <li>Mang theo thong tin dat cho, check-in code hoac email nay de doi chieu neu can.</li>
-                <li>Theo doi thong bao trong ung dung de xem lich bracket va cap nhat ket qua.</li>
+                <li>Có mặt trước giờ thi đấu để kịp check-in.</li>
+                <li>Đọc mã check-in ở trên cho nhân viên tại quầy.</li>
+                <li>Nếu bạn thuê xe của quán, nhân viên giao xe ngay lúc check-in.</li>
+                <li>Nếu bạn mang xe cá nhân, nhân viên sẽ kiểm tra xe trước khi vào thi.</li>
               </ul>
               <a href="${env.frontendUrl}/contests/${input.contestId}"
                  style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
-                Xem bracket / ket qua
+                Xem chi tiết giải đấu
               </a>
             </div>
+
+            <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:24px 0 0">
+              Không tới check-in đúng giờ thi đấu thì bạn có thể bị xử thua vắng mặt.
+            </p>
           </div>
         </div>
+      `,
+    });
+  }
+
+  /**
+   * Email nhắc lịch trước giờ thi đấu.
+   *
+   * Thiết kế quanh hoàn cảnh đọc: người ta mở email này trên điện thoại, thường
+   * là lúc đang chuẩn bị đi. Nên ba thứ được đẩy lên trên cùng và làm to —
+   * CÒN BAO LÂU, MẤY GIỜ, MÃ ĐIỂM DANH — còn phần dặn dò xuống dưới.
+   *
+   * Bản cũ nhét mã điểm danh vào một ô bảng cỡ 13px lẫn giữa các dòng khác,
+   * trong khi đây đúng là email được mở ra ở quầy để đọc mã cho nhân viên.
+   */
+  async sendContestReminder(input: SendContestReminderEmailInput): Promise<void> {
+    const { time, date } = formatContestTimeParts(input.startsAt);
+    const contestName = escapeHtml(input.contestName);
+    const customerName = escapeHtml(input.customerName);
+    const branchName = input.hostBranchName ? escapeHtml(input.hostBranchName) : null;
+    const branchAddress = input.hostBranchAddress ? escapeHtml(input.hostBranchAddress) : null;
+    const countdown = escapeHtml(input.reminderLabel);
+    const contestUrl = `${env.frontendUrl}/contests/${input.contestId}`;
+    const mapsUrl = input.hostBranchAddress
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(input.hostBranchAddress)}`
+      : null;
+
+    // Dòng xem trước trong hộp thư. Không đặt thì Gmail lấy tạm chữ đầu của
+    // phần đầu email, tức là hiện mỗi chữ "RCField".
+    const preheader = `${input.reminderLabel} nữa là ${input.contestName} bắt đầu — ${time} ${date}.`;
+
+    const textContent = [
+      `Xin chào ${input.customerName},`,
+      `${input.reminderLabel} nữa là ${input.contestName} bắt đầu.`,
+      `Thời gian: ${time} - ${date}`,
+      branchName ? `Địa điểm: ${input.hostBranchName}` : null,
+      branchAddress ? `Địa chỉ: ${input.hostBranchAddress}` : null,
+      input.checkInCode ? `Mã điểm danh: ${input.checkInCode}` : null,
+      `Xem sơ đồ đấu và kết quả: ${contestUrl}`,
+      `Không điểm danh đúng giờ thì bạn có thể bị xử thua vắng mặt.`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    await this.brevoSend({
+      sender: { email: env.email.fromEmail, name: env.email.fromName },
+      to: [{ email: input.to, name: input.customerName }],
+      subject: `${input.reminderLabel} nữa: ${input.contestName} | RCField`,
+      textContent,
+      htmlContent: `
+        <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preheader)}</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f3f2;padding:24px 12px">
+          <tr><td align="center">
+            <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;color:#1c1b1b">
+
+              <tr><td style="background:#1c1b1b;padding:20px 32px">
+                <span style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.01em">RCField</span>
+              </td></tr>
+
+              <tr><td style="padding:32px 32px 8px">
+                <span style="display:inline-block;background:#fff1e7;color:#c2410c;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;padding:6px 12px;border-radius:999px">
+                  ${countdown} nữa
+                </span>
+                <h1 style="margin:16px 0 4px;font-size:24px;line-height:1.25;font-weight:800">${contestName}</h1>
+                <p style="margin:0;color:#5d5f5f;font-size:14px">Xin chào ${customerName}, sắp tới giờ thi đấu của bạn.</p>
+              </td></tr>
+
+              <tr><td style="padding:24px 32px 0">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e2e1;border-radius:12px">
+                  <tr><td style="padding:20px">
+                    <p style="margin:0 0 2px;color:#747878;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Bắt đầu</p>
+                    <p style="margin:0;font-size:28px;font-weight:800;line-height:1.1">${time}</p>
+                    <p style="margin:2px 0 0;color:#5d5f5f;font-size:14px">${date}</p>
+                    ${
+                      branchName
+                        ? `<p style="margin:14px 0 0;padding-top:14px;border-top:1px solid #f0eded;color:#747878;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Địa điểm</p>
+                           <p style="margin:2px 0 0;font-size:15px;font-weight:700">${branchName}</p>
+                           ${branchAddress ? `<p style="margin:2px 0 0;color:#5d5f5f;font-size:13px">${branchAddress}</p>` : ''}
+                           ${mapsUrl ? `<a href="${mapsUrl}" style="display:inline-block;margin-top:8px;color:#c2410c;font-size:13px;font-weight:700;text-decoration:none">Xem đường đi &rarr;</a>` : ''}`
+                        : ''
+                    }
+                  </td></tr>
+                </table>
+              </td></tr>
+
+              ${
+                input.checkInCode
+                  ? `<tr><td style="padding:16px 32px 0">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fcf8f8;border:1px solid #e5e2e1;border-radius:12px">
+                  <tr><td align="center" style="padding:20px">
+                    <p style="margin:0 0 2px;color:#747878;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em">Mã điểm danh</p>
+                    <p style="margin:0;font-size:32px;font-weight:800;letter-spacing:0.18em">${escapeHtml(input.checkInCode)}</p>
+                    <p style="margin:6px 0 0;color:#747878;font-size:12px">Đọc mã này cho nhân viên khi tới nơi</p>
+                  </td></tr>
+                </table>
+              </td></tr>`
+                  : ''
+              }
+
+              <tr><td style="padding:24px 32px 0">
+                <a href="${contestUrl}" style="display:block;background:#ea580c;color:#ffffff;text-align:center;text-decoration:none;font-size:15px;font-weight:700;padding:14px 24px;border-radius:12px">
+                  Xem sơ đồ đấu và kết quả
+                </a>
+              </td></tr>
+
+              <tr><td style="padding:24px 32px 32px">
+                <p style="margin:0 0 8px;font-size:14px;font-weight:700">Trước khi đi, nhớ kiểm tra</p>
+                <ul style="margin:0;padding-left:18px;color:#5d5f5f;font-size:13px;line-height:1.8">
+                  <li>Đến sớm hơn giờ bắt đầu để kịp điểm danh.</li>
+                  <li>Mang theo mã điểm danh ở trên.</li>
+                  <li>Mang xe cá nhân thì nhân viên sẽ kiểm tra xe trước khi vào thi.</li>
+                </ul>
+                <p style="margin:20px 0 0;padding-top:16px;border-top:1px solid #f0eded;color:#747878;font-size:12px;line-height:1.6">
+                  Không điểm danh đúng giờ thì bạn có thể bị xử thua vắng mặt.
+                </p>
+              </td></tr>
+
+            </table>
+          </td></tr>
+        </table>
       `,
     });
   }
@@ -693,6 +861,98 @@ class EmailService {
           <p style="font-size:28px;font-weight:700;letter-spacing:8px">${input.code}</p>
           <p>Mã có hiệu lực trong <strong>${input.ttlMinutes} phút</strong>.</p>
           <p>Nếu bạn không yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này.</p>
+        </div>
+      `,
+    });
+  }
+
+  async sendSubscriptionConfirmed(input: {
+    to: string;
+    providerName: string;
+    planName: string;
+    amount: number;
+    startDate: Date;
+    endDate: Date;
+  }): Promise<void> {
+    const subject = `✅ Kích hoạt thành công gói hội viên ${input.planName} | RCField`;
+
+    const formattedAmount = Number(input.amount).toLocaleString('vi-VN') + ' ₫';
+    const formattedStartDate = input.startDate.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    const formattedEndDate = input.endDate.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+
+    const textContent = [
+      `Xin chào ${input.providerName},`,
+      `Yêu cầu thanh toán cho gói hội viên ${input.planName} của bạn đã được Admin phê duyệt thành công.`,
+      `Thông tin gói hội viên của bạn:`,
+      `- Gói dịch vụ: ${input.planName}`,
+      `- Số tiền thanh toán: ${formattedAmount}`,
+      `- Ngày kích hoạt: ${formattedStartDate}`,
+      `- Ngày hết hạn: ${formattedEndDate}`,
+      `Gói dịch vụ mới của bạn hiện đã có hiệu lực. Bạn có thể đăng nhập vào hệ thống để trải nghiệm ngay.`,
+      `Trân trọng,`,
+      `Đội ngũ RCField`,
+    ].join('\n\n');
+
+    await this.brevoSend({
+      sender: { email: env.email.fromEmail, name: env.email.fromName },
+      to: [{ email: input.to, name: input.providerName }],
+      subject,
+      textContent,
+      htmlContent: `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
+          <div style="background:#111827;padding:24px 32px">
+            <span style="color:#fff;font-size:20px;font-weight:700">RCField</span>
+          </div>
+          <div style="padding:32px">
+            <h2 style="margin:0 0 8px;color:#10b981">Xác nhận kích hoạt gói hội viên thành công</h2>
+            <p style="color:#6b7280;margin:0 0 24px">
+              Xin chào <strong>${input.providerName}</strong>, yêu cầu thanh toán cho gói hội viên của bạn đã được phê duyệt và kích hoạt thành công.
+            </p>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+              <tr>
+                <td style="padding:8px 0;color:#6b7280;font-size:13px;width:160px">Gói dịch vụ</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:600;color:#111827">${input.planName}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Số tiền thanh toán</td>
+                <td style="padding:8px 0;font-size:13px;font-weight:700;color:#111827">${formattedAmount}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Thời gian bắt đầu</td>
+                <td style="padding:8px 0;font-size:13px;color:#111827">${formattedStartDate}</td>
+              </tr>
+              <tr style="border-top:1px solid #f3f4f6">
+                <td style="padding:8px 0;color:#6b7280;font-size:13px">Hạn hết hạn</td>
+                <td style="padding:8px 0;font-size:13px;color:#ef4444;font-weight:600">${formattedEndDate}</td>
+              </tr>
+            </table>
+
+            <div style="border:1px solid #e5e7eb;border-radius:12px;padding:20px;background:#f9fafb;margin-bottom:24px">
+              <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#111827">Bắt đầu sử dụng</p>
+              <p style="margin:0;color:#4b5563;font-size:13px;line-height:1.7">
+                Gói dịch vụ của bạn đã chính thức có hiệu lực. Mọi giới hạn về chi nhánh, quota AI message và kết nối kênh bán hàng của bạn đã được nâng cấp theo gói dịch vụ mới.
+              </p>
+              <a href="${env.frontendUrl}/provider/subscriptions"
+                 style="display:inline-block;margin-top:16px;padding:12px 24px;background:#111827;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:700">
+                Quản lý gói dịch vụ
+              </a>
+            </div>
+
+            <p style="font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6;padding-top:16px;margin:0">
+              Cảm ơn bạn đã lựa chọn sử dụng dịch vụ của RCField! Mọi thắc mắc vui lòng phản hồi qua email này để được hỗ trợ tốt nhất.
+            </p>
+          </div>
         </div>
       `,
     });

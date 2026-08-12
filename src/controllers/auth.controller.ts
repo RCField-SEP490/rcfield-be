@@ -31,6 +31,17 @@ export const authController = {
     }
   },
 
+  // POST /api/v1/auth/check-exists
+  async checkExists(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { email, phone } = req.body;
+      const result = await authService.checkExists(email, phone);
+      res.json({ success: true, data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // POST /api/v1/auth/login
   async login(req: Request, res: Response, next: NextFunction) {
     try {

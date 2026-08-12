@@ -168,23 +168,39 @@ class AuthService {
 
   async registerWithPassword(input: RegisterInput): Promise<LoginResult> {
     const email = input.email.toLowerCase().trim();
-    const existing = await this.userRepo.findOne({ where: { email } });
+    const emailExisting = await this.userRepo.findOne({ where: { email } });
 
-    if (existing) {
-      throw new AppError('Email đã được sử dụng', 409, 'EMAIL_ALREADY_EXISTS');
-    }
-
-    // Check if there is an existing guest user with the same phone number
+    let phoneExisting: User | null = null;
     let guestUser: User | null = null;
     if (input.phone) {
       const trimmedPhone = input.phone.trim();
-      guestUser = await this.userRepo.findOne({
+      const foundPhoneUser = await this.userRepo.findOne({
         where: {
           phone: trimmedPhone,
-          email: `${trimmedPhone}@guest.rcfield.local`,
-          password_hash: IsNull(),
         },
       });
+
+      if (foundPhoneUser) {
+        const isGuest =
+          foundPhoneUser.email === `${trimmedPhone}@guest.rcfield.local` &&
+          !foundPhoneUser.password_hash;
+        if (!isGuest) {
+          phoneExisting = foundPhoneUser;
+        } else {
+          guestUser = foundPhoneUser;
+        }
+      }
+    }
+
+    if (emailExisting || phoneExisting) {
+      const details: Record<string, string> = {};
+      if (emailExisting) {
+        details.email = 'Email đã được sử dụng';
+      }
+      if (phoneExisting) {
+        details.phone = 'Số điện thoại đã được sử dụng';
+      }
+      throw new AppError('Thông tin đăng ký đã tồn tại', 409, 'REGISTRATION_CONFLICT', details);
     }
 
     const password_hash = await bcrypt.hash(input.password, 10);
@@ -321,7 +337,22 @@ class AuthService {
     if (!user) throw new AppError('Người dùng không tồn tại', 404, 'USER_NOT_FOUND');
 
     if (input.full_name !== undefined) user.full_name = input.full_name.trim();
-    if (input.phone !== undefined) user.phone = input.phone;
+    if (input.phone !== undefined) {
+      const newPhone = input.phone ? input.phone.trim() : null;
+      if (newPhone) {
+        const existingPhoneUser = await this.userRepo.findOne({
+          where: { phone: newPhone },
+        });
+        if (existingPhoneUser && existingPhoneUser.id !== userId) {
+          throw new AppError(
+            'Số điện thoại này đã được sử dụng bởi tài khoản khác',
+            409,
+            'PHONE_ALREADY_EXISTS',
+          );
+        }
+      }
+      user.phone = newPhone;
+    }
     if (input.avatar_url !== undefined) user.avatar_url = input.avatar_url;
 
     const saved = await this.userRepo.save(user);
@@ -475,6 +506,33 @@ class AuthService {
     user.password_hash = await bcrypt.hash(input.new_password, 10);
     await this.userRepo.save(user);
     await this.tokenRepo.delete({ user_id: userId });
+  }
+
+  async checkExists(
+    email?: string,
+    phone?: string,
+  ): Promise<{ emailExists: boolean; phoneExists: boolean }> {
+    let emailExists = false;
+    let phoneExists = false;
+
+    if (email) {
+      const cleanEmail = email.toLowerCase().trim();
+      const user = await this.userRepo.findOne({ where: { email: cleanEmail } });
+      if (user) emailExists = true;
+    }
+
+    if (phone) {
+      const trimmedPhone = phone.trim();
+      const user = await this.userRepo.findOne({ where: { phone: trimmedPhone } });
+      if (user) {
+        const isGuest = user.email === `${trimmedPhone}@guest.rcfield.local` && !user.password_hash;
+        if (!isGuest) {
+          phoneExists = true;
+        }
+      }
+    }
+
+    return { emailExists, phoneExists };
   }
 }
 

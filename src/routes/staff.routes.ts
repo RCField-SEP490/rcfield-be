@@ -8,6 +8,9 @@ export const staffRouter = Router();
 staffRouter.use(authenticate, authorize(UserRole.STAFF));
 
 staffRouter.get('/today-bookings', staffController.todayBookings);
+staffRouter.get('/packages/lookup', staffController.lookupCustomerPackages);
+staffRouter.get('/packages/top-customers', staffController.getTopCustomers);
+staffRouter.get('/packages/search-customers', staffController.searchCustomers);
 staffRouter.get('/bookings', staffController.bookings);
 staffRouter.post('/bookings', staffController.createWalkInBooking);
 staffRouter.get('/fnb-orders', staffController.getFnbOrders);
@@ -24,7 +27,6 @@ staffRouter.put(
   '/sessions/:sessionId/inspections/:inspectionId/damage-items',
   staffController.updateDamageItems,
 );
-staffRouter.post('/sessions/:sessionId/escalate-dispute', staffController.escalateDispute);
 staffRouter.post('/sessions/:sessionId/extensions', staffController.proposeExtension);
 staffRouter.post('/sessions/:sessionId/fnb-orders', staffController.addSessionFnbOrder);
 staffRouter.post('/sessions/:sessionId/swap-vehicle', staffController.swapSessionVehicle);
@@ -40,10 +42,6 @@ staffRouter.post('/maintenance-logs', staffController.createMaintenanceLog);
 staffRouter.patch('/maintenance-logs/:id/status', staffController.updateMaintenanceStatus);
 
 // Client Simulators
-staffRouter.post(
-  '/sessions/:sessionId/simulate-check-in-response',
-  staffController.simulateClientCheckIn,
-);
 staffRouter.post(
   '/sessions/:sessionId/simulate-check-out-response',
   staffController.simulateClientCheckOut,

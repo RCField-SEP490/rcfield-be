@@ -120,11 +120,14 @@ export const providerDashboardController = {
   async getRecentBookings(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const providerId = req.user!.userId;
-      const { limit } = req.query;
+      const { limit, from, to, cafeId } = req.query;
 
       const bookings = await providerDashboardService.getProviderRecentBookings(
         providerId,
         limit ? Number(limit) : undefined,
+        from ? String(from) : undefined,
+        to ? String(to) : undefined,
+        cafeId ? String(cafeId) : undefined,
       );
 
       res.json({ success: true, data: bookings });
