@@ -418,34 +418,6 @@ async function ensureCustomerPackage(params: {
   }
 }
 
-async function ensureCustomerVehicle(customerId: string, email: string): Promise<void> {
-  const brand = email === 'customer_other@gmail.com' ? 'MST' : 'Yokomo';
-  const model = email === 'customer_other@gmail.com' ? 'RMX 2.5 S' : 'YD-2Z RWD';
-  const serialNumber = `SEED-BYOC-${email === 'customer_other@gmail.com' ? 'KELVIN' : 'PHUC'}`;
-  const [existing] = await AppDataSource.query<{ id: string }[]>(
-    `SELECT id FROM customer_vehicles
-      WHERE customer_id = $1 AND serial_number = $2 AND deleted_at IS NULL LIMIT 1`,
-    [customerId, serialNumber],
-  );
-  const description = `${SEED_TAG} ${brand} ${model} - xe cá nhân sẵn sàng cho luồng mang xe riêng và đăng ký giải.`;
-  if (existing) {
-    await AppDataSource.query(
-      `UPDATE customer_vehicles
-          SET brand = $1, model = $2, description = $3,
-              notes = 'Đã kiểm tra trước khi vào sân.', updated_at = NOW()
-        WHERE id = $4`,
-      [brand, model, description, existing.id],
-    );
-  } else {
-    await AppDataSource.query(
-      `INSERT INTO customer_vehicles
-         (customer_id, brand, model, serial_number, description, notes)
-       VALUES ($1, $2, $3, $4, $5, 'Đã kiểm tra trước khi vào sân.')`,
-      [customerId, brand, model, serialNumber, description],
-    );
-  }
-}
-
 async function ensureContestCommercialState(providerId: string, adminId: string): Promise<void> {
   const [featuredPlan] = await AppDataSource.query<
     { id: string; price: number; featured_days: number }[]
@@ -590,8 +562,6 @@ async function main(): Promise<void> {
     slotsRemaining: 6,
     txnRef: 'seed_pkg_kelvin_drift_month8',
   });
-  await ensureCustomerVehicle(primaryCustomer.id, primaryCustomer.email);
-  await ensureCustomerVehicle(kelvin.id, kelvin.email);
   await ensureContestCommercialState(provider.id, admin.id);
 
   await AppDataSource.destroy();

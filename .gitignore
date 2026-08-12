@@ -8,3 +8,8 @@ dist/
 
 # NLU service virtualenv
 nlu-service/.venv/
+
+# Tài liệu schema do SchemaSpy sinh ra. Dựng lại được từ DB bất cứ lúc nào, nên
+# không commit: mỗi lần chạy migration là hơn 300 file HTML/PNG đổi theo, nhấn
+# chìm phần diff thật sự cần đọc.
+schemaspy_output/

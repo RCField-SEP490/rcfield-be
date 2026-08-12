@@ -67,6 +67,8 @@ type CafeBrowseItem = Omit<Cafe, 'trackTypes'> & {
   rating: number;
   reviewsCount: number;
   minPrice: number;
+  /** Tên doanh nghiệp của chủ cơ sở. `null` khi hồ sơ chưa có. */
+  providerName: string | null;
   activePromotions: ActivePromotionSummary[];
 };
 
@@ -278,17 +280,40 @@ async function loadCafeActivePromotions(
   return grouped;
 }
 
+/**
+ * Tên doanh nghiệp của từng chủ cơ sở, tra theo lô.
+ *
+ * Màn quản trị trước đây chỉ có `providerId` nên hiển thị tám ký tự đầu của
+ * UUID — vô nghĩa với người đọc, và không gom được các chi nhánh cùng một chủ.
+ *
+ * Chỉ lấy tên doanh nghiệp. Các trường còn lại của hồ sơ provider — giấy tờ
+ * KYC, lý do từ chối, trạng thái duyệt — không có việc gì ở một danh sách cơ
+ * sở, và bảng này còn phục vụ cả người dùng chưa đăng nhập.
+ */
+async function loadProviderNames(providerIds: string[]): Promise<Map<string, string>> {
+  const unique = Array.from(new Set(providerIds.filter(Boolean)));
+  if (unique.length === 0) return new Map();
+
+  const profiles = await AppDataSource.getRepository(ProviderProfile).find({
+    where: { userId: In(unique) },
+    select: ['userId', 'businessName'],
+  });
+
+  return new Map(profiles.map((profile) => [profile.userId, profile.businessName]));
+}
+
 async function hydrateCafeBrowsePayload(
   cafes: Cafe[],
   metricsMap?: Map<string, CafeBrowseMetrics>,
 ): Promise<CafeBrowseItem[]> {
   if (cafes.length === 0) return [];
 
-  const [trackTypeMap, amenityMap, promoMap, fallbackMetrics] = await Promise.all([
+  const [trackTypeMap, amenityMap, promoMap, fallbackMetrics, providerNameMap] = await Promise.all([
     loadCafeTrackTypes(cafes),
     loadCafeAmenities(cafes),
     loadCafeActivePromotions(cafes.map((cafe) => cafe.id)),
     metricsMap ? Promise.resolve(metricsMap) : loadCafeBrowseMetrics(cafes.map((cafe) => cafe.id)),
+    loadProviderNames(cafes.map((cafe) => cafe.providerId)),
   ]);
 
   return cafes.map((cafe) => {
@@ -300,6 +325,7 @@ async function hydrateCafeBrowsePayload(
       rating: metrics.rating,
       reviewsCount: metrics.reviewsCount,
       minPrice: toNumber(cafe.slotFeeRate),
+      providerName: providerNameMap.get(cafe.providerId) ?? null,
       activePromotions: promoMap.get(cafe.id) ?? [],
     };
   });

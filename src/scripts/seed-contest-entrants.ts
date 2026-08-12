@@ -436,7 +436,6 @@ async function seedEntrants(): Promise<void> {
         // Chiếc xe cụ thể và phiếu mượn xe chỉ sinh lúc staff giao xe ở check-in.
         registration.vehicleId = null;
         registration.bookingId = null;
-        registration.customerVehicleId = null;
         registration.rentalCatalogId = entrant.rentalCatalogId;
         registration.rentalCafeId = entrant.rentalCafeId;
         registration.status = entrant.pendingReview

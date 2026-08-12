@@ -59,7 +59,6 @@ function createMockRegistration(id: string, index: number): ContestRegistration 
     participantRoleSnapshot: 'CUSTOMER',
     vehicleSource: VehicleSource.RENTAL,
     vehicleId: null,
-    customerVehicleId: null,
     bookingId: null,
     status: ContestRegistrationStatus.CHECKED_IN,
     checkInCode: `CODE${index}`,
