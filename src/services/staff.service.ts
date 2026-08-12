@@ -64,6 +64,7 @@ import { createBookingReviewRequestNotification, createNotification } from './no
 import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { createWalkInBooking as createWalkInBookingService } from './booking.service';
 import { getSessionOperationalTiming } from '../lib/session-operational-timing';
+import { isRangeWithinOperatingHours } from '../lib/vietnam-time';
 import {
   buildBookingFinancialSummary,
   type PendingInitialPaymentSnapshot,
@@ -2188,7 +2189,14 @@ function resolveOperatingWindowForBooking(
 function getExtensionBlockedReason(cafe: Cafe, booking: Booking, proposedEnd: Date): string | null {
   const operatingWindow = resolveOperatingWindowForBooking(cafe, booking);
   if (!operatingWindow) return null;
-  if (proposedEnd.getTime() <= operatingWindow.closeAt.getTime()) return null;
+
+  // Dùng đúng phép kiểm của lúc tạo booking: nối các khung giờ liền nhau thay
+  // vì chỉ so với giờ đóng của MỘT ngày. Quán mở 00:00–24:00 mọi ngày là mở
+  // 24/7 — trước đây gia hạn từ 23:00 sang 00:15 bị chặn vì tưởng đã quá giờ
+  // đóng cửa, dù chính quán đó cho phép ĐẶT một đơn 23:00–01:00.
+  if (isRangeWithinOperatingHours(cafe.operatingHours, booking.slotStart, proposedEnd)) {
+    return null;
+  }
   return `Vượt giờ đóng cửa (${formatSlotTime(operatingWindow.closeAt)})`;
 }
 

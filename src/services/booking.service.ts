@@ -56,9 +56,9 @@ import { createNotification } from './notification.service';
 import type { Promotion } from '../models/promotion.entity';
 import {
   DAY_MS,
-  buildOperatingWindow,
   getOperatingDayKey,
   getVietnamLocalMidnightUtcMs,
+  isRangeWithinOperatingHours,
 } from '../lib/vietnam-time';
 
 // ── State machine ─────────────────────────────────────────────────────────────
@@ -101,10 +101,6 @@ export function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slot
     candidates.push(candidate);
   }
 
-  const windows = candidates
-    .map((candidate) => buildOperatingWindow(cafe.operatingHours, candidate))
-    .filter((window): window is { openAt: Date; closeAt: Date } => window !== null);
-
   const hasConfiguredDay = candidates.some(
     (candidate) => cafe.operatingHours?.[getOperatingDayKey(candidate)] !== undefined,
   );
@@ -116,21 +112,10 @@ export function assertSlotWithinOperatingHours(cafe: Cafe, slotStart: Date, slot
     );
   }
 
-  // A booking may pass midnight. It is valid when the full range is covered by
-  // consecutive operating windows (for example, 00:00–24:00 on two adjacent days).
-  let coveredUntil = slotStart.getTime();
-  const requestedEnd = slotEnd.getTime();
-  while (coveredUntil < requestedEnd) {
-    const coveringWindows = windows.filter(
-      (window) =>
-        window.openAt.getTime() <= coveredUntil && window.closeAt.getTime() > coveredUntil,
-    );
-    const latestClose = Math.max(...coveringWindows.map((window) => window.closeAt.getTime()));
-    if (!Number.isFinite(latestClose)) break;
-    coveredUntil = latestClose;
-  }
-
-  if (coveredUntil >= requestedEnd) return;
+  // Đơn có thể vắt qua nửa đêm; hợp lệ khi cả khoảng nằm trọn trong các khung
+  // giờ liền nhau. Logic nối khung nằm ở `isRangeWithinOperatingHours` để chỗ
+  // kiểm tra gia hạn dùng đúng cùng một định nghĩa.
+  if (isRangeWithinOperatingHours(cafe.operatingHours, slotStart, slotEnd)) return;
 
   throw new AppError(
     'Selected slot is outside cafe operating hours',

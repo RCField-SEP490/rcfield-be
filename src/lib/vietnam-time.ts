@@ -46,6 +46,47 @@ export function parseOperatingTimeToMinutes(value?: string): number | null {
  * Giờ đóng nhỏ hơn hoặc bằng giờ mở nghĩa là quán bán qua nửa đêm, nên khung
  * được kéo sang ngày hôm sau thay vì coi là cấu hình sai.
  */
+/**
+ * Quán còn mở liên tục suốt khoảng `[start, end)` hay không.
+ *
+ * Nối các khung giờ của những ngày liền nhau. Quán khai `00:00–24:00` mọi ngày
+ * là mở 24/7 — khung của ngày N kết thúc đúng lúc khung ngày N+1 bắt đầu, nên
+ * một khoảng vắt qua nửa đêm vẫn nằm trọn trong giờ mở cửa.
+ *
+ * Tách ra đây vì trước đó hai nơi tự tính theo hai cách khác nhau: lúc TẠO
+ * booking thì nối khung nên đặt được 23:00–01:00, còn lúc GIA HẠN chỉ lấy khung
+ * của một ngày nên gia hạn từ 23:00 sang 00:15 lại bị chặn — cùng một quán,
+ * cùng một khoảng thời gian, hai câu trả lời trái ngược.
+ */
+export function isRangeWithinOperatingHours(
+  operatingHours: CafeOperatingHours | null | undefined,
+  start: Date,
+  end: Date,
+): boolean {
+  const firstLocalDay = getVietnamLocalMidnightUtcMs(start) - DAY_MS;
+  const lastLocalDay = getVietnamLocalMidnightUtcMs(new Date(end.getTime() - 1)) + DAY_MS;
+
+  const windows: { openAt: Date; closeAt: Date }[] = [];
+  for (let candidate = firstLocalDay; candidate <= lastLocalDay; candidate += DAY_MS) {
+    const window = buildOperatingWindow(operatingHours, candidate);
+    if (window) windows.push(window);
+  }
+
+  let coveredUntil = start.getTime();
+  const requestedEnd = end.getTime();
+  while (coveredUntil < requestedEnd) {
+    const covering = windows.filter(
+      (window) =>
+        window.openAt.getTime() <= coveredUntil && window.closeAt.getTime() > coveredUntil,
+    );
+    const latestClose = Math.max(...covering.map((window) => window.closeAt.getTime()));
+    if (!Number.isFinite(latestClose)) break;
+    coveredUntil = latestClose;
+  }
+
+  return coveredUntil >= requestedEnd;
+}
+
 export function buildOperatingWindow(
   operatingHours: CafeOperatingHours | null | undefined,
   localMidnightUtcMs: number,
