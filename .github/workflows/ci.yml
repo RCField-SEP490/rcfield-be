@@ -21,6 +21,17 @@ on:
 
 # Huỷ lần chạy trước trên cùng nhánh khi có commit mới — nhưng KHÔNG áp cho lịch
 # định kỳ, vì mỗi lần chạy hằng ngày là một mốc quan sát riêng.
+# Những lần chạy đáng gửi báo cáo đầy đủ (đo độ phủ + mail cho cả nhóm):
+#   schedule           — kiểm tra định kỳ hằng ngày
+#   workflow_dispatch  — bấm chạy tay để kiểm chứng
+#   push lên `main`    — mỗi lần merge vào nhánh đang chạy thật, cả nhóm nhận
+#                        một mốc "sau khi merge, hệ thống còn lành hay không"
+#
+# Push lên nhánh khác thì KHÔNG gửi: người đẩy mã đã thấy đỏ ngay trên PR, gửi
+# mail nữa chỉ làm mọi người quen bỏ qua thư từ CI.
+env:
+  FULL_REPORT: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
@@ -96,7 +107,7 @@ jobs:
         run: |
           npm test -- --forceExit --runInBand \
             --json --outputFile=jest-results.json \
-            ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--coverage --coverageReporters=json-summary --coverageDirectory=coverage' || '' }}
+            ${{ env.FULL_REPORT == 'true' && '--coverage --coverageReporters=json-summary --coverageDirectory=coverage' || '' }}
         env:
           NODE_ENV: test
           PORT: 3001
@@ -171,12 +182,13 @@ jobs:
       - name: Gửi mail báo cáo cho nhóm
         # Cho phép cả `workflow_dispatch` để bấm chạy tay mà kiểm thử được ngay,
         # thay vì phải chờ tới lần chạy định kỳ hôm sau.
-        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        if: always() && env.FULL_REPORT == 'true'
         env:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           TEAM_EMAILS: ${{ secrets.TEAM_EMAILS }}
           BRANCH: ${{ env.BRANCH_LABEL }}
           OUTCOME: ${{ job.status }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           EMAIL_FROM: ${{ vars.EMAIL_FROM_EMAIL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -188,12 +200,22 @@ jobs:
           # `export` là bắt buộc: biến shell thường KHÔNG truyền sang tiến trình
           # con, thiếu nó thì node đọc `process.env.SUBJECT` ra undefined và mail
           # đi với tiêu đề rỗng.
+          # Nói rõ vì sao có thư này: đọc tiêu đề phải biết ngay đây là bản kiểm
+          # hằng ngày, bản chạy tay, hay bản chạy sau khi vừa merge vào main.
+          case "$GITHUB_EVENT_NAME" in
+            schedule)          KIND="kiểm thử định kỳ" ;;
+            workflow_dispatch) KIND="kiểm thử chạy tay" ;;
+            push)              KIND="kiểm thử sau khi merge" ;;
+            *)                 KIND="kiểm thử" ;;
+          esac
+
           if [ "$OUTCOME" = "success" ]; then
-            export SUBJECT="✅ RCField Backend · kiểm thử định kỳ ĐẠT · $BRANCH"
+            export SUBJECT="✅ RCField Backend · $KIND ĐẠT · $BRANCH"
           else
-            export SUBJECT="🔴 RCField Backend · kiểm thử định kỳ LỖI · $BRANCH"
+            export SUBJECT="🔴 RCField Backend · $KIND LỖI · $BRANCH"
           fi
 
+          export KIND
           node -e '
             const fs = require("fs");
             const html = fs.readFileSync("test-report/test-report.html", "utf8");
@@ -209,7 +231,7 @@ jobs:
                           background:${failed ? "#fef2f2" : "#ecfdf5"};
                           font:14px/1.6 system-ui,-apple-system,Segoe UI,sans-serif">
                 <div style="font-weight:800;font-size:16px;color:${failed ? "#b91c1c" : "#047857"}">
-                  ${failed ? "Kiểm thử định kỳ THẤT BẠI" : "Kiểm thử định kỳ ĐẠT"}
+                  ${failed ? "THẤT BẠI" : "ĐẠT"} — ${process.env.KIND}
                 </div>
                 <div style="margin-top:6px;color:#5d5f5f">
                   Nhánh <strong>${process.env.BRANCH}</strong> · ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} (giờ VN)
@@ -261,7 +283,7 @@ jobs:
       # hằng ngày mà mỗi lần một issue thì một tháng có 30 cái, không ai đọc nữa.
       # Hỏng lại thì thêm bình luận vào issue cũ.
       - name: Báo lỗi cho cả nhóm
-        if: failure() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        if: failure() && env.FULL_REPORT == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ env.BRANCH_LABEL }}
@@ -297,7 +319,7 @@ jobs:
       # Lần chạy định kỳ xanh trở lại thì đóng issue, để danh sách issue mở luôn
       # phản ánh đúng tình trạng hiện tại chứ không phải lịch sử.
       - name: Đóng cảnh báo khi đã xanh trở lại
-        if: success() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        if: success() && env.FULL_REPORT == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ env.BRANCH_LABEL }}
