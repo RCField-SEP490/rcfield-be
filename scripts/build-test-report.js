@@ -18,7 +18,23 @@
 const fs = require('fs');
 const path = require('path');
 
+const { areaOf, AREAS } = require('./report-areas');
+
 const [, , resultsPath, coveragePath, outDirArg] = process.argv;
+const argOf = (name) => {
+  const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
+  return hit ? hit.slice(name.length + 3) : null;
+};
+const readJsonOrNull = (file) => {
+  if (!file || !fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+const apiContract = readJsonOrNull(argOf('api-contract'));
+const apiSmoke = readJsonOrNull(argOf('api-smoke'));
 if (!resultsPath) {
   console.error('Thiếu đường dẫn tới tệp JSON kết quả Jest.');
   process.exit(1);
@@ -108,6 +124,26 @@ const totals = {
   durationMs: suites.reduce((sum, s) => sum + s.durationMs, 0),
 };
 const passRate = totals.tests ? ((totals.passed / totals.tests) * 100).toFixed(2) : '0.00';
+
+// Gom theo miền nghiệp vụ để người đọc thấy "test bảo đảm điều gì", thay vì một
+// danh sách đường dẫn tệp chỉ lập trình viên hiểu.
+const areaMap = new Map();
+for (const suite of suites) {
+  const area = areaOf(suite.name);
+  if (!areaMap.has(area.key)) {
+    areaMap.set(area.key, { ...area, suites: 0, cases: 0, passed: 0, failed: 0, notRun: 0 });
+  }
+  const bucket = areaMap.get(area.key);
+  bucket.suites += 1;
+  bucket.cases += suite.cases.length;
+  bucket.passed += suite.cases.filter((c) => c.status === 'passed').length;
+  bucket.failed += suite.cases.filter((c) => c.status === 'failed').length;
+  // Ca bỏ qua và ca mới khai chưa viết. Không tách ra thì bảng có dòng "89 ca /
+  // 75 đạt / ĐẠT" và người đọc lập tức hỏi 14 ca còn lại đi đâu.
+  bucket.notRun += suite.cases.filter((c) => c.status !== 'passed' && c.status !== 'failed').length;
+}
+const areaOrder = [...AREAS.map((a) => a.key), 'other'];
+const areas = areaOrder.map((k) => areaMap.get(k)).filter(Boolean);
 const generatedAt = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
 // ── junit.xml ────────────────────────────────────────────────────────────────
@@ -180,6 +216,34 @@ const md = [
         '',
       ]
     : []),
+  '## Kiểm thử bảo đảm điều gì',
+  '',
+  '| Nghiệp vụ | Số ca | Đạt | Bảo đảm |',
+  '|---|---:|---:|---|',
+  ...areas.map(
+    (a) => `| ${a.name} | ${a.cases} | ${a.passed} | ${a.guarantee} |`,
+  ),
+  '',
+  ...(apiContract
+    ? [
+        '## Giao kèo API giao diện ↔ máy chủ',
+        '',
+        `- Giao diện gọi **${apiContract.feCalls}** endpoint, máy chủ đăng ký **${apiContract.beRoutes}**.`,
+        `- Gọi vào endpoint không tồn tại: **${apiContract.broken.length}**.`,
+        ...apiContract.broken.map((b) => `  - \`${b.call}\``),
+        '',
+      ]
+    : []),
+  ...(apiSmoke
+    ? [
+        '## Gọi thử endpoint máy chủ',
+        '',
+        `- Đã gọi **${apiSmoke.total}** endpoint đọc dữ liệu.`,
+        `- Trả lỗi máy chủ: **${apiSmoke.broken.length}**.`,
+        ...apiSmoke.broken.map((b) => `  - \`${b.route}\` → ${b.status}`),
+        '',
+      ]
+    : []),
   ...(totals.failed > 0
     ? [
         '## Ca lỗi',
@@ -189,74 +253,162 @@ const md = [
         ),
         '',
       ]
-    : ['> Không có ca lỗi.', '']),
+    : []),
 ].join('\n');
 fs.writeFileSync(path.join(outDir, 'test-report.md'), md);
 
 // ── test-report.html ─────────────────────────────────────────────────────────
 const ok = totals.failed === 0;
+const contractBroken = apiContract ? apiContract.broken.length : null;
+const smokeBroken = apiSmoke ? apiSmoke.broken.length : null;
+
+const allGreen =
+  ok && !results.crashed && (contractBroken ?? 0) === 0 && (smokeBroken ?? 0) === 0;
+
+const conclusion = results.crashed
+  ? 'Tiến trình kiểm thử chết trước khi ghi được kết quả — chưa kết luận được.'
+  : allGreen
+    ? `Toàn bộ ${totals.passed} ca kiểm thử tự động đạt. Không phát hiện endpoint nào gọi sai hoặc trả lỗi máy chủ.`
+    : (() => {
+        const issues = [];
+        if (totals.failed) issues.push(`${totals.failed} ca kiểm thử lỗi`);
+        if (contractBroken) issues.push(`${contractBroken} endpoint giao diện gọi vào chỗ không tồn tại`);
+        if (smokeBroken) issues.push(`${smokeBroken} endpoint trả lỗi máy chủ`);
+        return `${totals.passed}/${totals.tests} ca kiểm thử đạt. Còn tồn đọng: ${issues.join('; ')}.`;
+      })();
+
 const html = `<!doctype html>
 <html lang="vi"><head><meta charset="utf-8">
 <title>Báo cáo kiểm thử — RCField Backend</title>
 <style>
- body{font:14px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#1c1b1b;margin:0;padding:32px;background:#faf9f8}
- .wrap{max-width:960px;margin:0 auto}
- h1{font-size:24px;margin:0 0 4px} .sub{color:#747878;margin-bottom:24px}
- .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:24px}
+ body{font:14px/1.65 system-ui,-apple-system,Segoe UI,sans-serif;color:#1c1b1b;margin:0;padding:32px;background:#faf9f8}
+ .wrap{max-width:980px;margin:0 auto}
+ h1{font-size:24px;margin:0 0 4px} .sub{color:#747878;margin-bottom:20px}
+ h2{font-size:17px;margin:32px 0 6px}
+ .lead{color:#5d5f5f;margin:0 0 12px;max-width:70ch}
+ .verdict{padding:16px 20px;border-radius:12px;margin-bottom:24px;font-weight:600}
+ .verdict.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+ .verdict.bad{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+ .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:8px}
  .card{background:#fff;border:1px solid #e5e2e1;border-radius:12px;padding:14px}
  .card .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#747878}
  .card .v{font-size:24px;font-weight:800;margin-top:4px}
  .ok{color:#047857} .bad{color:#b91c1c}
  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e2e1;border-radius:12px;overflow:hidden}
- th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #f0eeed;font-size:13px}
+ th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #f0eeed;font-size:13px;vertical-align:top}
  th{background:#f6f3f2;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#5d5f5f}
  tr:last-child td{border-bottom:none}
- td.num{text-align:right;font-variant-numeric:tabular-nums}
- h2{font-size:16px;margin:28px 0 10px}
- .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}
  .pill.ok{background:#d1fae5;color:#047857} .pill.bad{background:#fee2e2;color:#b91c1c}
+ .note{background:#fff;border:1px solid #e5e2e1;border-left:3px solid #c4c7c8;border-radius:8px;padding:12px 16px;color:#5d5f5f;font-size:13px}
+ code{background:#f6f3f2;padding:1px 5px;border-radius:4px;font-size:12px}
 </style></head><body><div class="wrap">
 <h1>Báo cáo kiểm thử — RCField Backend</h1>
-<p class="sub">Chạy lúc ${escapeHtml(generatedAt)} (giờ Việt Nam)</p>
-${
-  results.crashed
-    ? `<div style="padding:16px 20px;margin-bottom:20px;border-radius:12px;border:1px solid #fecaca;background:#fef2f2">
-         <div style="font-weight:800;color:#b91c1c">Tiến trình kiểm thử chết trước khi ghi được kết quả</div>
-         <div style="margin-top:6px;color:#5d5f5f">Thường gặp: hết bộ nhớ, quá thời gian, hoặc container cơ sở dữ liệu sập.
-         Các con số bên dưới bằng 0 vì không có dữ liệu, không phải vì không có test. Mở nhật ký lần chạy để xem nguyên nhân.</div>
-       </div>`
-    : ''
-}
+<p class="sub">Chạy tự động lúc ${escapeHtml(generatedAt)} (giờ Việt Nam)</p>
+
+<div class="verdict ${allGreen && !results.crashed ? 'ok' : 'bad'}">${escapeHtml(conclusion)}</div>
+
+<h2>Số liệu tổng hợp</h2>
 <div class="cards">
  <div class="card"><div class="k">Tổng số ca</div><div class="v">${totals.tests}</div></div>
  <div class="card"><div class="k">Đạt</div><div class="v ok">${totals.passed}</div></div>
  <div class="card"><div class="k">Lỗi</div><div class="v ${ok ? 'ok' : 'bad'}">${totals.failed}</div></div>
  <div class="card"><div class="k">Tỷ lệ đạt</div><div class="v ${ok ? 'ok' : 'bad'}">${passRate}%</div></div>
- <div class="card"><div class="k">Bộ kiểm thử</div><div class="v">${totals.suites}</div></div>
+ <div class="card"><div class="k">Nhóm nghiệp vụ</div><div class="v">${areas.length}</div></div>
  <div class="card"><div class="k">Thời gian</div><div class="v">${(totals.durationMs / 1000).toFixed(0)}s</div></div>
 </div>
+
+<h2>Kiểm thử tự động bảo đảm điều gì</h2>
+<p class="lead">Mỗi dòng là một mảng nghiệp vụ của hệ thống. Cột cuối nói rõ: nếu nhóm ca đó đạt thì điều gì được bảo đảm.</p>
+<table><tr><th>Nghiệp vụ</th><th>Số ca</th><th>Đạt</th><th>Chưa chạy</th><th>Kết quả</th><th>Bảo đảm điều gì</th></tr>
+${areas
+  .map(
+    (a) => `<tr>
+      <td><strong>${escapeHtml(a.name)}</strong><div style="color:#747878;font-size:12px;margin-top:2px">${a.suites} bộ kiểm thử</div></td>
+      <td class="num">${a.cases}</td>
+      <td class="num">${a.passed}</td>
+      <td class="num" style="color:#747878">${a.notRun || '—'}</td>
+      <td><span class="pill ${a.failed ? 'bad' : 'ok'}">${a.failed ? `${a.failed} LỖI` : 'ĐẠT'}</span></td>
+      <td>${escapeHtml(a.guarantee)}</td>
+    </tr>`,
+  )
+  .join('\n')}
+</table>
+
+<p class="lead" style="margin-top:10px">
+  Cột <em>chưa chạy</em> gồm ca tạm bỏ qua và ca đã khai tên nhưng chưa viết nội dung
+  (${totals.skipped} bỏ qua, ${totals.todo} chưa viết). Chúng không phải ca lỗi,
+  nhưng cũng chưa bảo đảm được gì.
+</p>
+
+${
+  apiContract
+    ? `<h2>Kiểm tra giao kèo API giữa giao diện và máy chủ</h2>
+<p class="lead">Đối chiếu mọi lệnh gọi API trong mã giao diện với mọi endpoint máy chủ đăng ký, để phát hiện chỗ giao diện gọi vào endpoint không tồn tại.</p>
+<div class="cards">
+ <div class="card"><div class="k">Giao diện gọi</div><div class="v">${apiContract.feCalls}</div></div>
+ <div class="card"><div class="k">Máy chủ đăng ký</div><div class="v">${apiContract.beRoutes}</div></div>
+ <div class="card"><div class="k">Gọi vào chỗ trống</div><div class="v ${contractBroken ? 'bad' : 'ok'}">${contractBroken}</div></div>
+</div>
+${
+  contractBroken
+    ? `<table style="margin-top:12px"><tr><th>Endpoint giao diện gọi</th><th>Nơi gọi</th></tr>
+${apiContract.broken
+  .map((b) => `<tr><td><code>${escapeHtml(b.call)}</code></td><td style="color:#747878">${escapeHtml(b.where[0] || '')}</td></tr>`)
+  .join('\n')}</table>`
+    : '<div class="note">Không có endpoint nào bị gọi vào chỗ trống.</div>'
+}`
+    : ''
+}
+
+${
+  apiSmoke
+    ? `<h2>Gọi thử endpoint máy chủ</h2>
+<p class="lead">Gọi thật từng endpoint đọc dữ liệu, dùng mã định danh lấy từ cơ sở dữ liệu, để phát hiện endpoint vỡ khi chạy. Chỉ gọi loại đọc để không làm thay đổi dữ liệu.</p>
+<div class="cards">
+ <div class="card"><div class="k">Đã gọi</div><div class="v">${apiSmoke.total}</div></div>
+ <div class="card"><div class="k">Trả lỗi máy chủ</div><div class="v ${smokeBroken ? 'bad' : 'ok'}">${smokeBroken}</div></div>
+ <div class="card"><div class="k">Phản hồi chậm</div><div class="v">${apiSmoke.slow ? apiSmoke.slow.length : 0}</div></div>
+</div>
+${
+  smokeBroken
+    ? `<table style="margin-top:12px"><tr><th>Endpoint</th><th>Mã</th><th>Thông báo</th></tr>
+${apiSmoke.broken
+  .map((b) => `<tr><td><code>${escapeHtml(b.route)}</code></td><td class="num">${b.status === -1 ? 'chết' : b.status}</td><td style="color:#747878">${escapeHtml((b.note || '').slice(0, 120))}</td></tr>`)
+  .join('\n')}</table>`
+    : '<div class="note">Không endpoint nào trả lỗi máy chủ.</div>'
+}`
+    : ''
+}
+
 ${
   coverage
-    ? `<h2>Độ phủ mã nguồn</h2><table><tr><th>Loại</th><th>Tỷ lệ</th><th>Đã phủ / Tổng</th></tr>
+    ? `<h2>Độ phủ mã nguồn</h2>
+<p class="lead">Tỷ lệ mã nguồn thực sự được chạy qua trong lúc kiểm thử. Đây là số đo tự động, không phải ước lượng.</p>
+<table><tr><th>Loại</th><th>Tỷ lệ</th><th>Đã phủ / Tổng</th></tr>
 ${['statements', 'branches', 'functions', 'lines']
   .map((k) =>
     coverage[k]
-      ? `<tr><td>${{ statements: 'Câu lệnh', branches: 'Nhánh', functions: 'Hàm', lines: 'Dòng' }[k]}</td><td class="num">${coverage[k].pct}%</td><td class="num">${coverage[k].covered}/${coverage[k].total}</td></tr>`
+      ? `<tr><td>${{ statements: 'Câu lệnh', branches: 'Nhánh rẽ', functions: 'Hàm', lines: 'Dòng' }[k]}</td><td class="num">${coverage[k].pct}%</td><td class="num">${coverage[k].covered}/${coverage[k].total}</td></tr>`
       : '',
   )
   .join('\n')}</table>`
     : ''
 }
-<h2>Chi tiết theo bộ kiểm thử</h2>
-<table><tr><th>Bộ kiểm thử</th><th>Số ca</th><th>Đạt</th><th>Lỗi</th><th>Thời gian</th><th></th></tr>
-${suites
-  .map((s) => {
-    const p = s.cases.filter((c) => c.status === 'passed').length;
-    const f = s.cases.filter((c) => c.status === 'failed').length;
-    return `<tr><td><code>${escapeHtml(s.name)}</code></td><td class="num">${s.cases.length}</td><td class="num">${p}</td><td class="num">${f}</td><td class="num">${(s.durationMs / 1000).toFixed(1)}s</td><td><span class="pill ${f ? 'bad' : 'ok'}">${f ? 'LỖI' : 'ĐẠT'}</span></td></tr>`;
-  })
-  .join('\n')}
-</table></div></body></html>`;
+
+<h2>Phạm vi chưa được kiểm thử tự động</h2>
+<div class="note">
+  Nêu rõ để không hiểu nhầm bản báo cáo này bảo đảm nhiều hơn thực tế:
+  <ul style="margin:8px 0 0;padding-left:20px">
+    <li>Giao diện người dùng chỉ kiểm ở mức hàm xử lý, chưa mô phỏng thao tác thật trên trình duyệt.</li>
+    <li>Thanh toán chạy trên môi trường thử của VNPay và mô phỏng chuyển khoản, không phải giao dịch tiền thật.</li>
+    <li>Chưa kiểm tải cao, chưa kiểm xâm nhập, chưa kiểm trên ma trận trình duyệt và thiết bị.</li>
+    ${apiSmoke ? '<li>Phép gọi thử endpoint chỉ chạy loại đọc; các thao tác ghi được kiểm qua bộ kiểm thử tự động ở trên.</li>' : ''}
+  </ul>
+</div>
+
+</div></body></html>`;
 fs.writeFileSync(path.join(outDir, 'test-report.html'), html);
 
 console.log(
