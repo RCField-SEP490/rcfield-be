@@ -12,6 +12,7 @@ import {
   PromoApplicableTo,
   ReviewStatus,
   UserRole,
+  VehicleStatus,
 } from '../types';
 import { checkBranchQuota } from './subscription.service';
 import { Booking } from '../models/booking.entity';
@@ -42,6 +43,8 @@ interface ListOptions {
   status?: CafeStatus;
   /** 'YYYY-MM-DD' theo giờ Việt Nam. Chỉ giữ chi nhánh còn slot trống ngày đó. */
   date?: string;
+  /** Năng lực của chi nhánh: còn xe cho thuê, hay có nhận khách mang xe riêng. */
+  play_mode?: 'RENTAL' | 'BYOC';
   viewer?: Viewer;
 }
 
@@ -331,13 +334,16 @@ async function hydrateCafeBrowsePayload(
   });
 }
 
-function applyBrowseFilters(qb: SelectQueryBuilder<Cafe>, options: ListOptions) {
+function applyBrowseFilters(
+  qb: SelectQueryBuilder<Cafe>,
+  options: ListOptions,
+  trackTypeId?: string,
+) {
   const {
     query,
     slug,
     district,
     city,
-    track_type,
     price_min,
     price_max,
     amenities,
@@ -365,7 +371,29 @@ function applyBrowseFilters(qb: SelectQueryBuilder<Cafe>, options: ListOptions) 
   // Cột này vốn đã được tìm bằng ILIKE ở câu tìm kiếm tự do ngay trên, nên đây
   // là cách cư xử nhất quán chứ không phải ngoại lệ.
   if (city) qb.andWhere('cafe.city ILIKE :city', { city: `%${city}%` });
-  if (track_type) qb.andWhere(':trackType = ANY(cafe.track_types)', { trackType: track_type });
+  // `cafes.track_types` là mảng uuid. Bộ lọc cho phép gửi mã (`DRIFT`) để đường
+  // dẫn chia sẻ đọc được, nên `listCafes` quy đổi sang uuid rồi truyền vào đây.
+  if (trackTypeId) qb.andWhere(':trackType = ANY(cafe.track_types)', { trackType: trackTypeId });
+
+  // Chế độ chơi là năng lực của chi nhánh, không phải cột có sẵn:
+  //   RENTAL — còn xe cho thuê dùng được (loại RETIRED và xe đã xoá mềm)
+  //   BYOC   — có nhận khách mang xe riêng
+  // Một chi nhánh khai byoc_capacity nhưng chưa nhập xe nào thì không hiện ở bộ
+  // lọc RENTAL — đúng thực tế, khách chọn "thuê xe" mà tới nơi không có xe là
+  // hỏng cả buổi.
+  if (options.play_mode === 'RENTAL') {
+    qb.andWhere(
+      `EXISTS (
+         SELECT 1 FROM vehicles v
+         WHERE v.cafe_id = cafe.id
+           AND v.deleted_at IS NULL
+           AND v.status <> :retired
+       )`,
+      { retired: VehicleStatus.RETIRED },
+    );
+  } else if (options.play_mode === 'BYOC') {
+    qb.andWhere('cafe.byoc_capacity > 0');
+  }
   if (price_min !== undefined)
     qb.andWhere('cafe.slot_fee_rate >= :priceMin', { priceMin: price_min });
   if (price_max !== undefined)
@@ -539,6 +567,21 @@ export async function createCafe(
   return getCafeDetail(saved.id, { userId: providerId, role: UserRole.PROVIDER });
 }
 
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * Đổi giá trị lọc loại sân sang uuid. Nhận sẵn uuid thì trả về nguyên, nhận mã
+ * (`DRIFT`) thì tra bảng `track_types`. Trả `null` khi mã không tồn tại.
+ */
+async function resolveTrackTypeId(value: string): Promise<string | null> {
+  if (UUID_RE.test(value)) return value;
+  const found = await AppDataSource.getRepository(TrackType).findOne({
+    where: { code: value.toUpperCase() },
+    select: ['id'],
+  });
+  return found?.id ?? null;
+}
+
 export async function listCafes(
   options: ListOptions,
 ): Promise<{ data: CafeBrowseItem[]; total: number }> {
@@ -563,7 +606,16 @@ export async function listCafes(
     qb.andWhere('cafe.status = :status', { status });
   }
 
-  applyBrowseFilters(qb, options);
+  // Mã loại sân không tồn tại thì trả rỗng, không phải lỗi máy chủ: người dùng
+  // gõ sai trên thanh địa chỉ vẫn phải thấy trang danh sách trống bình thường.
+  let trackTypeId: string | undefined;
+  if (options.track_type) {
+    const resolved = await resolveTrackTypeId(options.track_type);
+    if (!resolved) return { data: [], total: 0 };
+    trackTypeId = resolved;
+  }
+
+  applyBrowseFilters(qb, options, trackTypeId);
   const data = await qb.getMany();
 
   // Lọc theo ngày TRƯỚC khi cắt trang, và lấy tổng từ tập đã lọc — lọc sau khi

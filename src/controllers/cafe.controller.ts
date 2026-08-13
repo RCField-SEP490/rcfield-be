@@ -80,6 +80,7 @@ export const cafeController = {
         popular_filters,
         status,
         date,
+        play_mode,
       } = CafeListQuerySchema.parse(normalizeCafeListQuery(req.query));
       const canFilterStatus =
         req.user?.role === UserRole.ADMIN || req.user?.role === UserRole.PROVIDER;
@@ -102,6 +103,7 @@ export const cafeController = {
         popular_filters,
         status: visibleStatus,
         date,
+        play_mode,
         viewer: viewerFromRequest(req),
       });
       res.json({

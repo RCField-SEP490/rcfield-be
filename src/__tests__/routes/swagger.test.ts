@@ -51,10 +51,17 @@ describe('GET /api-docs.json', () => {
           in: 'query',
           schema: expect.objectContaining({ example: 20 }),
         }),
+        // Bộ lọc nhận CẢ uuid lẫn mã loại sân (`DRIFT`) để đường dẫn chia sẻ đọc
+        // được; ví dụ trong tài liệu dùng mã cho sát cách người dùng thật gõ.
         expect.objectContaining({
           name: 'track_type',
           in: 'query',
-          schema: expect.objectContaining({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+          schema: expect.objectContaining({ example: 'DRIFT' }),
+        }),
+        expect.objectContaining({
+          name: 'play_mode',
+          in: 'query',
+          schema: expect.objectContaining({ example: 'RENTAL' }),
         }),
       ]),
     );

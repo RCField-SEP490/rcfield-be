@@ -11,10 +11,16 @@ export function errorMiddleware(
   _next: NextFunction,
 ): void {
   if (err instanceof ZodError) {
+    const errors = err.errors.map((e) => ({ field: e.path.join('.'), message: e.message }));
     res.status(400).json({
       success: false,
       code: 'VALIDATION_ERROR',
-      errors: err.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
+      // Trước đây chỉ trả mảng `errors`, không có `message` cấp trên. Logger HTTP
+      // đọc `message` nên mọi lỗi validate đều ghi ra `message: undefined` —
+      // biết là hỏng nhưng không biết trường nào. Tóm tắt lại ở đây để một dòng
+      // log đủ chỉ ra thủ phạm.
+      message: errors.map((e) => (e.field ? `${e.field}: ${e.message}` : e.message)).join('; '),
+      errors,
     });
     return;
   }
