@@ -27,7 +27,42 @@ if (!resultsPath) {
 const outDir = outDirArg || 'test-report';
 fs.mkdirSync(outDir, { recursive: true });
 
-const results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+/**
+ * Đọc kết quả Jest, chấp nhận việc KHÔNG có kết quả.
+ *
+ * Khi Jest chết giữa chừng — hết bộ nhớ, quá giờ, container DB sập — thì tệp
+ * JSON không bao giờ được ghi. Nếu để script này văng theo, cả dây chuyền phía
+ * sau đổ: không báo cáo, không artifact, không mail. Mà đó lại đúng là lúc cần
+ * mail nhất.
+ *
+ * Nên khi thiếu dữ liệu, vẫn dựng một báo cáo tối thiểu nói rõ "tiến trình chết
+ * trước khi kịp ghi kết quả" và chỉ người đọc sang nhật ký.
+ */
+function readResults() {
+  if (!fs.existsSync(resultsPath)) {
+    console.warn(`Không thấy ${resultsPath} — tiến trình test có thể đã chết giữa chừng.`);
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+  } catch (err) {
+    console.warn(`Không đọc được ${resultsPath}: ${err.message}`);
+    return null;
+  }
+}
+
+const results = readResults() ?? {
+  crashed: true,
+  testResults: [],
+  numTotalTestSuites: 0,
+  numFailedTestSuites: 0,
+  numTotalTests: 0,
+  numPassedTests: 0,
+  numFailedTests: 0,
+  numPendingTests: 0,
+  numTodoTests: 0,
+};
+
 const coverage =
   coveragePath && fs.existsSync(coveragePath)
     ? JSON.parse(fs.readFileSync(coveragePath, 'utf8')).total
@@ -103,11 +138,22 @@ fs.writeFileSync(path.join(outDir, 'junit.xml'), junit);
 
 // ── test-report.md ───────────────────────────────────────────────────────────
 const covRow = (label, m) => (m ? `| ${label} | ${m.pct}% | ${m.covered}/${m.total} |` : '');
+const crashNoteMd = results.crashed
+  ? [
+      '> ⚠️ **Tiến trình kiểm thử chết trước khi ghi được kết quả.**',
+      '> Thường gặp: hết bộ nhớ, quá thời gian, hoặc container cơ sở dữ liệu sập.',
+      '> Các con số dưới đây là 0 vì không có dữ liệu, KHÔNG phải vì không có test.',
+      '> Mở nhật ký lần chạy để xem nguyên nhân.',
+      '',
+    ]
+  : [];
+
 const md = [
   '# Báo cáo kiểm thử — RCField Backend',
   '',
   `**Thời điểm chạy:** ${generatedAt} (giờ Việt Nam)`,
   '',
+  ...crashNoteMd,
   '## Tổng hợp',
   '',
   '| Chỉ số | Giá trị |',
@@ -172,6 +218,15 @@ const html = `<!doctype html>
 </style></head><body><div class="wrap">
 <h1>Báo cáo kiểm thử — RCField Backend</h1>
 <p class="sub">Chạy lúc ${escapeHtml(generatedAt)} (giờ Việt Nam)</p>
+${
+  results.crashed
+    ? `<div style="padding:16px 20px;margin-bottom:20px;border-radius:12px;border:1px solid #fecaca;background:#fef2f2">
+         <div style="font-weight:800;color:#b91c1c">Tiến trình kiểm thử chết trước khi ghi được kết quả</div>
+         <div style="margin-top:6px;color:#5d5f5f">Thường gặp: hết bộ nhớ, quá thời gian, hoặc container cơ sở dữ liệu sập.
+         Các con số bên dưới bằng 0 vì không có dữ liệu, không phải vì không có test. Mở nhật ký lần chạy để xem nguyên nhân.</div>
+       </div>`
+    : ''
+}
 <div class="cards">
  <div class="card"><div class="k">Tổng số ca</div><div class="v">${totals.tests}</div></div>
  <div class="card"><div class="k">Đạt</div><div class="v ok">${totals.passed}</div></div>
@@ -205,5 +260,7 @@ ${suites
 fs.writeFileSync(path.join(outDir, 'test-report.html'), html);
 
 console.log(
-  `Đã dựng báo cáo trong ${outDir}/ — ${totals.passed}/${totals.tests} ca đạt (${passRate}%), ${totals.suites} bộ kiểm thử`,
+  results.crashed
+    ? `Đã dựng báo cáo tối thiểu trong ${outDir}/ — không có kết quả để đọc (tiến trình test đã chết).`
+    : `Đã dựng báo cáo trong ${outDir}/ — ${totals.passed}/${totals.tests} ca đạt (${passRate}%), ${totals.suites} bộ kiểm thử`,
 );

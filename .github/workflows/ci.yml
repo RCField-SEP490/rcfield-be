@@ -109,6 +109,13 @@ jobs:
             --json --outputFile=jest-results.json \
             ${{ env.FULL_REPORT == 'true' && '--coverage --coverageReporters=json-summary --coverageDirectory=coverage' || '' }}
         env:
+          # Runner GitHub có ~7GB RAM nên Node đặt heap mặc định khoảng 2GB. Chạy
+          # kèm `--coverage` trên 357 file nguồn thì vượt ngưỡng đó và chết với
+          # "JavaScript heap out of memory".
+          #
+          # Máy lập trình viên thường có heap mặc định 4GB nên chạy lọt — đó là lý
+          # do lỗi này chỉ lộ ra trên CI, không lộ khi thử ở máy.
+          NODE_OPTIONS: --max-old-space-size=4096
           NODE_ENV: test
           PORT: 3001
           DB_HOST: localhost
@@ -218,7 +225,17 @@ jobs:
           export KIND
           node -e '
             const fs = require("fs");
-            const html = fs.readFileSync("test-report/test-report.html", "utf8");
+            // Báo cáo có thể không tồn tại nếu tiến trình test chết trước khi
+            // dựng được. Mail vẫn phải đi — đó chính là lúc cần báo nhất — nên
+            // lùi về một thân thư tối thiểu thay vì để bước này văng theo.
+            const reportPath = "test-report/test-report.html";
+            const hasReport = fs.existsSync(reportPath);
+            const html = hasReport
+              ? fs.readFileSync(reportPath, "utf8")
+              : `<!doctype html><html lang="vi"><body>
+                   <p style="font:14px system-ui">Không dựng được báo cáo: tiến trình kiểm thử
+                   đã chết trước khi ghi kết quả. Xem nhật ký lần chạy để biết nguyên nhân.</p>
+                 </body></html>`;
             const to = process.env.TEAM_EMAILS.split(",")
               .map((e) => e.trim()).filter(Boolean).map((email) => ({ email }));
             // Chèn một khối đầu thư ngay trước nội dung báo cáo: nhánh nào,
@@ -252,10 +269,16 @@ jobs:
               to,
               subject: process.env.SUBJECT,
               htmlContent: body,
-              attachment: [{
-                name: "bao-cao-kiem-thu.html",
-                content: Buffer.from(html).toString("base64"),
-              }],
+              ...(hasReport
+                ? {
+                    attachment: [
+                      {
+                        name: "bao-cao-kiem-thu.html",
+                        content: Buffer.from(html).toString("base64"),
+                      },
+                    ],
+                  }
+                : {}),
             };
             fs.writeFileSync("mail.json", JSON.stringify(payload));
             console.log(`Gửi tới ${to.length} địa chỉ`);
