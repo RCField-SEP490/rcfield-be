@@ -1,7 +1,15 @@
 name: CI
 
 on:
+  # Chỉ chạy khi đẩy thẳng lên `main`. Đẩy lẻ lên nhánh làm việc không kiểm nữa —
+  # vòng kiểm đầy đủ mất khoảng 6 phút, chạy sau mỗi commit thì vừa tốn phút
+  # Actions vừa tạo ra nhiều thông báo đỏ tới mức không ai còn đọc.
+  #
+  # Lưới an toàn vẫn nguyên: mọi pull request đều chạy đủ, nên không nhánh nào
+  # merge được vào develop hay main mà chưa qua kiểm thử.
   push:
+    branches:
+      - main
   pull_request:
     types: [opened, synchronize, reopened]
   # Chạy lại mỗi ngày dù không ai đẩy mã.
@@ -48,9 +56,8 @@ jobs:
       fail-fast: false
       matrix:
         # Lịch định kỳ của GitHub chỉ chạy trên nhánh mặc định, nên phải tự chỉ
-        # định nhánh cần kiểm. `main` là mã đang chạy trên production, `develop`
-        # là mã sắp lên — hỏng ở đâu cũng cần biết.
-        ref: ${{ github.event_name == 'schedule' && fromJSON('["main","develop"]') || fromJSON('[""]') }}
+        # định nhánh cần kiểm. Chỉ kiểm `main` — đó là mã đang chạy thật.
+        ref: ${{ github.event_name == 'schedule' && fromJSON('["main"]') || fromJSON('[""]') }}
 
     services:
       postgres:
@@ -204,6 +211,17 @@ jobs:
             exit 0
           fi
 
+          # KHÔNG đặt địa chỉ mặc định ở đây. Bản trước rơi về `no-reply@rcfield.vn`
+          # khi thiếu cấu hình; Brevo nhận yêu cầu (HTTP 201) rồi chặn ở khâu phát
+          # vì địa chỉ đó chưa xác thực — nhìn log tưởng gửi thành công mà không ai
+          # nhận được gì. Thà dừng và nói rõ còn hơn im lặng gửi vào hư không.
+          if [ -z "$EMAIL_FROM" ]; then
+            echo "Chưa đặt biến EMAIL_FROM_EMAIL — bỏ qua bước gửi mail."
+            echo "Đặt tại: Settings → Secrets and variables → Actions → Variables."
+            echo "Giá trị phải là địa chỉ ĐÃ xác thực trong Brevo (Senders & Domains)."
+            exit 0
+          fi
+
           # `export` là bắt buộc: biến shell thường KHÔNG truyền sang tiến trình
           # con, thiếu nó thì node đọc `process.env.SUBJECT` ra undefined và mail
           # đi với tiêu đề rỗng.
@@ -265,7 +283,7 @@ jobs:
             const body = html.replace("<body>", `<body>${banner}`);
 
             const payload = {
-              sender: { name: "RCField CI", email: process.env.EMAIL_FROM || "no-reply@rcfield.vn" },
+              sender: { name: "RCField CI", email: process.env.EMAIL_FROM },
               to,
               subject: process.env.SUBJECT,
               htmlContent: body,
@@ -291,7 +309,25 @@ jobs:
             --data @mail.json)
 
           if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
-            echo "Đã gửi mail (HTTP $HTTP)"
+            # HTTP 201 chỉ nghĩa là Brevo NHẬN yêu cầu, KHÔNG phải đã tới hộp thư.
+            # Thư vẫn có thể bị chặn sau đó nếu địa chỉ người gửi chưa xác thực,
+            # người nhận nằm trong danh sách chặn, hoặc vượt hạn mức ngày.
+            # In `messageId` ra để tra cứu được trong Brevo → Transactional → Logs.
+            echo "Brevo đã nhận (HTTP $HTTP): $(cat mail-resp.json)"
+            echo "Người gửi: $EMAIL_FROM"
+            echo "LƯU Ý: 201 = đã nhận, chưa chắc đã phát. Không thấy thư thì tra messageId ở trên trong Brevo → Transactional → Logs."
+
+            # Đối chiếu người gửi với danh sách đã xác thực. Đây là nguyên nhân
+            # phổ biến nhất của "API báo thành công mà không ai nhận được".
+            FROM="$EMAIL_FROM"
+            SENDERS=$(curl -s -H "api-key: $BREVO_API_KEY" https://api.brevo.com/v3/senders || echo '{}')
+            if printf '%s' "$SENDERS" | grep -q "\"$FROM\""; then
+              echo "Người gửi $FROM có trong danh sách sender của Brevo."
+            else
+              echo "⚠️  Người gửi $FROM KHÔNG có trong danh sách sender đã xác thực của Brevo."
+              echo "    Thư sẽ bị chặn ở khâu phát dù API trả 201."
+              echo "    Sender hiện có: $(printf '%s' "$SENDERS" | tr ',' '\n' | grep -i 'email' | head -5)"
+            fi
           else
             echo "Gửi mail thất bại (HTTP $HTTP): $(cat mail-resp.json)"
             exit 1
