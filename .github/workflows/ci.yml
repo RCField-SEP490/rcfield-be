@@ -128,6 +128,18 @@ jobs:
           FB_REDIRECT_URI: http://localhost:3001/api/v1/channels/facebook/callback
           CHANNEL_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000001'
 
+      # Với sự kiện pull request, `github.ref_name` là ref hợp nhất dạng `60/merge`.
+      # Dấu `/` không hợp lệ trong tên artifact, và "60/merge" cũng chẳng nói cho
+      # ai biết đang kiểm nhánh nào. Tính sẵn một nhãn sạch dùng chung cho artifact,
+      # tiêu đề mail và tiêu đề issue.
+      - name: Xác định nhãn nhánh
+        if: always()
+        run: |
+          RAW="${{ matrix.ref || github.head_ref || github.ref_name }}"
+          SAFE=$(printf '%s' "$RAW" | tr '/' '-' | tr -cd '[:alnum:]._-')
+          echo "BRANCH_LABEL=${SAFE:-unknown}" >> "$GITHUB_ENV"
+          echo "Nhãn nhánh: ${SAFE:-unknown} (gốc: $RAW)"
+
       # ── Báo cáo kiểm thử ────────────────────────────────────────────────────
       #
       # `always()` để test hỏng vẫn có báo cáo — đó chính là lúc cần báo cáo nhất.
@@ -145,7 +157,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bao-cao-kiem-thu-${{ matrix.ref || github.ref_name }}-${{ github.run_number }}
+          name: bao-cao-kiem-thu-${{ env.BRANCH_LABEL }}-${{ github.run_number }}
           path: test-report/
           retention-days: 90
 
@@ -163,7 +175,7 @@ jobs:
         env:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           TEAM_EMAILS: ${{ secrets.TEAM_EMAILS }}
-          BRANCH: ${{ matrix.ref || github.ref_name }}
+          BRANCH: ${{ env.BRANCH_LABEL }}
           OUTCOME: ${{ job.status }}
           EMAIL_FROM: ${{ vars.EMAIL_FROM_EMAIL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -187,11 +199,37 @@ jobs:
             const html = fs.readFileSync("test-report/test-report.html", "utf8");
             const to = process.env.TEAM_EMAILS.split(",")
               .map((e) => e.trim()).filter(Boolean).map((email) => ({ email }));
+            // Chèn một khối đầu thư ngay trước nội dung báo cáo: nhánh nào,
+            // đạt hay lỗi, và LINK TỚI NHẬT KÝ. Thiếu link thì người nhận mail
+            // báo lỗi phải tự mò vào GitHub tìm đúng lần chạy.
+            const failed = process.env.OUTCOME !== "success";
+            const banner = `
+              <div style="max-width:960px;margin:0 auto 20px;padding:16px 20px;border-radius:12px;
+                          border:1px solid ${failed ? "#fecaca" : "#a7f3d0"};
+                          background:${failed ? "#fef2f2" : "#ecfdf5"};
+                          font:14px/1.6 system-ui,-apple-system,Segoe UI,sans-serif">
+                <div style="font-weight:800;font-size:16px;color:${failed ? "#b91c1c" : "#047857"}">
+                  ${failed ? "Kiểm thử định kỳ THẤT BẠI" : "Kiểm thử định kỳ ĐẠT"}
+                </div>
+                <div style="margin-top:6px;color:#5d5f5f">
+                  Nhánh <strong>${process.env.BRANCH}</strong> · ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} (giờ VN)
+                </div>
+                <div style="margin-top:10px">
+                  <a href="${process.env.RUN_URL}"
+                     style="display:inline-block;padding:8px 16px;border-radius:999px;
+                            background:${failed ? "#b91c1c" : "#047857"};color:#fff;
+                            text-decoration:none;font-weight:700;font-size:13px">
+                    Mở nhật ký lần chạy
+                  </a>
+                </div>
+              </div>`;
+            const body = html.replace("<body>", `<body>${banner}`);
+
             const payload = {
               sender: { name: "RCField CI", email: process.env.EMAIL_FROM || "no-reply@rcfield.vn" },
               to,
               subject: process.env.SUBJECT,
-              htmlContent: html,
+              htmlContent: body,
               attachment: [{
                 name: "bao-cao-kiem-thu.html",
                 content: Buffer.from(html).toString("base64"),
@@ -226,7 +264,7 @@ jobs:
         if: failure() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: ${{ matrix.ref || github.ref_name }}
+          BRANCH: ${{ env.BRANCH_LABEL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           TITLE="🔴 CI định kỳ thất bại trên nhánh \`$BRANCH\`"
@@ -262,7 +300,7 @@ jobs:
         if: success() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH: ${{ matrix.ref || github.ref_name }}
+          BRANCH: ${{ env.BRANCH_LABEL }}
         run: |
           TITLE="🔴 CI định kỳ thất bại trên nhánh \`$BRANCH\`"
           NUM=$(gh issue list --state open --label ci-daily \
