@@ -1849,9 +1849,30 @@ export async function submitInspection(
     }
   }
 
+  if (inspectionType === InspectionType.CHECK_IN && session.status !== SessionStatus.CHECKED_IN) {
+    throw new AppError(
+      'Chỉ có thể lập biên bản nhận xe khi phiên đang chờ bàn giao',
+      409,
+      'CHECK_IN_INSPECTION_NOT_ALLOWED',
+    );
+  }
+  if (
+    inspectionType === InspectionType.CHECK_OUT &&
+    ![SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(session.status)
+  ) {
+    throw new AppError(
+      'Chỉ có thể lập biên bản trả xe khi phiên đang chạy',
+      409,
+      'CHECK_OUT_INSPECTION_NOT_ALLOWED',
+    );
+  }
+
   let sessionVehicleId = null;
   const svRepo = AppDataSource.getRepository(SessionVehicle);
-  const activeSVs = await svRepo.find({ where: { sessionId } });
+  const sessionVehicles = await svRepo.find({ where: { sessionId } });
+  // A swapped-out vehicle remains in the history but must never be included in
+  // the next handover/checkout inspection.
+  const activeSVs = sessionVehicles.filter((vehicle) => !vehicle.returnedAt);
   if (activeSVs.length > 0) {
     sessionVehicleId = activeSVs[0].id;
   }
@@ -1859,6 +1880,15 @@ export async function submitInspection(
   const booking = await AppDataSource.getRepository(Booking).findOne({
     where: { id: session.bookingId },
   });
+
+  let expiredExtensionProposal = false;
+  if (inspectionType === InspectionType.CHECK_OUT && session.status === SessionStatus.EXTENDING) {
+    const expiration = await AppDataSource.getRepository(ExtensionProposal).update(
+      { sessionId, status: ExtensionProposalStatus.PENDING },
+      { status: ExtensionProposalStatus.EXPIRED, respondedAt: new Date() },
+    );
+    expiredExtensionProposal = Boolean(expiration.affected);
+  }
 
   const inspection = new Inspection();
   inspection.sessionId = sessionId;
@@ -1938,22 +1968,22 @@ export async function submitInspection(
       }
     }
   } else {
-    // CHECK_OUT — set CHECKING_OUT or COMPLETED (for BYOC)
-    if (booking && booking.playMode === 'BYOC') {
-      session.status = SessionStatus.COMPLETED;
-      session.actualEndAt = new Date();
-      session.checkedOutBy = staffUserId;
-      await AppDataSource.getRepository(Session).save(session);
+    // CHECK_OUT — every mode enters the same completion path. BYOC is
+    // completed immediately because there is no rented asset for the customer
+    // to confirm; this still reconciles any F&B/extension fees correctly.
+    session.status = SessionStatus.CHECKING_OUT;
+    session.checkedOutBy = staffUserId;
+    await AppDataSource.getRepository(Session).save(session);
 
-      booking.status = BookingStatus.COMPLETED;
-      booking.completedAt = new Date();
-      await AppDataSource.getRepository(Booking).save(booking);
-
-      await settleSessionCheckoutBilling(sessionId, inspection);
-    } else {
-      session.status = SessionStatus.CHECKING_OUT;
-      session.checkedOutBy = staffUserId;
-      await AppDataSource.getRepository(Session).save(session);
+    if (booking?.playMode === 'BYOC') {
+      const completion = await completeCheckingOutSession(session, inspection, staffUserId);
+      const reconciliation = await reconcileBookingAfterCheckout(booking);
+      if (reconciliation.newlyCompleted) {
+        await notifyCustomerToReviewBooking(booking);
+      }
+      if (!completion.alreadyCompleted) {
+        void pushCheckoutCompletedEvents(booking, sessionId, staffUserId);
+      }
     }
 
     if (activeSVs.length > 0) {
@@ -2036,6 +2066,16 @@ export async function submitInspection(
       }
     } catch (err) {
       logger.error('InspectionNotification', 'Failed to notify customer inspection', err);
+    }
+  }
+
+  if (expiredExtensionProposal) {
+    const eventData = { sessionId, bookingId: session.bookingId };
+    if (session.checkedInBy) {
+      wsService.pushToUser(session.checkedInBy, 'SESSION_EXTENSION_EXPIRED', eventData);
+    }
+    if (booking?.customerId) {
+      wsService.pushToUser(booking.customerId, 'SESSION_EXTENSION_EXPIRED', eventData);
     }
   }
 
@@ -3060,58 +3100,17 @@ export async function customerConfirmInspection(
     throw new AppError('Biên bản đã được xác nhận', 400, 'ALREADY_CONFIRMED');
   }
 
-  inspection.customerConfirmed = agreed;
-  inspection.customerConfirmedAt = new Date();
-  if (!agreed && disagreementNote) {
-    inspection.damageDescription =
-      (inspection.damageDescription || '') + ` [KH phản hồi: ${disagreementNote}]`;
-  }
-  await inspRepo.save(inspection);
-
   if (agreed) {
-    session.status = SessionStatus.COMPLETED;
-    session.actualEndAt = new Date();
-    await AppDataSource.getRepository(Session).save(session);
-
-    const svRepo = AppDataSource.getRepository(SessionVehicle);
-    const svs = await svRepo.find({ where: { sessionId } });
-    for (const sv of svs) {
-      const newVehicleStatus = inspection.damageNoted
-        ? VehicleStatus.MAINTENANCE
-        : VehicleStatus.AVAILABLE;
-      if (sv.vehicleId) {
-        await AppDataSource.getRepository(Vehicle).update(sv.vehicleId, {
-          status: newVehicleStatus,
-        });
-      }
-    }
-
-    if (inspection.damageNoted) {
-      await handleVehicleCheckoutMaintenance(sessionId, inspection, session.checkedOutBy);
-    }
-
-    await settleSessionCheckoutBilling(sessionId, inspection);
-
-    const allSessions = await AppDataSource.getRepository(Session).find({
-      where: { bookingId: session.bookingId },
-    });
-    const allDone = allSessions.every((s) => s.status === SessionStatus.COMPLETED);
-    if (allDone) {
-      const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
-        where: { bookingId: session.bookingId, status: PaymentComponentStatus.PENDING },
-      });
-      if (pendingCount > 0) {
-        await AppDataSource.getRepository(Booking).update(session.bookingId, {
-          status: BookingStatus.AWAITING_PAYMENT,
-        });
-      } else {
-        const completedAt = new Date();
-        await AppDataSource.getRepository(Booking).update(session.bookingId, {
-          status: BookingStatus.COMPLETED,
-          completedAt,
-        });
-        await notifyCustomerToReviewBooking(booking);
-      }
+    // Customer confirmation and staff counter confirmation must finalize the
+    // exact same vehicle, payment and booking state transitions.
+    const completion = await completeCheckingOutSession(
+      session,
+      inspection,
+      session.checkedOutBy || session.checkedInBy || customerId,
+    );
+    const reconciliation = await reconcileBookingAfterCheckout(booking);
+    if (reconciliation.newlyCompleted) {
+      await notifyCustomerToReviewBooking(booking);
     }
 
     if (session.checkedInBy) {
@@ -3129,10 +3128,36 @@ export async function customerConfirmInspection(
         sessionStatus: session.status,
       });
     }
+    if (!completion.alreadyCompleted) {
+      void pushCheckoutCompletedEvents(
+        booking,
+        sessionId,
+        session.checkedOutBy || session.checkedInBy,
+      );
+    }
   } else {
     // Customer disputed CHECK_OUT — reset to ACTIVE so staff can re-inspect
+    inspection.customerConfirmed = false;
+    inspection.customerConfirmedAt = new Date();
+    if (disagreementNote) {
+      inspection.damageDescription =
+        (inspection.damageDescription || '') + ` [KH phản hồi: ${disagreementNote}]`;
+    }
+    await inspRepo.save(inspection);
+
     session.status = SessionStatus.ACTIVE;
     await AppDataSource.getRepository(Session).save(session);
+
+    // The checkout inspection had moved these rows to RETURNED/DAMAGED while
+    // waiting for the response. A dispute reopens the session, so its current
+    // vehicles must be operationally marked in use again.
+    const svRepo = AppDataSource.getRepository(SessionVehicle);
+    const sessionVehicles = await svRepo.find({ where: { sessionId } });
+    for (const vehicle of sessionVehicles) {
+      if (vehicle.returnedAt) continue;
+      vehicle.status = SessionVehicleStatus.IN_USE;
+      await svRepo.save(vehicle);
+    }
 
     if (session.checkedInBy) {
       await createNotification(
@@ -3191,6 +3216,20 @@ export async function customerRespondExtension(
   if (!latestProposal)
     throw new AppError('Không có đề xuất gia hạn đang chờ', 404, 'NO_PENDING_EXTENSION');
 
+  // A checkout may have begun while this screen was open. Never revive that
+  // session back to ACTIVE from a delayed extension response.
+  if (session.status !== SessionStatus.EXTENDING) {
+    latestProposal.status = ExtensionProposalStatus.EXPIRED;
+    latestProposal.respondedBy = customerId;
+    latestProposal.respondedAt = new Date();
+    await propRepo.save(latestProposal);
+    throw new AppError(
+      'Phiên đang được trả xe hoặc đã kết thúc; đề xuất gia hạn không còn hiệu lực.',
+      409,
+      'EXTENSION_NOT_ACTIVE',
+    );
+  }
+
   const expiresAt = new Date(latestProposal.createdAt.getTime() + 10 * 60000);
   const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
   if (expiresAt.getTime() <= Date.now() || !timing.canExtend) {
@@ -3199,6 +3238,8 @@ export async function customerRespondExtension(
     latestProposal.respondedAt = new Date();
     await propRepo.save(latestProposal);
 
+    // This branch is reached only for EXTENDING sessions (guarded above), so
+    // returning to ACTIVE is safe and cannot undo a checkout transition.
     session.status = SessionStatus.ACTIVE;
     await AppDataSource.getRepository(Session).save(session);
 
@@ -3422,7 +3463,8 @@ async function completeCheckingOutSession(
   await AppDataSource.getRepository(Inspection).save(inspection);
 
   session.status = SessionStatus.COMPLETED;
-  session.actualEndAt = new Date();
+  const completedAt = new Date();
+  session.actualEndAt = completedAt;
   session.checkedOutBy = staffUserId;
   await AppDataSource.getRepository(Session).save(session);
 
@@ -3430,6 +3472,15 @@ async function completeCheckingOutSession(
     where: { sessionId: session.id },
   });
   for (const sessionVehicle of sessionVehicles) {
+    // Vehicles already replaced during the session have their own completed
+    // handover. Do not change their availability because of this checkout.
+    if (sessionVehicle.returnedAt) continue;
+    sessionVehicle.status = inspection.damageNoted
+      ? SessionVehicleStatus.DAMAGED
+      : SessionVehicleStatus.RETURNED;
+    sessionVehicle.returnedAt = completedAt;
+    await AppDataSource.getRepository(SessionVehicle).save(sessionVehicle);
+
     if (sessionVehicle.vehicleId) {
       await AppDataSource.getRepository(Vehicle).update(sessionVehicle.vehicleId, {
         status: inspection.damageNoted ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE,
@@ -3496,14 +3547,16 @@ async function reconcileBookingAfterCheckout(booking: Booking): Promise<{
 async function pushCheckoutCompletedEvents(
   booking: Booking,
   sessionId: string,
-  staffUserId: string,
+  staffUserId?: string | null,
 ): Promise<void> {
   const payload = {
     sessionId,
     bookingId: booking.id,
     sessionStatus: SessionStatus.COMPLETED,
   };
-  wsService.pushToUser(staffUserId, 'SESSION_CHECKOUT_COMPLETED', payload);
+  if (staffUserId) {
+    wsService.pushToUser(staffUserId, 'SESSION_CHECKOUT_COMPLETED', payload);
+  }
   if (booking.customerId) {
     wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', payload);
   }

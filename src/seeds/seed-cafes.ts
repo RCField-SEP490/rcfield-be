@@ -550,27 +550,36 @@ async function seed() {
 
   // ─── Trial subscription for provider ─────────────────────────────────────
 
-  const [existingSub] = await AppDataSource.query<{ id: string }[]>(
-    `SELECT id FROM provider_subscriptions WHERE provider_id = $1 AND deleted_at IS NULL`,
+  const [existingSub] = await AppDataSource.query<{ id: string; status: string }[]>(
+    `SELECT id, status FROM provider_subscriptions WHERE provider_id = $1 AND deleted_at IS NULL`,
     [provider.id],
   );
   if (existingSub) {
-    logger.warn('Seed', 'Skip subscription — already exists for provider@gmail.com');
+    await AppDataSource.query(
+      `UPDATE provider_subscriptions
+          SET status = 'ACTIVE',
+              expires_at = NOW() + INTERVAL '1 year',
+              grace_ends_at = NULL,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [existingSub.id],
+    );
+    logger.info('Seed', 'Subscription refreshed to ACTIVE for provider@gmail.com');
   } else {
     const [trialPlan] = await AppDataSource.query<{ id: string }[]>(
       `SELECT id FROM subscription_plans WHERE name = 'TRIAL'`,
     );
     if (trialPlan) {
       const now = new Date();
-      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
       const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
       await AppDataSource.query(
         `INSERT INTO provider_subscriptions
           (provider_id, plan_id, status, started_at, expires_at, ai_quota_reset_at)
-         VALUES ($1,$2,'TRIAL',$3,$4,$5)`,
+         VALUES ($1,$2,'ACTIVE',$3,$4,$5)`,
         [provider.id, trialPlan.id, now, expiresAt, nextMonth],
       );
-      logger.info('Seed', 'Trial subscription created for provider@gmail.com');
+      logger.info('Seed', 'Active subscription created for provider@gmail.com');
     } else {
       logger.warn('Seed', 'Skip subscription — TRIAL plan not found in DB');
     }
