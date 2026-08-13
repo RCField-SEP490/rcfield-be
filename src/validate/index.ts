@@ -29,6 +29,24 @@ import {
 
 extendZodWithOpenApi(z);
 
+/**
+ * Coi tham số truy vấn rỗng như không được gửi.
+ *
+ * Trình duyệt và các form lọc rất dễ sinh ra `?city=&date=` khi người dùng chưa
+ * chọn gì. Với `z.string().min(1).optional()` thì chuỗi rỗng KHÔNG phải là
+ * `undefined`, nên nó rơi vào nhánh `min(1)` và cả request hỏng với 400 — trong
+ * khi ý nghĩa thật của nó chỉ là "không lọc theo trường này".
+ *
+ * Bọc hàm này quanh mọi tham số lọc dạng chuỗi để một ô trống không làm chết cả
+ * trang danh sách.
+ */
+function blankAsUndefined<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema,
+  );
+}
+
 export const LoginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
@@ -177,6 +195,24 @@ export const UploadDocumentSchema = z.object({
 
 const TrackTypeSchema = z.string().uuid();
 
+/**
+ * Bộ lọc loại sân nhận CẢ uuid lẫn mã (`DRIFT`, `CIRCUIT`, `OFFROAD`).
+ *
+ * Ô chọn ở trang chủ và trang khám phá dùng `track_types.code` làm giá trị, nên
+ * mọi lần khách chọn loại sân đều gửi lên `?trackType=DRIFT`. Khi schema chỉ
+ * chấp nhận uuid thì request hỏng với 400 và danh sách chi nhánh trắng trơn.
+ *
+ * Chọn nới ở đây thay vì bắt giao diện gửi uuid: đường dẫn `?trackType=DRIFT`
+ * đọc được và chia sẻ được (Zalo, Facebook là kênh đặt lịch chính thức), còn
+ * uuid thì không. Service tự quy đổi mã sang uuid trước khi lọc.
+ */
+const TrackTypeFilterSchema = z
+  .string()
+  .regex(
+    /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[A-Za-z][A-Za-z0-9_-]{1,49})$/,
+    'track_type phải là uuid hoặc mã loại sân',
+  );
+
 export const CreateTrackTypeSchema = z.object({
   code: z
     .string()
@@ -230,13 +266,19 @@ export const CafeListQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).optional().default(20).openapi({
     example: 20,
   }),
-  query: z.string().trim().min(1).max(200).optional().openapi({ example: 'Ho Chi Minh' }),
-  scope: z.enum(['managed']).optional().openapi({ example: 'managed' }),
-  slug: z.string().min(1).max(120).optional().openapi({ example: 'rc-arena-sai-gon' }),
-  district: z.string().min(1).max(100).optional().openapi({ example: 'Quan 7' }),
-  city: z.string().min(1).max(100).optional().openapi({ example: 'TP. Ho Chi Minh' }),
-  track_type: TrackTypeSchema.optional().openapi({
-    example: '550e8400-e29b-41d4-a716-446655440000',
+  query: blankAsUndefined(z.string().trim().min(1).max(200).optional()).openapi({
+    example: 'Ho Chi Minh',
+  }),
+  scope: blankAsUndefined(z.enum(['managed']).optional()).openapi({ example: 'managed' }),
+  slug: blankAsUndefined(z.string().min(1).max(120).optional()).openapi({
+    example: 'rc-arena-sai-gon',
+  }),
+  district: blankAsUndefined(z.string().min(1).max(100).optional()).openapi({ example: 'Quan 7' }),
+  city: blankAsUndefined(z.string().min(1).max(100).optional()).openapi({
+    example: 'TP. Ho Chi Minh',
+  }),
+  track_type: blankAsUndefined(TrackTypeFilterSchema.optional()).openapi({
+    example: 'DRIFT',
   }),
   price_min: z.coerce.number().nonnegative().optional().openapi({ example: 50000 }),
   price_max: z.coerce.number().nonnegative().optional().openapi({ example: 200000 }),
@@ -258,11 +300,12 @@ export const CafeListQuerySchema = z.object({
             .filter(Boolean);
     })
     .openapi({ example: ['Serious Inspection', 'Mát lạnh Điều hòa'] }),
-  vehicle_type: z.string().min(1).max(120).optional().openapi({ example: 'Drift' }),
-  sort_by: z
-    .enum(['popularity', 'price_asc', 'price_desc', 'rating'])
-    .optional()
-    .openapi({ example: 'popularity' }),
+  vehicle_type: blankAsUndefined(z.string().min(1).max(120).optional()).openapi({
+    example: 'Drift',
+  }),
+  sort_by: blankAsUndefined(
+    z.enum(['popularity', 'price_asc', 'price_desc', 'rating']).optional(),
+  ).openapi({ example: 'popularity' }),
   popular_filters: z
     .union([z.string(), z.array(z.string())])
     .optional()
@@ -280,13 +323,26 @@ export const CafeListQuerySchema = z.object({
             .map((part) => part.trim())
             .filter(Boolean);
     }),
-  status: z.nativeEnum(CafeStatus).optional().openapi({ example: CafeStatus.ACTIVE }),
+  status: blankAsUndefined(z.nativeEnum(CafeStatus).optional()).openapi({
+    example: CafeStatus.ACTIVE,
+  }),
+  /**
+   * Chế độ chơi mà chi nhánh đáp ứng được.
+   *
+   * `RENTAL` — còn ít nhất một xe cho thuê chưa ngừng sử dụng.
+   * `BYOC`   — `byoc_capacity > 0`, tức có nhận khách mang xe riêng.
+   *
+   * Đây là năng lực của CHI NHÁNH, khác `bookings.play_mode` là lựa chọn của
+   * từng đơn. Một chi nhánh có thể đáp ứng cả hai.
+   */
+  play_mode: blankAsUndefined(z.enum(['RENTAL', 'BYOC']).optional()).openapi({ example: 'RENTAL' }),
   /** Chỉ giữ chi nhánh còn slot đặt được trong ngày này (giờ Việt Nam). */
-  date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải theo định dạng YYYY-MM-DD')
-    .optional()
-    .openapi({ example: '2026-08-20' }),
+  date: blankAsUndefined(
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày phải theo định dạng YYYY-MM-DD')
+      .optional(),
+  ).openapi({ example: '2026-08-20' }),
 });
 
 const CafeUpsertBaseSchema = z.object({
