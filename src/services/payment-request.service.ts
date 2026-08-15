@@ -1,5 +1,5 @@
-/* eslint-disable no-console */
 import { AppDataSource } from '../config/database';
+import { logger } from '../config/logger';
 import { PaymentRequest } from '../models/payment-request.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
 import { SubscriptionPlan } from '../models/subscription-plan.entity';
@@ -68,17 +68,22 @@ export async function submit(providerId: string, body: SubmitBody): Promise<Paym
   return repo.save(request) as Promise<PaymentRequest>;
 }
 
-export async function confirm(requestId: string, adminId: string, notes?: string): Promise<void> {
-  const repo = AppDataSource.getRepository(PaymentRequest);
-  const request = await repo.findOne({ where: { id: requestId } });
-  if (!request) throw new AppError('Yêu cầu không tồn tại', 404, 'NOT_FOUND');
-  if (request.status !== PaymentRequestStatus.PENDING) {
-    throw new AppError('Yêu cầu đã được xử lý', 400, 'ALREADY_PROCESSED');
-  }
-
+/**
+ * Ghi nhận một yêu cầu thanh toán là đã trả xong và kích hoạt gói.
+ *
+ * Dùng chung cho hai đường vào, khác nhau đúng ở chỗ ai xác nhận:
+ *   • admin đối soát khoản chuyển khoản tay  → `reviewedBy` là admin đó;
+ *   • cổng thanh toán báo đã nhận tiền       → `reviewedBy` để trống, vì không
+ *     có người nào duyệt cả.
+ */
+async function applyConfirmation(
+  request: PaymentRequest,
+  reviewedBy: string | null,
+  notes?: string,
+): Promise<void> {
   const { userRows, planRows, sub } = await AppDataSource.transaction(async (manager) => {
     request.status = PaymentRequestStatus.CONFIRMED;
-    request.reviewedBy = adminId;
+    request.reviewedBy = reviewedBy;
     request.reviewedAt = new Date();
     if (notes) request.adminNotes = notes;
     await manager.save(request);
@@ -113,7 +118,7 @@ export async function confirm(requestId: string, adminId: string, notes?: string
         endDate: sub.expiresAt,
       })
       .catch((err) => {
-        console.error('EmailConfirmError', 'Failed to send confirmation email', err);
+        logger.error('PaymentRequest', 'gửi email xác nhận gói thất bại', err);
       });
   }
 
@@ -123,6 +128,32 @@ export async function confirm(requestId: string, adminId: string, notes?: string
     'Thanh toán được xác nhận',
     'Gói đăng ký của bạn đã được kích hoạt thành công.',
   );
+}
+
+/** Admin đối soát khoản chuyển khoản tay rồi duyệt. */
+export async function confirm(requestId: string, adminId: string, notes?: string): Promise<void> {
+  const repo = AppDataSource.getRepository(PaymentRequest);
+  const request = await repo.findOne({ where: { id: requestId } });
+  if (!request) throw new AppError('Yêu cầu không tồn tại', 404, 'NOT_FOUND');
+  if (request.status !== PaymentRequestStatus.PENDING) {
+    throw new AppError('Yêu cầu đã được xử lý', 400, 'ALREADY_PROCESSED');
+  }
+  await applyConfirmation(request, adminId, notes);
+}
+
+/**
+ * Cổng thanh toán báo đã nhận tiền: kích hoạt luôn, không qua bước duyệt tay.
+ *
+ * Trả về lặng lẽ khi đơn không còn ở trạng thái chờ — webhook gửi trùng và trang
+ * callback hỏi lại là chuyện bình thường, mà kích hoạt hai lần thì cộng dồn thêm
+ * 30 ngày provider chưa trả tiền.
+ */
+export async function confirmFromGateway(
+  request: PaymentRequest,
+  gatewayNote: string,
+): Promise<void> {
+  if (request.status !== PaymentRequestStatus.PENDING) return;
+  await applyConfirmation(request, null, gatewayNote);
 }
 
 export async function reject(requestId: string, adminId: string, reason: string): Promise<void> {
