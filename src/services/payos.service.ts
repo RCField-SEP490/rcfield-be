@@ -1,6 +1,6 @@
-/* eslint-disable no-console */
 import { PayOS, Webhook } from '@payos/node';
 import { env } from '../config/env';
+import { logger } from '../config/logger';
 import { AppDataSource } from '../config/database';
 import { PaymentRequest } from '../models/payment-request.entity';
 import { AppError, NotificationType, PaymentRequestStatus } from '../types';
@@ -29,6 +29,85 @@ function getPayOSInstance(): PayOS {
 export interface PayOSLinkResult {
   checkoutUrl: string;
   orderCode: number;
+}
+
+/**
+ * Mã đơn PayOS phải là số nguyên. Ghép timestamp với 3 số ngẫu nhiên để hai
+ * đơn tạo trong cùng mili-giây vẫn khác nhau.
+ */
+export function generateOrderCode(): number {
+  return Number(String(Date.now()).substring(3) + String(Math.floor(Math.random() * 900) + 100));
+}
+
+/**
+ * PayOS giới hạn description 25 ký tự, không dấu, không ký tự đặc biệt. Cắt sẵn
+ * theo giới hạn đó thay vì để PayOS trả lỗi lúc tạo link.
+ */
+export function buildDescription(prefix: string, label: string, max = 25): string {
+  const clean = label
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .replace(/\s+/g, '')
+    .slice(0, Math.max(0, max - prefix.length - 1));
+  return `${prefix} ${clean}`.slice(0, max);
+}
+
+/**
+ * Gọi PayOS tạo link thanh toán. Hàm này không biết gì về loại đơn — bên gọi
+ * tự lo việc lưu `orderCode` vào bảng của mình. Nhờ vậy cùng một đường đi dùng
+ * được cho cả gói đăng ký lẫn phí tổ chức giải.
+ */
+export async function createCheckout(params: {
+  orderCode: number;
+  amount: number;
+  description: string;
+  returnUrl: string;
+  cancelUrl: string;
+}): Promise<string> {
+  const payOSInstance = getPayOSInstance();
+  try {
+    const link = await payOSInstance.paymentRequests.create(params);
+    return link.checkoutUrl;
+  } catch (error) {
+    logger.error('PayOS', 'tạo link thanh toán thất bại', error);
+    throw new AppError(
+      'Không thể tạo liên kết thanh toán với PayOS: ' +
+        (error instanceof Error ? error.message : String(error)),
+      500,
+      'PAYOS_API_ERROR',
+    );
+  }
+}
+
+/**
+ * Huỷ một link thanh toán cũ. Cố gắng thôi, không chặn luồng: nếu PayOS từ chối
+ * (link đã hết hạn, đã trả, hoặc không tồn tại) thì cũng không có gì để làm.
+ * Có bước này để provider bấm tạo link lần hai không để lại link cũ còn sống —
+ * trả nhầm vào link cũ thì tiền vào mà đơn không ghi nhận được.
+ */
+export async function cancelCheckout(orderCode: number, reason: string): Promise<void> {
+  try {
+    await getPayOSInstance().paymentRequests.cancel(orderCode, reason);
+  } catch (error) {
+    logger.warn('PayOS', 'không huỷ được link cũ', { orderCode, error: String(error) });
+  }
+}
+
+/** Trạng thái đơn phía PayOS: PAID | CANCELLED | EXPIRED | PENDING … */
+export async function getCheckoutStatus(orderCode: number): Promise<string | null> {
+  const payOSInstance = getPayOSInstance();
+  try {
+    const order = await payOSInstance.paymentRequests.get(orderCode);
+    return order.status;
+  } catch (error) {
+    // PayOS trả 404 khi link chưa được thanh toán hoặc đã bị dọn. Không coi là
+    // lỗi hệ thống — bên gọi giữ nguyên trạng thái và hỏi lại sau.
+    logger.warn('PayOS', 'không đọc được trạng thái đơn', { orderCode, error: String(error) });
+    return null;
+  }
 }
 
 /**
@@ -83,7 +162,7 @@ export async function createPaymentLink(
       orderCode,
     };
   } catch (error) {
-    console.error('PayOS create link failed:', error);
+    logger.error('PayOS', 'tạo link thanh toán cho gói đăng ký thất bại', error);
     throw new AppError(
       'Không thể tạo liên kết thanh toán với PayOS: ' +
         (error instanceof Error ? error.message : String(error)),
@@ -184,7 +263,7 @@ export async function verifyPaymentStatus(orderCode: number): Promise<PaymentReq
     const updatedRequest = await repo.findOne({ where: { id: request.id } });
     return updatedRequest || request;
   } catch (error) {
-    console.error('Verify PayOS status failed:', error);
+    logger.error('PayOS', 'đồng bộ trạng thái đơn gói đăng ký thất bại', error);
     // Nếu PayOS trả về lỗi 404 nghĩa là link thanh toán chưa được thanh toán thành công và có thể đã bị huỷ
     // Chúng ta giữ nguyên trạng thái PENDING để có thể query lại sau
     return request;

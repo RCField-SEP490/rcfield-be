@@ -1485,7 +1485,6 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   for (const sv of sessionVehicles) {
     let name = 'Xe tự mang (BYOC)';
     let imageUrl = undefined;
-    let damageMultiplier = 1;
     if (sv.vehicleSource === VehicleSource.RENTAL && sv.vehicleId) {
       const vehicle = await AppDataSource.getRepository(Vehicle).findOne({
         where: { id: sv.vehicleId },
@@ -1494,7 +1493,6 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       if (vehicle) {
         name = vehicle.catalog?.name || vehicle.identifier || 'Xe thuê';
         imageUrl = vehicle.distinctiveImageUrl || vehicle.catalog?.coverImageUrl || undefined;
-        damageMultiplier = Number(vehicle.catalog?.damageMultiplier) || 1;
       }
     } else if (sv.vehicleSource === VehicleSource.BYOC && sv.assignedToParticipantId) {
       const sp = participants.find((p) => p.id === sv.assignedToParticipantId);
@@ -1505,7 +1503,6 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       name,
       type: sv.vehicleSource === VehicleSource.RENTAL ? 'RENT' : 'BYOC',
       imageUrl,
-      damageMultiplier,
     });
   }
 
@@ -2986,12 +2983,19 @@ export async function simulateClientCheckOutResponse(sessionId: string): Promise
     booking.status = BookingStatus.COMPLETED;
     booking.completedAt = new Date();
     await AppDataSource.getRepository(Booking).save(booking);
-    await notifyCustomerToReviewBooking(booking);
   }
 
   // Settle invoice at checkout — called unconditionally so BYOC sessions
   // (no checkOutInspection) still get extension fees and on-site F&B billed
   await settleSessionCheckoutBilling(sessionId, checkOutInspection ?? null);
+
+  if (booking) {
+    // Soát lại sau khi tất toán, vì tới lúc này mới biết còn nợ hay không.
+    const { pendingCount } = await reconcileBookingAfterCheckout(booking);
+    // Lời mời đánh giá chỉ gửi khi đơn thật sự khép lại. Khách còn nợ tiền mà
+    // nhận thư "phiên chơi đã xong, mời bạn đánh giá" thì vừa sai vừa kỳ.
+    if (pendingCount === 0) await notifyCustomerToReviewBooking(booking);
+  }
 
   return session;
 }

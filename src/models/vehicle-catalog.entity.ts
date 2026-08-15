@@ -33,9 +33,6 @@ export class VehicleCatalog {
   @Column({ name: 'security_deposit', type: 'numeric', precision: 15, scale: 2 })
   securityDeposit: number;
 
-  @Column({ name: 'damage_multiplier', type: 'numeric', precision: 4, scale: 2, default: 1.0 })
-  damageMultiplier: number;
-
   @Column({ name: 'compatible_track_types', type: 'uuid', array: true, default: [] })
   compatibleTrackTypes: string[];
 

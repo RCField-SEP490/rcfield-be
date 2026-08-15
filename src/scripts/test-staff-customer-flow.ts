@@ -174,8 +174,8 @@ async function main() {
   let vehicleId: string | null = null;
   if (testVehicle) {
     await ds.query(
-      `INSERT INTO booking_vehicles (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
-       VALUES ($1, $2, 100000, 0, 1.5)`,
+      `INSERT INTO booking_vehicles (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot)
+       VALUES ($1, $2, 100000, 0)`,
       [bookingId, testVehicle.id],
     );
     vehicleId = testVehicle.id;
@@ -308,7 +308,6 @@ async function main() {
     damageDetails: {
       description: 'Vỡ vành bánh trước bên trái',
       estimatedCost: 100000,
-      damageMultiplier: 1.5,
       finalCharge: 150000,
     },
   });

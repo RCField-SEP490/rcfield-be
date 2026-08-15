@@ -46,9 +46,6 @@ export class BookingVehicle {
   @Column({ name: 'security_deposit_snapshot', type: 'numeric', precision: 15, scale: 2 })
   securityDepositSnapshot: number;
 
-  @Column({ name: 'damage_multiplier_snapshot', type: 'numeric', precision: 4, scale: 2 })
-  damageMultiplierSnapshot: number;
-
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

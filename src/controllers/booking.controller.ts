@@ -160,10 +160,19 @@ export const bookingController = {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
       }
 
+      // Dùng đúng bộ kiểm của luồng đặt lịch: chi nhánh chưa cấu hình xong tài
+      // khoản nhận tiền thì chặn ngay ở đây, không để khách quét một mã QR trỏ
+      // vào tài khoản chưa xác minh.
+      const paymentMethod = await assertPaymentMethodAvailable(
+        booking.cafeId,
+        req.body?.payment_method,
+      );
+
       const result = await createCheckoutAdditionalPaymentUrl(
         bookingId,
         ipAddr,
         req.body?.return_url,
+        paymentMethod,
       );
       res.status(201).json({ success: true, data: result });
     } catch (err) {

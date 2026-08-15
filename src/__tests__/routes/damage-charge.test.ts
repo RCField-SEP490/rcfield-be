@@ -496,3 +496,93 @@ describe('PUT /api/v1/staff/sessions/:id/inspections/:inspId/damage-items', () =
     expect(res.status).toBeLessThan(500);
   });
 });
+
+/**
+ * Nhãn trạng thái đơn phải nói đúng sự thật về tiền.
+ *
+ * Bẫy ở đây rất dễ tái phát: đường BYOC trong `submitInspection` ghi `COMPLETED`
+ * vào đơn TRƯỚC khi gọi hàm tất toán — mà chính hàm đó mới sinh ra khoản gia
+ * hạn, đồ ăn tại quầy và hư hỏng. Ghi trước rồi không soát lại thì đơn còn nợ
+ * vẫn đeo nhãn "Hoàn thành", và khách nhìn thấy mâu thuẫn ngay trên màn hình.
+ *
+ * Phải đi qua ĐÚNG endpoint của khách mang xe riêng. Đường `confirm-checkout`
+ * vốn đã soát lại đúng, test qua đó sẽ xanh cả khi lỗi còn nguyên.
+ */
+describe('BYOC checkout: nhãn trạng thái đơn phải khớp với tiền còn nợ', () => {
+  async function seedByocSession(extensionFee: number | null) {
+    const staff = await createTestUser({ role: UserRole.STAFF });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const cafe = await createTestCafe();
+    const [trackType] = await AppDataSource.query(`SELECT id FROM track_types LIMIT 1`);
+
+    const [booking] = await AppDataSource.query(
+      `INSERT INTO bookings
+         (customer_id, cafe_id, slot_start, slot_end, play_mode, status, source, payment_expires_at, track_type_id)
+       VALUES ($1, $2, NOW() - INTERVAL '2 hours', NOW() + INTERVAL '1 hour',
+               'BYOC', 'CONFIRMED', 'APP', NOW() + INTERVAL '1 hour', $3)
+       RETURNING *`,
+      [customer.id, cafe.id, trackType?.id ?? null],
+    );
+
+    const [session] = await AppDataSource.query(
+      `INSERT INTO sessions (booking_id, cafe_id, status, planned_end_at, actual_start_at, checked_in_by)
+       VALUES ($1, $2, 'ACTIVE', NOW() + INTERVAL '1 hour', NOW() - INTERVAL '1 hour', $3)
+       RETURNING *`,
+      [booking.id, cafe.id, staff.id],
+    );
+
+    if (extensionFee !== null) {
+      await AppDataSource.query(
+        `INSERT INTO extension_proposals
+           (session_id, duration_minutes, fee_amount, status, proposed_by)
+         VALUES ($1, 15, $2, 'APPROVED', $3)`,
+        [session.id, extensionFee, staff.id],
+      );
+    }
+
+    return { staffToken: generateToken(staff), booking, session };
+  }
+
+  async function checkOut(sessionId: string, token: string) {
+    await request(app)
+      .post(`/api/v1/staff/sessions/${sessionId}/inspections`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        type: 'CHECK_OUT',
+        photos: rentalInspectionPhotos,
+        damageFlagged: false,
+        damageLineItems: [],
+      })
+      .expect(201);
+  }
+
+  async function bookingStatus(bookingId: string): Promise<string> {
+    const [row] = await AppDataSource.query(`SELECT status FROM bookings WHERE id = $1`, [
+      bookingId,
+    ]);
+    return row.status;
+  }
+
+  it('còn phí gia hạn chưa trả thì đơn là AWAITING_PAYMENT, không phải COMPLETED', async () => {
+    const { staffToken, session, booking } = await seedByocSession(16000);
+    await checkOut(session.id, staffToken);
+
+    // Khoản nợ phải tồn tại thật, không phải test tự huyễn hoặc.
+    const [comp] = await AppDataSource.query(
+      `SELECT amount, status FROM payment_components
+        WHERE booking_id = $1 AND type = $2`,
+      [booking.id, PaymentComponentType.EXTENSION_FEE],
+    );
+    expect(comp?.status).toBe(PaymentComponentStatus.PENDING);
+    expect(Number(comp.amount)).toBe(16000);
+
+    expect(await bookingStatus(booking.id)).toBe('AWAITING_PAYMENT');
+  });
+
+  it('không phát sinh khoản nào thì đơn là COMPLETED như cũ', async () => {
+    const { staffToken, session, booking } = await seedByocSession(null);
+    await checkOut(session.id, staffToken);
+
+    expect(await bookingStatus(booking.id)).toBe('COMPLETED');
+  });
+});

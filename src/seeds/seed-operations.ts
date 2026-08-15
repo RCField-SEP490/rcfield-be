@@ -40,10 +40,9 @@ async function seed() {
       name: string;
       hourly_rate: string;
       security_deposit: string;
-      damage_multiplier: string;
     }[]
   >(
-    `SELECT v.id, c.name, c.hourly_rate, c.security_deposit, c.damage_multiplier 
+    `SELECT v.id, c.name, c.hourly_rate, c.security_deposit 
      FROM vehicles v 
      JOIN vehicle_catalogs c ON v.catalog_id = c.id 
      WHERE v.cafe_id = $1 AND v.deleted_at IS NULL`,
@@ -150,9 +149,9 @@ async function seed() {
   // Booking Vehicle
   const [bv1] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO booking_vehicles (
-      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
-    ) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [b1.id, v1.id, Number(v1.hourly_rate), 0, Number(v1.damage_multiplier)],
+      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot
+    ) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [b1.id, v1.id, Number(v1.hourly_rate), 0],
   );
 
   // Booking Participant
@@ -267,9 +266,9 @@ async function seed() {
   // Booking Vehicle
   const [bv2] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO booking_vehicles (
-      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
-    ) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [b2.id, v2.id, Number(v2.hourly_rate), 0, Number(v2.damage_multiplier)],
+      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot
+    ) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [b2.id, v2.id, Number(v2.hourly_rate), 0],
   );
 
   // Booking Participant
@@ -375,9 +374,9 @@ async function seed() {
   // Booking Vehicle
   const [bv3] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO booking_vehicles (
-      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
-    ) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [b3.id, v3.id, Number(v3.hourly_rate), 0, Number(v3.damage_multiplier)],
+      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot
+    ) VALUES ($1, $2, $3, $4) RETURNING id`,
+    [b3.id, v3.id, Number(v3.hourly_rate), 0],
   );
 
   // Booking Participant
@@ -470,9 +469,9 @@ async function seed() {
 
   await AppDataSource.query(
     `INSERT INTO booking_vehicles (
-      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot
-    ) VALUES ($1, $2, $3, $4, $5)`,
-    [b4.id, v4.id, Number(v4.hourly_rate), 0, Number(v4.damage_multiplier)],
+      booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot
+    ) VALUES ($1, $2, $3, $4)`,
+    [b4.id, v4.id, Number(v4.hourly_rate), 0],
   );
 
   // ─────────────────────────────────────────────────────────────────────────────

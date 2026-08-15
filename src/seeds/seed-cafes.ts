@@ -210,7 +210,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 80000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT', 'OBSTACLE'],
       },
       {
@@ -220,7 +219,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 90000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -230,7 +228,6 @@ async function seed() {
         tier: 'PREMIUM',
         hourly_rate: 130000,
         security_deposit: 0,
-        damage_multiplier: 1.5,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -240,7 +237,6 @@ async function seed() {
         tier: 'PREMIUM',
         hourly_rate: 150000,
         security_deposit: 0,
-        damage_multiplier: 1.8,
         compatible_track_types: ['OBSTACLE'],
       },
       {
@@ -250,7 +246,6 @@ async function seed() {
         tier: 'RESTRICTED',
         hourly_rate: 220000,
         security_deposit: 0,
-        damage_multiplier: 2.5,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -260,7 +255,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 75000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT', 'OBSTACLE'],
       },
       {
@@ -270,7 +264,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 85000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -280,7 +273,6 @@ async function seed() {
         tier: 'PREMIUM',
         hourly_rate: 145000,
         security_deposit: 0,
-        damage_multiplier: 1.7,
         compatible_track_types: ['OBSTACLE'],
       },
       {
@@ -290,7 +282,6 @@ async function seed() {
         tier: 'PREMIUM',
         hourly_rate: 155000,
         security_deposit: 0,
-        damage_multiplier: 1.8,
         compatible_track_types: ['OBSTACLE'],
       },
       {
@@ -300,7 +291,6 @@ async function seed() {
         tier: 'RESTRICTED',
         hourly_rate: 210000,
         security_deposit: 0,
-        damage_multiplier: 2.4,
         compatible_track_types: ['OBSTACLE'],
       },
     ],
@@ -319,7 +309,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 90000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -329,7 +318,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 95000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -339,7 +327,6 @@ async function seed() {
         tier: 'PREMIUM',
         hourly_rate: 140000,
         security_deposit: 0,
-        damage_multiplier: 1.6,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -349,7 +336,6 @@ async function seed() {
         tier: 'RESTRICTED',
         hourly_rate: 200000,
         security_deposit: 0,
-        damage_multiplier: 3.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -359,7 +345,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 85000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -369,7 +354,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 95000,
         security_deposit: 0,
-        damage_multiplier: 1.1,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -379,7 +363,6 @@ async function seed() {
         tier: 'PREMIUM',
         hourly_rate: 135000,
         security_deposit: 0,
-        damage_multiplier: 1.5,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -389,7 +372,6 @@ async function seed() {
         tier: 'STANDARD',
         hourly_rate: 90000,
         security_deposit: 0,
-        damage_multiplier: 1.0,
         compatible_track_types: ['DRIFT'],
       },
       {
@@ -399,7 +381,6 @@ async function seed() {
         tier: 'RESTRICTED',
         hourly_rate: 220000,
         security_deposit: 0,
-        damage_multiplier: 2.5,
         compatible_track_types: ['DRIFT'],
       },
     ],
@@ -694,7 +675,6 @@ async function seedVehicles(
     tier: string;
     hourly_rate: number;
     security_deposit: number;
-    damage_multiplier: number;
     compatible_track_types: string[];
   }[],
   trackTypes: { id: string; code: string }[],
@@ -722,9 +702,9 @@ async function seedVehicles(
       const [newCatalog] = await AppDataSource.query<{ id: string }[]>(
         `INSERT INTO vehicle_catalogs (
           cafe_id, name, description, tier,
-          hourly_rate, security_deposit, damage_multiplier, compatible_track_types,
+          hourly_rate, security_deposit, compatible_track_types,
           cover_image_url
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
         RETURNING id`,
         [
           cafeId,
@@ -733,7 +713,6 @@ async function seedVehicles(
           v.tier,
           v.hourly_rate,
           v.security_deposit,
-          v.damage_multiplier,
           compatibleTrackTypeIds,
           SEEDED_VEHICLE_IMAGE_URL,
         ],

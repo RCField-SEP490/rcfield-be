@@ -303,7 +303,6 @@ async function seedVehiclesForDanang(cafeId: string, driftTrackTypeId: string): 
         'Khung drift nhẹ, bố trí mid-motor cân bằng, phù hợp tập trượt và thi đấu entry-level.',
       tier: 'STANDARD',
       hourly_rate: 85000,
-      damage_multiplier: 1.0,
     },
     {
       name: 'Yokomo YD-2E',
@@ -311,28 +310,24 @@ async function seedVehiclesForDanang(cafeId: string, driftTrackTypeId: string): 
         'RWD drift chuẩn thi đấu với servo nhanh và treo độ nhạy, thích hợp đường đua epoxy.',
       tier: 'STANDARD',
       hourly_rate: 95000,
-      damage_multiplier: 1.0,
     },
     {
       name: 'MST RMX 2.0 S',
       description: 'Rear-motor drift cao cấp, độ chính xác cao, body kit Lexus RC F carbon-look.',
       tier: 'PREMIUM',
       hourly_rate: 130000,
-      damage_multiplier: 1.5,
     },
     {
       name: 'Reve D RDX Plus',
       description: 'Khung carbon RWD hiện đại, trọng tâm thấp, giữ góc drift ổn định ở tốc độ cao.',
       tier: 'PREMIUM',
       hourly_rate: 140000,
-      damage_multiplier: 1.5,
     },
     {
       name: 'Overdose Vacula II',
       description: 'Phiên bản giới hạn dành cho drift chuyên nghiệp, nhôm CNC và servo metal gear.',
       tier: 'RESTRICTED',
       hourly_rate: 220000,
-      damage_multiplier: 2.5,
     },
     {
       name: 'Tamiya TT-02D Drift',
@@ -340,7 +335,6 @@ async function seedVehiclesForDanang(cafeId: string, driftTrackTypeId: string): 
         'Xe drift 4WD shaft-driven dễ điều khiển, lựa chọn lý tưởng cho người mới tại miền Trung.',
       tier: 'STANDARD',
       hourly_rate: 80000,
-      damage_multiplier: 1.0,
     },
   ];
 
@@ -354,9 +348,9 @@ async function seedVehiclesForDanang(cafeId: string, driftTrackTypeId: string): 
     const [catalog] = await AppDataSource.query<{ id: string }[]>(
       `INSERT INTO vehicle_catalogs (
         cafe_id, name, description, tier,
-        hourly_rate, security_deposit, damage_multiplier, compatible_track_types,
+        hourly_rate, security_deposit, compatible_track_types,
         cover_image_url
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
       RETURNING id`,
       [
         cafeId,
@@ -365,7 +359,6 @@ async function seedVehiclesForDanang(cafeId: string, driftTrackTypeId: string): 
         v.tier,
         v.hourly_rate,
         0,
-        v.damage_multiplier,
         [driftTrackTypeId],
         'https://cdn.rcfield.vn/vehicles/tamiya-cover.jpg',
       ],

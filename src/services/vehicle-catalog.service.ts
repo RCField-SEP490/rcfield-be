@@ -18,7 +18,6 @@ export interface CreateVehicleCatalogInput {
   tier: AssetTier;
   hourly_rate: number;
   security_deposit: number;
-  damage_multiplier?: number;
   compatible_track_types: string[];
   cover_image_url?: string | null;
   images?: CatalogImageInput[];
@@ -30,7 +29,6 @@ export interface UpdateVehicleCatalogInput {
   tier?: AssetTier;
   hourly_rate?: number;
   security_deposit?: number;
-  damage_multiplier?: number;
   compatible_track_types?: string[];
   cover_image_url?: string | null;
   images?: CatalogImageInput[];
@@ -110,7 +108,6 @@ export async function listVehicleCatalogs(cafeId: string): Promise<Record<string
       tier: c.tier,
       hourlyRate: c.hourlyRate,
       securityDeposit: c.securityDeposit,
-      damageMultiplier: c.damageMultiplier,
       compatibleTrackTypes: mappedTracks,
       coverImageUrl: c.coverImageUrl,
       createdAt: c.createdAt,
@@ -183,7 +180,6 @@ export async function getVehicleCatalogDetail(
     tier: catalog.tier,
     hourlyRate: catalog.hourlyRate,
     securityDeposit: catalog.securityDeposit,
-    damageMultiplier: catalog.damageMultiplier,
     compatibleTrackTypes: trackTypesSorted,
     coverImageUrl: catalog.coverImageUrl,
     createdAt: catalog.createdAt,
@@ -223,7 +219,6 @@ export async function createVehicleCatalog(
   catalog.tier = body.tier;
   catalog.hourlyRate = body.hourly_rate;
   catalog.securityDeposit = body.security_deposit;
-  catalog.damageMultiplier = body.damage_multiplier ?? 1.0;
   catalog.compatibleTrackTypes = body.compatible_track_types;
   catalog.coverImageUrl = body.cover_image_url ?? null;
 
@@ -268,7 +263,6 @@ export async function updateVehicleCatalog(
   if (body.tier !== undefined) catalog.tier = body.tier;
   if (body.hourly_rate !== undefined) catalog.hourlyRate = body.hourly_rate;
   if (body.security_deposit !== undefined) catalog.securityDeposit = body.security_deposit;
-  if (body.damage_multiplier !== undefined) catalog.damageMultiplier = body.damage_multiplier;
   if (body.compatible_track_types !== undefined)
     catalog.compatibleTrackTypes = body.compatible_track_types;
   if (body.cover_image_url !== undefined) catalog.coverImageUrl = body.cover_image_url;

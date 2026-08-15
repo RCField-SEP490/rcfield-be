@@ -311,9 +311,9 @@ async function createCompletedPlay(params: {
 
   const [bookingVehicle] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO booking_vehicles
-       (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
+       (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot)
      VALUES
-       ($1, $2, 50000, 150000, 1.0)
+       ($1, $2, 50000, 150000)
      RETURNING id`,
     [booking.id, params.vehicleId],
   );

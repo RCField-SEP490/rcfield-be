@@ -6,6 +6,36 @@ import { TrackType } from '../models/track-type.entity';
 import { getManagedCafeOrThrow, Viewer } from './cafe.service';
 import { AppError, UserRole, VehicleStatus } from '../types';
 
+/** Phiên chơi chưa đóng — xe gán vào đây vẫn còn nghĩa vụ đối soát khi trả. */
+const OPEN_SESSION_STATUSES = ['CHECKED_IN', 'ACTIVE', 'EXTENDING', 'CHECKING_OUT'];
+
+/**
+ * Chặn thao tác làm biến mất một chiếc xe đang chạy dở.
+ *
+ * Biên bản trả xe, dòng hư hỏng và khoản tiền đền bù đều bám vào `session_vehicles`.
+ * Xoá xe hoặc cho nghỉ hưu giữa ca thì nhân viên không còn chốt được biên bản, mà
+ * tiền đền bù thì đã hứa với khách.
+ */
+async function assertVehicleNotInOpenSession(vehicleId: string): Promise<void> {
+  const [row] = await AppDataSource.query<{ session_id: string }[]>(
+    `SELECT sv.session_id
+       FROM session_vehicles sv
+       JOIN sessions s ON s.id = sv.session_id
+      WHERE sv.vehicle_id = $1
+        AND s.status = ANY($2::session_status_enum[])
+      LIMIT 1`,
+    [vehicleId, OPEN_SESSION_STATUSES],
+  );
+  if (row) {
+    throw new AppError(
+      'Xe đang được sử dụng trong một phiên chơi chưa kết thúc',
+      409,
+      'VEHICLE_IN_ACTIVE_SESSION',
+      { session_id: row.session_id },
+    );
+  }
+}
+
 export async function createVehicleUnit(
   cafeId: string,
   catalogId: string,
@@ -92,7 +122,25 @@ export async function updateVehicleUnit(
     throw new AppError('Xe vật lý không tồn tại', 404, 'VEHICLE_NOT_FOUND');
   }
 
-  // 4. Update fields
+  // 4. RETIRED là quyết định một chiều: xe đã loại khỏi đội thì không quay lại
+  // khai thác. Cho đảo ngược thì trạng thái này chỉ còn là một cái nhãn, và lịch
+  // sử "xe đã ngừng dùng từ lúc nào" không còn tin được.
+  if (
+    vehicle.status === VehicleStatus.RETIRED &&
+    body.status !== undefined &&
+    body.status !== VehicleStatus.RETIRED
+  ) {
+    throw new AppError(
+      'Xe đã ngừng khai thác, không thể chuyển về trạng thái khác',
+      409,
+      'VEHICLE_RETIRED',
+    );
+  }
+  if (body.status === VehicleStatus.RETIRED && vehicle.status !== VehicleStatus.RETIRED) {
+    await assertVehicleNotInOpenSession(unitId);
+  }
+
+  // 5. Update fields
   if (body.status !== undefined) vehicle.status = body.status;
   if (body.last_maintenance_at !== undefined) vehicle.lastMaintenanceAt = body.last_maintenance_at;
   if (body.identifier !== undefined) vehicle.identifier = body.identifier;
@@ -143,7 +191,10 @@ export async function deleteVehicleUnit(
     throw new AppError('Xe vật lý không tồn tại', 404, 'VEHICLE_NOT_FOUND');
   }
 
-  // 4. Soft delete
+  // 4. Không xoá xe đang chạy dở
+  await assertVehicleNotInOpenSession(unitId);
+
+  // 5. Soft delete
   vehicle.deletedAt = new Date();
   await vehicleRepo.save(vehicle);
 }

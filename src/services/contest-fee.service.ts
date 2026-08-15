@@ -1,5 +1,6 @@
 import { In } from 'typeorm';
 import { AppDataSource } from '../config/database';
+import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { Contest } from '../models/contest.entity';
 import { ContestFeeOrder } from '../models/contest-fee-order.entity';
@@ -17,6 +18,7 @@ import {
 } from '../types';
 import type { Viewer } from './cafe.service';
 import { createNotification } from './notification.service';
+import * as payosService from './payos.service';
 
 /** Đơn còn hiệu lực: chưa bị từ chối hoặc huỷ. */
 const LIVE_ORDER_STATUSES = [
@@ -48,6 +50,7 @@ function mapOrder(order: ContestFeeOrder, plan?: ContestFeePlan | null) {
     transfer_reference: order.transferReference,
     transfer_date: order.transferDate,
     transfer_amount: order.transferAmount === null ? null : Number(order.transferAmount),
+    payos_order_code: order.payosOrderCode,
     admin_notes: order.adminNotes,
     reviewed_at: order.reviewedAt,
     created_at: order.createdAt,
@@ -180,6 +183,148 @@ export async function cancelContestFeeOrder(contestId: string, viewer: Viewer) {
   }
   order.status = ContestFeeOrderStatus.CANCELLED;
   await AppDataSource.getRepository(ContestFeeOrder).save(order);
+  return mapOrder(order);
+}
+
+/**
+ * Provider chọn trả qua cổng PayOS thay vì chuyển khoản tay.
+ *
+ * Đơn vẫn phải tồn tại và đang ở PENDING_PAYMENT — nghĩa là hai cách trả tiền
+ * dùng chung một đơn, provider đổi ý giữa chừng vẫn được. Bấm lại nút này thì
+ * link cũ bị huỷ trước khi phát link mới, tránh chuyện trả nhầm vào link chết.
+ */
+export async function createContestFeePayOSLink(contestId: string, viewer: Viewer) {
+  await getContestForProvider(contestId, viewer);
+  const order = await getLiveOrderForContest(contestId);
+  if (!order) throw new AppError('Giải chưa chọn gói tổ chức', 400, 'CONTEST_FEE_ORDER_NOT_FOUND');
+  if (order.status !== ContestFeeOrderStatus.PENDING_PAYMENT) {
+    throw new AppError(
+      order.status === ContestFeeOrderStatus.PAID
+        ? 'Đơn phí đã được xác nhận'
+        : 'Đơn phí đang chờ admin đối soát chuyển khoản',
+      409,
+      'CONTEST_FEE_ORDER_NOT_PAYABLE',
+    );
+  }
+
+  const plan = await AppDataSource.getRepository(ContestFeePlan).findOne({
+    where: { id: order.planId },
+  });
+
+  if (order.payosOrderCode) {
+    await payosService.cancelCheckout(Number(order.payosOrderCode), 'Provider tạo link mới');
+  }
+
+  const orderCode = payosService.generateOrderCode();
+  const checkoutUrl = await payosService.createCheckout({
+    orderCode,
+    amount: Number(order.amount),
+    description: payosService.buildDescription('RCField', plan?.code ?? 'PhiGiai'),
+    returnUrl: `${env.frontendUrl}/provider/contests/${contestId}/overview?payos=success&orderCode=${orderCode}`,
+    cancelUrl: `${env.frontendUrl}/provider/contests/${contestId}/overview?payos=cancel&orderCode=${orderCode}`,
+  });
+
+  order.payosOrderCode = String(orderCode);
+  await AppDataSource.getRepository(ContestFeeOrder).save(order);
+
+  return { checkout_url: checkoutUrl, order_code: orderCode, order: mapOrder(order, plan) };
+}
+
+/** Tra đơn phí theo mã PayOS — webhook và trang callback đều cần. */
+export async function findContestFeeOrderByPayOSCode(
+  orderCode: number | string,
+): Promise<ContestFeeOrder | null> {
+  return AppDataSource.getRepository(ContestFeeOrder).findOne({
+    where: { payosOrderCode: String(orderCode) },
+  });
+}
+
+/**
+ * PayOS báo đã nhận tiền → đơn sang PAID ngay, không qua bước admin đối soát.
+ *
+ * Đây là điểm khác duy nhất so với chuyển khoản tay: tiền đã được cổng xác
+ * nhận nên không còn gì để đối soát. Suất quảng bá vẫn vào hàng chờ duyệt nội
+ * dung như cũ — trả tiền không đồng nghĩa nội dung tự lên trang chủ.
+ *
+ * Ghi `reviewedBy` bằng chính providerId vì không có admin nào tham gia; để
+ * null thì báo cáo về sau không phân biệt được đơn tự động với đơn tồn.
+ */
+export async function markContestFeeOrderPaidViaPayOS(order: ContestFeeOrder) {
+  if (order.status === ContestFeeOrderStatus.PAID) return mapOrder(order);
+  if (order.status !== ContestFeeOrderStatus.PENDING_PAYMENT) {
+    throw new AppError(
+      'Đơn phí không ở trạng thái chờ thanh toán',
+      409,
+      'CONTEST_FEE_ORDER_INVALID',
+    );
+  }
+
+  const repo = AppDataSource.getRepository(ContestFeeOrder);
+  order.status = ContestFeeOrderStatus.PAID;
+  order.transferAmount = Number(order.amount);
+  order.adminNotes = 'Thanh toán qua cổng PayOS — xác nhận tự động.';
+  order.reviewedBy = order.providerId;
+  order.reviewedAt = new Date();
+  await repo.save(order);
+
+  if (order.featuredDays > 0) {
+    await createPendingFeaturedSlot(order, order.providerId);
+  }
+
+  await notifyProvider(
+    order,
+    'Đã thanh toán phí tổ chức giải',
+    order.featuredDays > 0
+      ? 'Thanh toán qua PayOS thành công. Giải của bạn đã sẵn sàng mở đăng ký. Suất quảng bá đang chờ đội ngũ RCField duyệt nội dung.'
+      : 'Thanh toán qua PayOS thành công. Giải của bạn đã sẵn sàng mở đăng ký.',
+  );
+
+  logger.info('ContestFee', 'đơn phí được PayOS xác nhận', {
+    orderId: order.id,
+    contestId: order.contestId,
+    orderCode: order.payosOrderCode,
+  });
+
+  return mapOrder(order);
+}
+
+/**
+ * PayOS báo huỷ hoặc hết hạn.
+ *
+ * Cố ý KHÔNG chuyển đơn sang REJECTED: provider mới chỉ bỏ dở một lần trả,
+ * đơn vẫn còn nguyên để họ trả lại hoặc quay sang chuyển khoản tay. Đây là chỗ
+ * khác luồng gói đăng ký — bên đó huỷ link là hỏng luôn yêu cầu.
+ */
+export async function markContestFeePayOSFailed(order: ContestFeeOrder, reason: string) {
+  if (order.status !== ContestFeeOrderStatus.PENDING_PAYMENT) return mapOrder(order);
+
+  order.adminNotes = `Lần thanh toán PayOS gần nhất không thành công: ${reason}`;
+  order.payosOrderCode = null;
+  await AppDataSource.getRepository(ContestFeeOrder).save(order);
+  return mapOrder(order);
+}
+
+/**
+ * Trang callback gọi ngay khi PayOS chuyển hướng về, không đợi webhook.
+ *
+ * Webhook có thể tới chậm hoặc rớt; hỏi thẳng PayOS rồi đồng bộ là cách để
+ * provider thấy kết quả ngay. Cả hai đường cùng gọi
+ * `markContestFeeOrderPaidViaPayOS`, và hàm đó tự thoát nếu đơn đã PAID nên
+ * chạy hai lần cũng không cộng đôi.
+ */
+export async function verifyContestFeePayOS(orderCode: number) {
+  const order = await findContestFeeOrderByPayOSCode(orderCode);
+  if (!order) throw new AppError('Đơn phí không tồn tại', 404, 'CONTEST_FEE_ORDER_NOT_FOUND');
+  if (order.status === ContestFeeOrderStatus.PAID) return mapOrder(order);
+
+  const status = await payosService.getCheckoutStatus(orderCode);
+  if (status === 'PAID') return markContestFeeOrderPaidViaPayOS(order);
+  if (status === 'CANCELLED' || status === 'EXPIRED') {
+    return markContestFeePayOSFailed(
+      order,
+      status === 'CANCELLED' ? 'Người dùng huỷ thanh toán' : 'Link thanh toán hết hạn',
+    );
+  }
   return mapOrder(order);
 }
 
