@@ -278,8 +278,8 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     await AppDataSource.query(
       `INSERT INTO booking_vehicles
          (booking_id, vehicle_id, hourly_rate_snapshot, rental_fee_snapshot,
-          security_deposit_snapshot, damage_multiplier_snapshot)
-       VALUES ($1, $2, 50000, 50000, 0, 1)`,
+          security_deposit_snapshot)
+       VALUES ($1, $2, 50000, 50000, 0)`,
       [legacyBooking.id, vehicle.id],
     );
 
@@ -868,9 +868,9 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
     await AppDataSource.query(
       `INSERT INTO booking_vehicles (
          booking_id, vehicle_id, hourly_rate_snapshot, rental_fee_snapshot,
-         security_deposit_snapshot, damage_multiplier_snapshot
+         security_deposit_snapshot
        )
-       VALUES ($1, $2, 100000, 100000, 0, 1.5)`,
+       VALUES ($1, $2, 100000, 100000, 0)`,
       [conflictBooking.id, vehicle.id],
     );
 

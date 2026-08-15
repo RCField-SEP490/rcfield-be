@@ -2,11 +2,16 @@ import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
 import {
+  BankTransactionGateway,
+  BookingStatus,
   PaymentComponentStatus,
   PaymentComponentType,
   PaymentTransactionStatus,
   UserRole,
 } from '../../types';
+import { matchBankTransaction } from '../../services/bank-webhook.service';
+import { buildSePayPayload } from '../helpers/bank-webhook.helper';
+import { seedBankPaymentScenario } from '../helpers/bank-payment.fixture';
 import { createTestCafe, createTestUser, generateToken } from '../helpers';
 import { Booking } from '../../models/booking.entity';
 import { PaymentComponent } from '../../models/payment-component.entity';
@@ -144,5 +149,178 @@ describe('POST /api/v1/bookings/:id/checkout-additional-payment', () => {
       .expect(403);
 
     expect(res.body.code).toBe('NOT_BOOKING_OWNER');
+  });
+});
+
+/**
+ * Tất toán cuối phiên bằng chuyển khoản quét mã.
+ *
+ * Khác luồng đặt lịch ở một điểm quyết định: xe đã trả, khách đã về, không còn
+ * chỗ nào để nhả nếu không thu được tiền. Vì vậy mã QR sống lâu hơn và tiền về
+ * muộn vẫn phải khớp. Đổi lại, mọi cách sinh ra HAI mã cùng sống đều là hai lần
+ * thu tiền của cùng một người — bốn ca đầu dưới đây canh đúng chỗ đó.
+ */
+describe('tất toán cuối phiên: chuyển khoản quét mã', () => {
+  async function tokenFor(customerId: string): Promise<string> {
+    const [user] = await AppDataSource.query(`SELECT * FROM users WHERE id = $1`, [customerId]);
+    return generateToken(user);
+  }
+
+  /** Dựng một booking đã chơi xong, còn khoản phát sinh chờ thu. */
+  async function seedSettlement(amount = 180000) {
+    const fx = await seedBankPaymentScenario();
+    await AppDataSource.query(`UPDATE bookings SET status = $1 WHERE id = $2`, [
+      BookingStatus.AWAITING_PAYMENT,
+      fx.bookingId,
+    ]);
+    // Phiên thanh toán ban đầu đã xong, không được lẫn vào phần tất toán.
+    await AppDataSource.query(`UPDATE payment_transactions SET status = $1 WHERE id = $2`, [
+      PaymentTransactionStatus.SUCCESS,
+      fx.paymentTransactionId,
+    ]);
+    await AppDataSource.query(
+      `INSERT INTO payment_components (booking_id, type, amount, status)
+       VALUES ($1, $2, $3, $4)`,
+      [fx.bookingId, PaymentComponentType.FNB_ON_SITE, amount, PaymentComponentStatus.PENDING],
+    );
+    return { ...fx, settlementAmount: amount };
+  }
+
+  async function liveAdditionalTx(bookingId: string) {
+    return AppDataSource.query(
+      `SELECT * FROM payment_transactions
+        WHERE booking_id = $1 AND txn_ref LIKE 'ctr_%' AND status = $2
+        ORDER BY created_at DESC`,
+      [bookingId, PaymentTransactionStatus.PENDING],
+    );
+  }
+
+  // ── Ca 1 ────────────────────────────────────────────────────────────────────
+  it('chọn bank_transfer thì trả mã QR kèm mã tham chiếu, không phải URL chuyển hướng', async () => {
+    const fx = await seedSettlement();
+    const res = await request(app)
+      .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+      .set('Authorization', `Bearer ${await tokenFor(fx.customerId)}`)
+      .send({ payment_method: 'bank_transfer' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.data.flow).toBe('bank_transfer');
+    expect(res.body.data.bank_transfer.qr_image_data_url).toContain('data:image/png');
+    expect(res.body.data.bank_transfer.amount).toBe(fx.settlementAmount);
+    expect(res.body.data.bank_transfer.ref_code).toMatch(/^RCF/);
+
+    const [tx] = await liveAdditionalTx(fx.bookingId);
+    expect(tx.payment_ref_code).toBe(res.body.data.bank_transfer.ref_code);
+  });
+
+  // ── Ca 2 ────────────────────────────────────────────────────────────────────
+  it('không tự xác nhận dù cờ mock VNPay đang bật', async () => {
+    const fx = await seedSettlement();
+    await request(app)
+      .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+      .set('Authorization', `Bearer ${await tokenFor(fx.customerId)}`)
+      .send({ payment_method: 'bank_transfer' })
+      .expect(201);
+
+    // Còn nguyên PENDING: tiền chưa về thì không được disburse gì cả.
+    const [tx] = await liveAdditionalTx(fx.bookingId);
+    expect(tx.status).toBe(PaymentTransactionStatus.PENDING);
+    const comps = await AppDataSource.query(
+      `SELECT status FROM payment_components WHERE booking_id = $1 AND type = $2`,
+      [fx.bookingId, PaymentComponentType.FNB_ON_SITE],
+    );
+    expect(comps[0].status).toBe(PaymentComponentStatus.PENDING);
+  });
+
+  // ── Ca 3 ────────────────────────────────────────────────────────────────────
+  it('bấm hai lần liên tiếp thì dùng lại đúng mã cũ, không sinh mã thứ hai', async () => {
+    const fx = await seedSettlement();
+    const token = await tokenFor(fx.customerId);
+    const call = () =>
+      request(app)
+        .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ payment_method: 'bank_transfer' });
+
+    const first = await call();
+    const second = await call();
+
+    expect(second.body.data.bank_transfer.ref_code).toBe(first.body.data.bank_transfer.ref_code);
+    expect(await liveAdditionalTx(fx.bookingId)).toHaveLength(1);
+  });
+
+  // ── Ca 4 ────────────────────────────────────────────────────────────────────
+  it('đổi sang VNPay thì mã QR cũ chết hẳn', async () => {
+    const fx = await seedSettlement();
+    const token = await tokenFor(fx.customerId);
+
+    const qr = await request(app)
+      .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ payment_method: 'bank_transfer' });
+    const deadRef = qr.body.data.bank_transfer.ref_code;
+
+    await request(app)
+      .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(201);
+
+    const [old] = await AppDataSource.query(
+      `SELECT status FROM payment_transactions WHERE payment_ref_code = $1`,
+      [deadRef],
+    );
+    expect(old.status).toBe(PaymentTransactionStatus.FAILED);
+  });
+
+  // ── Ca 5 ────────────────────────────────────────────────────────────────────
+  it('tiền về khớp mã thì khoản phát sinh được ghi nhận đã thu', async () => {
+    const fx = await seedSettlement();
+    const qr = await request(app)
+      .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+      .set('Authorization', `Bearer ${await tokenFor(fx.customerId)}`)
+      .send({ payment_method: 'bank_transfer' });
+    const refCode = qr.body.data.bank_transfer.ref_code;
+
+    const result = await matchBankTransaction(
+      buildSePayPayload({
+        content: `CT DEN:520 ${refCode} TU MB CHUYEN TIEN`,
+        transferAmount: fx.settlementAmount,
+        accountNumber: fx.accountNumber,
+      }),
+      BankTransactionGateway.SANDBOX,
+    );
+
+    expect(result.matched).toBe(true);
+    const comps = await AppDataSource.query(
+      `SELECT status FROM payment_components WHERE booking_id = $1 AND type = $2`,
+      [fx.bookingId, PaymentComponentType.FNB_ON_SITE],
+    );
+    expect(comps[0].status).toBe(PaymentComponentStatus.DISBURSED);
+  });
+
+  // ── Ca 6 ────────────────────────────────────────────────────────────────────
+  it('chuyển thiếu tiền thì không ghi nhận đã thu', async () => {
+    const fx = await seedSettlement();
+    const qr = await request(app)
+      .post(`/api/v1/bookings/${fx.bookingId}/checkout-additional-payment`)
+      .set('Authorization', `Bearer ${await tokenFor(fx.customerId)}`)
+      .send({ payment_method: 'bank_transfer' });
+
+    const result = await matchBankTransaction(
+      buildSePayPayload({
+        content: `CT DEN ${qr.body.data.bank_transfer.ref_code}`,
+        transferAmount: fx.settlementAmount - 10000,
+        accountNumber: fx.accountNumber,
+      }),
+      BankTransactionGateway.SANDBOX,
+    );
+
+    expect(result.matched).toBe(false);
+    const comps = await AppDataSource.query(
+      `SELECT status FROM payment_components WHERE booking_id = $1 AND type = $2`,
+      [fx.bookingId, PaymentComponentType.FNB_ON_SITE],
+    );
+    expect(comps[0].status).toBe(PaymentComponentStatus.PENDING);
   });
 });

@@ -37,6 +37,17 @@ export class ContestFeeOrder {
   @Column({ name: 'transfer_reference', type: 'varchar', length: 255, nullable: true })
   transferReference: string | null;
 
+  /**
+   * Mã đơn PayOS, chỉ có khi provider chọn trả qua cổng.
+   *
+   * Không dùng chung `transfer_reference`: cột đó giữ mã giao dịch provider tự
+   * gõ khi chuyển khoản tay. Gộp lại thì webhook không phân biệt được đơn nào
+   * do PayOS xác nhận và đơn nào do người khai báo.
+   */
+  @Column({ name: 'payos_order_code', type: 'varchar', length: 30, nullable: true })
+  @Index({ unique: true, where: 'payos_order_code IS NOT NULL' })
+  payosOrderCode: string | null;
+
   @Column({ name: 'transfer_date', type: 'date', nullable: true })
   transferDate: string | null;
 

@@ -4,6 +4,7 @@ import {
   ContestFeeOrderCreateSchema,
   ContestFeeOrderRejectSchema,
   ContestFeeOrderReviewSchema,
+  ContestFeePayOSVerifySchema,
   ContestFeeTransferSchema,
 } from '../validate';
 import * as contestFeeService from '../services/contest-fee.service';
@@ -52,6 +53,32 @@ export const contestFeeController = {
         body.plan_id,
       );
       res.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // POST /api/v1/contests/:contestId/fee/payos-link  [auth]
+  async createPayOSLink(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const data = await contestFeeService.createContestFeePayOSLink(req.params.contestId, viewer);
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // POST /api/v1/contests/:contestId/fee/payos-verify  [auth]
+  async verifyPayOS(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      const viewer = requireViewer(req);
+      const body = ContestFeePayOSVerifySchema.parse(req.body);
+      // Kiểm quyền trước khi tra theo mã đơn: thiếu bước này thì ai đoán được
+      // mã PayOS cũng đọc được đơn phí của giải người khác.
+      await contestFeeService.getContestFeeStatus(req.params.contestId, viewer);
+      const data = await contestFeeService.verifyContestFeePayOS(body.order_code);
+      res.json({ success: true, data });
     } catch (error) {
       next(error);
     }

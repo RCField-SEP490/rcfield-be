@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isVietnamMobile, isVietnamPhone } from '../lib/vietnam-phone';
 import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
 import {
   AssetTier,
@@ -62,13 +63,22 @@ export const StaffBookingsQuerySchema = z.object({
     }, 'date không hợp lệ'),
 });
 
+/** Số liên lạc cá nhân: bắt buộc là di động Việt Nam (xem lib/vietnam-phone). */
+const MobilePhone = z
+  .string()
+  .trim()
+  .refine(isVietnamMobile, 'Số điện thoại không hợp lệ (di động Việt Nam, 10 chữ số)');
+
+/** Số của chi nhánh: nhận cả số cố định vì nhiều quán dùng số bàn. */
+const BranchPhone = z
+  .string()
+  .trim()
+  .refine(isVietnamPhone, 'Số điện thoại không hợp lệ (di động hoặc số cố định Việt Nam)');
+
 export const RegisterSchema = z.object({
   full_name: z.string().min(2).max(255),
   email: z.string().email().max(255),
-  phone: z
-    .string()
-    .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/)
-    .optional(),
+  phone: MobilePhone.optional(),
   password: z.string().min(6).max(100),
   role: z.enum(['CUSTOMER', 'PROVIDER']).default('CUSTOMER'),
 });
@@ -93,11 +103,7 @@ export const LogoutSchema = z.object({
 export const UpdateMeSchema = z
   .object({
     full_name: z.string().min(2).max(255).optional(),
-    phone: z
-      .string()
-      .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không đúng định dạng')
-      .nullable()
-      .optional(),
+    phone: MobilePhone.nullable().optional(),
     avatar_url: z.string().url().nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, 'Cần ít nhất một trường để cập nhật');
@@ -138,11 +144,7 @@ export const CreateStaffSchema = z.object({
   cafe_id: z.string().uuid('cafe_id phải là UUID hợp lệ'),
   full_name: z.string().trim().min(2).max(255),
   email: z.string().trim().email('Email không hợp lệ').max(255),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ')
-    .optional(),
+  phone: MobilePhone.optional(),
 });
 
 export const ActivateStaffSchema = z.object({
@@ -353,7 +355,7 @@ const CafeUpsertBaseSchema = z.object({
     .nullable()
     .optional()
     .openapi({ example: 'San RC trong nha voi duong drift va obstacle.' }),
-  phone: z.string().min(9).max(20).nullable().optional().openapi({ example: '0901234567' }),
+  phone: BranchPhone.nullable().optional().openapi({ example: '0901234567' }),
   cover_image_url: z
     .string()
     .url()
@@ -839,6 +841,11 @@ export const ContestFeeTransferSchema = z.object({
   transfer_amount: z.number().positive('Số tiền chuyển khoản phải lớn hơn 0'),
 });
 
+/** Mã đơn PayOS luôn là số nguyên dương; nhận cả chuỗi vì query string gửi lên là chuỗi. */
+export const ContestFeePayOSVerifySchema = z.object({
+  order_code: z.coerce.number().int().positive('Mã đơn PayOS không hợp lệ'),
+});
+
 export const ContestFeeOrderReviewSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
 });
@@ -1301,7 +1308,7 @@ export const RegisterProviderSchema = z.object({
   email: z.string().email('Email không hợp lệ'),
   password: z.string().min(8, 'Mật khẩu tối thiểu 8 ký tự'),
   full_name: z.string().min(2).max(255),
-  phone: z.string().min(9).max(20).optional(),
+  phone: MobilePhone.optional(),
   business_name: z.string().min(2).max(255),
   business_description: z.string().max(1000).optional(),
   // Mã số thuế Việt Nam: 10 số, hoặc 13 số khi có mã đơn vị phụ thuộc (dạng
@@ -1438,13 +1445,6 @@ export const CreateVehicleCatalogSchema = z.object({
   tier: AssetTierSchema.openapi({ example: AssetTier.STANDARD }),
   hourly_rate: z.number().nonnegative().openapi({ example: 40000 }),
   security_deposit: z.number().nonnegative().optional().default(0).openapi({ example: 0 }),
-  damage_multiplier: z
-    .number()
-    .min(0.1)
-    .max(10.0)
-    .optional()
-    .default(1.0)
-    .openapi({ example: 1.0 }),
   compatible_track_types: z
     .array(TrackTypeSchema)
     .min(1)
@@ -1566,7 +1566,7 @@ const ParticipantSchema = z.object({
   user_id: z.string().uuid().optional(),
   participant_type: z.nativeEnum(BookingParticipantType),
   guest_name: z.string().max(255).optional(),
-  guest_phone: z.string().max(20).optional(),
+  guest_phone: MobilePhone.optional(),
 });
 
 const FnbItemSchema = z.object({
@@ -1789,10 +1789,7 @@ export const CreateWalkInBookingSchema = z
       .array(
         z.object({
           guest_name: z.string().trim().min(1, 'Tên người chơi không được để trống'),
-          guest_phone: z
-            .string()
-            .trim()
-            .regex(/^(84|0[3|5|7|8|9])([0-9]{8})$/, 'Số điện thoại không hợp lệ'),
+          guest_phone: MobilePhone,
           participant_type: z.literal(BookingParticipantType.WALK_IN_GUEST),
         }),
       )

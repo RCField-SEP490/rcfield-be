@@ -388,6 +388,19 @@ contestRouter.post(
   authorize(UserRole.PROVIDER),
   contestFeeController.submitTransfer,
 );
+// Trả qua cổng PayOS — chạy song song với đường chuyển khoản tay ở trên.
+contestRouter.post(
+  '/contests/:contestId/fee/payos-link',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.createPayOSLink,
+);
+contestRouter.post(
+  '/contests/:contestId/fee/payos-verify',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  contestFeeController.verifyPayOS,
+);
 
 contestRouter.get(
   '/admin/contest-fee-orders',

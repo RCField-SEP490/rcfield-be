@@ -194,9 +194,9 @@ async function ensureVehicleForCafe(cafeId: string, cafeSlug: string, trackTypeI
 
   const [catalog] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO vehicle_catalogs
-       (cafe_id, name, description, tier, hourly_rate, security_deposit, damage_multiplier, compatible_track_types)
+       (cafe_id, name, description, tier, hourly_rate, security_deposit, compatible_track_types)
      VALUES
-       ($1, $2, $3, 'STANDARD', 85000, 0, 1.0, $4)
+       ($1, $2, $3, 'STANDARD', 85000, 0, $4)
      RETURNING id`,
     [
       cafeId,
@@ -346,9 +346,9 @@ async function createCompletedPlay(params: {
 
   const [bookingVehicle] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO booking_vehicles
-       (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot, damage_multiplier_snapshot)
+       (booking_id, vehicle_id, hourly_rate_snapshot, security_deposit_snapshot)
      VALUES
-       ($1, $2, 85000, 0, 1.0)
+       ($1, $2, 85000, 0)
      RETURNING id`,
     [booking.id, params.vehicleId],
   );

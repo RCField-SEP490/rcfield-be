@@ -41,7 +41,6 @@ function vehicleCatalogBody(overrides: Record<string, unknown> = {}) {
     tier: 'STANDARD',
     hourly_rate: 40000,
     security_deposit: 200000,
-    damage_multiplier: 1.0,
     compatible_track_types: [driftId],
     cover_image_url: 'https://cdn.rcfield.vn/vehicles/tamiya-cover.jpg',
     images: [

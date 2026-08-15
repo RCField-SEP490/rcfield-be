@@ -801,7 +801,6 @@ export async function createBooking(
     vehicleId: string;
     hourlyRate: number;
     rentalFee: number;
-    damageMultiplier: number;
     catalogName: string;
     tier: string;
     identifier: string | null;
@@ -849,7 +848,6 @@ export async function createBooking(
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        damageMultiplier: Number(catalog.damageMultiplier),
         catalogName: catalog.name,
         tier: catalog.tier,
         identifier: vehicle.identifier,
@@ -1150,7 +1148,6 @@ export async function createBooking(
           // Retained as a legacy non-null database column until the schema
           // migration is deployed. New bookings must never charge a deposit.
           securityDepositSnapshot: 0,
-          damageMultiplierSnapshot: vp.damageMultiplier,
         });
         await em.save(bv);
       }
@@ -1819,7 +1816,6 @@ export async function createWalkInBooking(
     vehicleId: string;
     hourlyRate: number;
     rentalFee: number;
-    damageMultiplier: number;
     catalogName: string;
     tier: string;
     identifier: string | null;
@@ -1878,7 +1874,6 @@ export async function createWalkInBooking(
         vehicleId: vehicle.id,
         hourlyRate,
         rentalFee,
-        damageMultiplier: Number(catalog.damageMultiplier),
         catalogName: catalog.name,
         tier: catalog.tier,
         identifier: vehicle.identifier,
@@ -2013,7 +2008,6 @@ export async function createWalkInBooking(
           colorSnapshot: vp.color,
           coverImageUrlSnapshot: vp.coverImageUrl,
           securityDepositSnapshot: 0,
-          damageMultiplierSnapshot: vp.damageMultiplier,
         });
         await em.save(bv);
         savedVehicles.push(bv);

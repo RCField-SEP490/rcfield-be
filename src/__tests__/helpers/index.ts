@@ -184,10 +184,10 @@ export async function createTestVehicle(options: CreateVehicleOptions) {
   // Insert catalog first
   const [catalog] = await AppDataSource.query(
     `INSERT INTO vehicle_catalogs
-       (cafe_id, name, tier, hourly_rate, security_deposit, damage_multiplier, compatible_track_types)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+       (cafe_id, name, tier, hourly_rate, security_deposit, compatible_track_types)
+     VALUES ($1,$2,$3,$4,$5,$6)
      RETURNING *`,
-    [cafe_id, 'Traxxas Slash 4x4', tier, 50000, 500000, 1.0, mappedCompatTrackIds],
+    [cafe_id, 'Traxxas Slash 4x4', tier, 50000, 500000, mappedCompatTrackIds],
   );
 
   // Insert vehicle pointing to catalog
@@ -207,7 +207,6 @@ export async function createTestVehicle(options: CreateVehicleOptions) {
     tier: catalog.tier,
     hourly_rate: catalog.hourly_rate,
     security_deposit: catalog.security_deposit,
-    damage_multiplier: catalog.damage_multiplier,
     compatible_track_types: catalog.compatible_track_types,
   };
 }

@@ -1933,12 +1933,22 @@ export async function confirmRefund(
   });
 }
 
+/**
+ * Mã QR tất toán sống bao lâu.
+ *
+ * Khác luồng đặt lịch: ở đó mã chết theo hạn giữ chỗ, vì quá hạn là mất chỗ.
+ * Ở đây xe đã trả, khách đã về — không còn gì để nhả, nên cho hạn rộng để khách
+ * ra khỏi quán vẫn trả được. Hết hạn cũng chỉ nghĩa là lần bấm sau sẽ cấp mã
+ * mới, giao dịch cũ vẫn PENDING nên tiền về muộn vẫn khớp được.
+ */
+const ADDITIONAL_PAYMENT_QR_TTL_MS = 24 * 60 * 60 * 1000;
+
 export async function createCheckoutAdditionalPaymentUrl(
   bookingId: string,
   ipAddr: string,
   customReturnUrl?: string,
   gatewayName = 'vnpay',
-): Promise<{ payment_url: string | null; txn_ref: string; total_amount: number }> {
+): Promise<CheckoutResult> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
@@ -1959,10 +1969,77 @@ export async function createCheckoutAdditionalPaymentUrl(
     );
   }
 
+  // ── Lần bấm trước còn sống? ────────────────────────────────────────────────
+  //
+  // Trước khi có chuyển khoản, mỗi lần gọi lại sinh thêm một giao dịch PENDING
+  // và điều đó vô hại: khách chỉ đi theo URL VNPay vừa nhận. Với chuyển khoản
+  // thì không — mỗi giao dịch mang một mã tham chiếu riêng, và mã cũ vẫn nằm
+  // trong lịch sử điện thoại khách. Hai mã cùng sống là hai lần thu tiền.
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  const previousAttempts = await txRepo.find({
+    where: {
+      bookingId,
+      type: PaymentTransactionType.PAYMENT,
+      status: PaymentTransactionStatus.PENDING,
+    },
+    order: { createdAt: 'DESC' },
+  });
+  const isAdditional = (tx: PaymentTransaction) =>
+    (tx.rawRequest as { additionalPayment?: boolean } | null)?.additionalPayment === true;
+  const liveAttempts = previousAttempts.filter(isAdditional);
+  const latest = liveAttempts[0];
+  const latestRequest = (latest?.rawRequest ?? {}) as { qrExpiresAt?: string };
+  const latestQrExpiresAt = latestRequest.qrExpiresAt ? new Date(latestRequest.qrExpiresAt) : null;
+
+  // Dùng lại đúng phiên cũ khi cùng cổng, cùng số tiền và chưa hết hạn. Đổi số
+  // tiền thì phải cấp mã mới, không thì khách quét mã cũ và trả thiếu.
+  if (
+    latest &&
+    latest.gateway === gateway.name &&
+    Number(latest.amount) === totalCharged &&
+    latestQrExpiresAt &&
+    latestQrExpiresAt > new Date()
+  ) {
+    if (gateway.name === 'BANK_TRANSFER' && latest.paymentRefCode) {
+      return {
+        payment_url: buildBankTransferPageUrl(bookingId),
+        txn_ref: latest.txnRef,
+        total_amount: totalCharged,
+        flow: 'bank_transfer',
+        bank_transfer: await buildBankTransferCheckout({
+          cafeId: booking.cafeId,
+          amount: totalCharged,
+          refCode: latest.paymentRefCode,
+          expiresAt: latestQrExpiresAt,
+        }),
+      };
+    }
+  }
+
+  // Không dùng lại được thì mọi phiên tất toán còn treo phải chết hẳn, kể cả
+  // phiên của cổng khác — khách đổi từ chuyển khoản sang VNPay mà mã QR cũ vẫn
+  // nhận tiền là mất kiểm soát.
+  for (const stale of liveAttempts) {
+    await txRepo.update(stale.id, {
+      status: PaymentTransactionStatus.FAILED,
+      rawResponse: {
+        ...((stale.rawResponse ?? {}) as Record<string, unknown>),
+        reason: 'ADDITIONAL_PAYMENT_ATTEMPT_REPLACED',
+        replacedAt: new Date().toISOString(),
+      },
+    });
+  }
+
   // Create unique txnRef starting with ctr_ to distinguish from initial payment
   const txnRef = `ctr_${bookingId.replace(/-/g, '').substring(0, 18)}_${Date.now()
     .toString()
     .slice(-4)}`;
+
+  // Mã tham chiếu ngắn để nhúng vào nội dung chuyển khoản — `txnRef` dài quá,
+  // ngân hàng cắt bớt và khách cũng không gõ tay được. Gắn vào TRANSACTION nên
+  // mọi phiên bị thay thế ở trên đã kéo theo mã của nó chết luôn.
+  const paymentRefCode = gateway.name === 'BANK_TRANSFER' ? await allocatePaymentRefCode() : null;
+  const qrExpiresAt = new Date(Date.now() + ADDITIONAL_PAYMENT_QR_TTL_MS);
 
   const gatewayResult = gateway.createPaymentUrl({
     amount: totalCharged,
@@ -1974,7 +2051,6 @@ export async function createCheckoutAdditionalPaymentUrl(
   });
 
   // Record pending transaction
-  const txRepo = AppDataSource.getRepository(PaymentTransaction);
   const tx = txRepo.create({
     bookingId,
     customerPackageId: null,
@@ -1983,6 +2059,7 @@ export async function createCheckoutAdditionalPaymentUrl(
     type: PaymentTransactionType.PAYMENT,
     gateway: gateway.name,
     txnRef,
+    paymentRefCode,
     amount: totalCharged,
     status: PaymentTransactionStatus.PENDING,
     rawRequest: {
@@ -1990,6 +2067,7 @@ export async function createCheckoutAdditionalPaymentUrl(
       totalCharged,
       ipAddr,
       additionalPayment: true,
+      qrExpiresAt: qrExpiresAt.toISOString(),
       components: pendingComponents.map((component) => ({
         id: component.id,
         type: component.type,
@@ -2001,7 +2079,12 @@ export async function createCheckoutAdditionalPaymentUrl(
   });
   await txRepo.save(tx);
 
-  if (gateway.name === 'MOCK' || env.vnpay.mockEnabled) {
+  // ⚠️ `env.vnpay.mockEnabled` CHỈ áp cho cổng VNPAY — giống hệt ràng buộc ở
+  // luồng đặt lịch. Bỏ vế `gateway.name === 'VNPAY'` ra thì trên môi trường demo
+  // (nơi cờ này đang bật) khoản tất toán chuyển khoản được xác nhận ngay tại
+  // đây, trước cả khi mã QR hiện lên màn hình khách, và toàn bộ đường đối soát
+  // qua webhook thành vô nghĩa.
+  if (gateway.name === 'MOCK' || (env.vnpay.mockEnabled && gateway.name === 'VNPAY')) {
     await processMockConfirmation(txnRef);
     const target = new URL('/payment/result', env.frontendUrl);
     target.searchParams.set('status', 'success');
@@ -2011,5 +2094,25 @@ export async function createCheckoutAdditionalPaymentUrl(
     return { payment_url: target.toString(), txn_ref: txnRef, total_amount: totalCharged };
   }
 
-  return { payment_url: gatewayResult.payment_url, txn_ref: txnRef, total_amount: totalCharged };
+  if (gateway.name === 'BANK_TRANSFER' && paymentRefCode) {
+    return {
+      payment_url: buildBankTransferPageUrl(bookingId),
+      txn_ref: txnRef,
+      total_amount: totalCharged,
+      flow: 'bank_transfer',
+      bank_transfer: await buildBankTransferCheckout({
+        cafeId: booking.cafeId,
+        amount: totalCharged,
+        refCode: paymentRefCode,
+        expiresAt: qrExpiresAt,
+      }),
+    };
+  }
+
+  return {
+    payment_url: gatewayResult.payment_url,
+    txn_ref: txnRef,
+    total_amount: totalCharged,
+    flow: 'redirect',
+  };
 }

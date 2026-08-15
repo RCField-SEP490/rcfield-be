@@ -57,9 +57,9 @@ describe('GET /api/v1/bookings/:id', () => {
     await AppDataSource.query(
       `INSERT INTO booking_vehicles
          (booking_id, vehicle_id, hourly_rate_snapshot, rental_fee_snapshot,
-          security_deposit_snapshot, damage_multiplier_snapshot, catalog_name_snapshot,
+          security_deposit_snapshot, catalog_name_snapshot,
           tier_snapshot, identifier_snapshot, color_snapshot, cover_image_url_snapshot)
-       VALUES ($1, $2, 80000, 80000, 0, 1, $3, 'PREMIUM', $4, 'Orange', $5)`,
+       VALUES ($1, $2, 80000, 80000, 0, $3, 'PREMIUM', $4, 'Orange', $5)`,
       [
         booking.id,
         vehicle.id,

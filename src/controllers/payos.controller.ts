@@ -1,7 +1,8 @@
-/* eslint-disable no-console */
 import { Request, Response, NextFunction } from 'express';
 import * as payosService from '../services/payos.service';
+import * as contestFeeService from '../services/contest-fee.service';
 import { AppDataSource } from '../config/database';
+import { logger } from '../config/logger';
 import { PaymentRequest } from '../models/payment-request.entity';
 import { AppError } from '../types';
 
@@ -12,30 +13,55 @@ export const payosController = {
   async handleWebhook(req: Request, res: Response, _next: NextFunction): Promise<void> {
     try {
       const webhookData = await payosService.verifyWebhookData(req.body);
+      const orderCode = webhookData.orderCode;
+      // Theo tài liệu PayOS, code === "00" là giao dịch thành công.
+      const isSuccess = webhookData.code === '00';
 
-      console.log('Received PayOS Webhook verified data:', webhookData);
+      logger.info('PayOS Webhook', 'nhận dữ liệu đã xác thực', {
+        orderCode,
+        code: webhookData.code,
+      });
 
-      // Tìm PaymentRequest dựa trên orderCode lưu ở transferReference
-      const repo = AppDataSource.getRepository(PaymentRequest);
-      const request = await repo.findOne({
-        where: { transferReference: String(webhookData.orderCode) },
+      // Một mã đơn thuộc về đúng một bảng. Tra gói đăng ký trước vì đó là luồng
+      // có sẵn, không tìm thấy mới sang đơn phí tổ chức giải.
+      const request = await AppDataSource.getRepository(PaymentRequest).findOne({
+        where: { transferReference: String(orderCode) },
       });
 
       if (request) {
-        // Nếu giao dịch thành công (PayOS webhook data báo thành công)
-        // Lưu ý: data của webhook có code hoặc success. Theo tài liệu PayOS, webhookData.code === "00" là thành công
-        const isSuccess = webhookData.code === '00';
-
         if (isSuccess) {
           await payosService.handlePayOSPaid(request);
-          console.log(`PaymentRequest ${request.id} paid via PayOS Webhook (pending approval)`);
+          logger.info('PayOS Webhook', 'gói đăng ký đã trả, chờ admin duyệt', {
+            paymentRequestId: request.id,
+          });
         } else {
-          const reason = `PayOS Webhook báo giao dịch thất bại. Code: ${webhookData.code}`;
-          await payosService.handlePaymentFailed(request, reason);
-          console.log(`PaymentRequest ${request.id} rejected via PayOS Webhook`);
+          await payosService.handlePaymentFailed(
+            request,
+            `PayOS báo giao dịch thất bại. Code: ${webhookData.code}`,
+          );
+          logger.warn('PayOS Webhook', 'gói đăng ký bị từ chối', { paymentRequestId: request.id });
         }
       } else {
-        console.warn(`No PaymentRequest found matching PayOS orderCode: ${webhookData.orderCode}`);
+        const feeOrder = await contestFeeService.findContestFeeOrderByPayOSCode(orderCode);
+        if (feeOrder) {
+          if (isSuccess) {
+            // Khác gói đăng ký: đơn phí sang PAID luôn, không chờ admin đối soát.
+            await contestFeeService.markContestFeeOrderPaidViaPayOS(feeOrder);
+            logger.info('PayOS Webhook', 'phí tổ chức giải đã thanh toán', {
+              contestFeeOrderId: feeOrder.id,
+            });
+          } else {
+            await contestFeeService.markContestFeePayOSFailed(
+              feeOrder,
+              `PayOS báo giao dịch thất bại. Code: ${webhookData.code}`,
+            );
+            logger.warn('PayOS Webhook', 'phí tổ chức giải trả không thành công', {
+              contestFeeOrderId: feeOrder.id,
+            });
+          }
+        } else {
+          logger.warn('PayOS Webhook', 'không tìm thấy đơn nào khớp mã', { orderCode });
+        }
       }
 
       // Luôn trả về phản hồi thành công theo đúng đặc tả của PayOS để dừng việc gửi lại webhook
@@ -45,7 +71,7 @@ export const payosController = {
         data: null,
       });
     } catch (err) {
-      console.error('PayOS Webhook handling error:', err);
+      logger.error('PayOS Webhook', 'xử lý webhook lỗi', err);
       // Mặc dù lỗi nhưng vẫn trả về code 00 cho PayOS để tránh việc họ retry liên tục làm treo hệ thống
       res.json({
         code: '00',

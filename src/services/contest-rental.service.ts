@@ -932,10 +932,6 @@ export async function createContestVehicleHandover(params: {
   });
   if (!cafe) throw new AppError('Chi nhánh không tồn tại', 404, 'CAFE_NOT_FOUND');
 
-  const catalog = await AppDataSource.getRepository(VehicleCatalog).findOne({
-    where: { id: vehicle.catalogId },
-  });
-
   const window = resolveContestHandoverWindow(contest, cafe.slotDurationMinutes);
 
   return AppDataSource.transaction(async (manager) => {
@@ -990,7 +986,7 @@ export async function createContestVehicleHandover(params: {
     );
 
     // Snapshot 0đ: thuê xe trong giải miễn phí và không thu cọc, nhưng vẫn giữ
-    // damage_multiplier để tính tiền hư hỏng lúc trả xe.
+    // giá thuê để tính tiền lúc trả xe.
     const bookingVehicle = await manager.getRepository(BookingVehicle).save(
       manager.getRepository(BookingVehicle).create({
         bookingId: booking.id,
@@ -998,7 +994,6 @@ export async function createContestVehicleHandover(params: {
         hourlyRateSnapshot: 0,
         rentalFeeSnapshot: 0,
         securityDepositSnapshot: 0,
-        damageMultiplierSnapshot: Number(catalog?.damageMultiplier ?? 1),
       }),
     );
 
