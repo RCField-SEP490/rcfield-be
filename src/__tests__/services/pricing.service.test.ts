@@ -99,6 +99,34 @@ describe('computeEffectiveMultiplier', () => {
     expect(result.label).toBe('Giờ cao điểm');
   });
 
+  // Cột TIME của Postgres trả về 'HH:MM:SS'. Các fixture cũ dùng 'HH:MM' nên
+  // không bao giờ chạm tới biên thật — hai ca dưới đây dùng đúng định dạng DB.
+  const peakStartSlot = new Date('2026-01-07T11:00:00.000Z'); // 18:00 UTC+7
+
+  it('tính giá cao điểm cho slot bắt đầu ĐÚNG giờ mở khung (biên trái tính vào)', () => {
+    const rule = makeRule({
+      ruleType: PricingRuleType.PEAK_HOURS,
+      multiplier: 1.3,
+      peakStartTime: '18:00:00',
+      peakEndTime: '21:00:00',
+    });
+    const result = computeEffectiveMultiplier(peakStartSlot, [rule], [], []);
+    expect(result.multiplier).toBe(1.3);
+    expect(result.label).toBe('Giờ cao điểm');
+  });
+
+  it('KHÔNG tính giá cao điểm cho slot bắt đầu đúng giờ đóng khung (biên phải loại ra)', () => {
+    const rule = makeRule({
+      ruleType: PricingRuleType.PEAK_HOURS,
+      multiplier: 1.3,
+      peakStartTime: '18:00:00',
+      peakEndTime: '21:00:00',
+    });
+    const result = computeEffectiveMultiplier(peakBoundarySlot, [rule], [], []);
+    expect(result.multiplier).toBe(1.0);
+    expect(result.label).toBeNull();
+  });
+
   it('returns higher of weekend vs peak — no stacking', () => {
     const rules = [
       makeRule({ id: 'r1', ruleType: PricingRuleType.WEEKEND, multiplier: 1.5 }),

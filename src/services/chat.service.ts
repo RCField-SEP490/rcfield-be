@@ -248,6 +248,12 @@ function buildSystemPrompt(
   parts.push(
     `- Khi khách hỏi về xe RC, loại xe, xe nào phù hợp, giá thuê xe, xe cho người mới: GỌI NGAY get_vehicles.`,
   );
+  parts.push(
+    `- Khi khách hỏi về phí sân, giá một buổi chơi, chơi hết bao nhiêu tiền, giá cuối tuần, giá ngày lễ, giờ cao điểm có đắt hơn không: GỌI NGAY get_pricing.`,
+  );
+  parts.push(
+    `- Phí sân và phí thuê xe là HAI khoản tách biệt. Khách thuê xe của quán trả cả hai; khách mang xe riêng (BYOC) chỉ trả phí sân. Muốn báo tổng thì gọi cả get_pricing và get_vehicles rồi cộng lại, ĐỪNG suy đoán.`,
+  );
   parts.push('');
   parts.push(`## Kiến thức về chi nhánh`);
   parts.push(

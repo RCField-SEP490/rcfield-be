@@ -1,5 +1,11 @@
 import { Type } from '@google/genai';
+import { IsNull } from 'typeorm';
 import { AppDataSource } from '../../config/database';
+import { CafePricingRule } from '../../models/cafe-pricing-rule.entity';
+import { HolidayDate } from '../../models/holiday-date.entity';
+import { CafeHolidayOverride } from '../../models/cafe-holiday-override.entity';
+import { computeEffectiveMultiplier } from '../pricing.service';
+import { formatVnd, todayInVn, toVnTimeString } from './money';
 
 export const definition = {
   name: 'check_availability',
@@ -22,17 +28,6 @@ export interface CheckAvailabilityArgs {
   date?: string;
 }
 
-const VN_OFFSET_MS = 7 * 60 * 60 * 1000;
-
-function toVnTimeString(d: Date): string {
-  const vnMs = d.getTime() + VN_OFFSET_MS;
-  return new Date(vnMs).toISOString().slice(11, 16); // HH:MM
-}
-
-function todayInVn(): string {
-  return new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 10);
-}
-
 // cafeId luôn được inject từ widget context — không nhận từ args để tránh cross-cafe query
 export async function handler(cafeId: string, args: CheckAvailabilityArgs): Promise<string> {
   const dateStr = args.date ?? todayInVn();
@@ -42,9 +37,12 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
     {
       byoc_capacity: number;
       slot_duration_minutes: number;
+      slot_fee_rate: string;
       name: string;
     }[]
-  >(`SELECT byoc_capacity, slot_duration_minutes, name FROM cafes WHERE id = $1`, [cafeId]);
+  >(`SELECT byoc_capacity, slot_duration_minutes, slot_fee_rate, name FROM cafes WHERE id = $1`, [
+    cafeId,
+  ]);
   if (!cafeRows.length) return JSON.stringify({ error: 'Cafe not found' });
 
   const byocCapacity = Number(cafeRows[0].byoc_capacity);
@@ -106,19 +104,52 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
     return JSON.stringify({ date: dateStr, available: false, message: 'Hết slot trong ngày này.' });
   }
 
+  // Giá từng khung giờ: nạp quy tắc một lần rồi tính thuần, thay vì gọi
+  // getEffectiveMultiplier cho từng slot (24 slot = 72 lượt truy vấn thừa).
+  const basePrice = parseFloat(cafeRows[0].slot_fee_rate);
+  const [rules, systemHolidays, customHolidays] = await Promise.all([
+    ds
+      .getRepository(CafePricingRule)
+      .find({ where: { cafeId, isActive: true, deletedAt: IsNull() } }),
+    ds
+      .getRepository(HolidayDate)
+      .find({ where: { cafeId: IsNull(), holidayDate: dateStr, deletedAt: IsNull() } }),
+    ds
+      .getRepository(HolidayDate)
+      .find({ where: { cafeId, holidayDate: dateStr, deletedAt: IsNull() } }),
+  ]);
+  const holidays = [...systemHolidays, ...customHolidays];
+  const overrides = systemHolidays.length
+    ? await ds.getRepository(CafeHolidayOverride).find({ where: { cafeId } })
+    : [];
+
   const rentalTimes: string[] = [];
   const byocTimes: string[] = [];
+  // Chỉ liệt kê khung giờ có giá KHÁC giá gốc. Liệt kê hết thì kết quả phình to
+  // và model dễ đọc nhầm giá gốc thành giá đặc biệt.
+  const priceByTime: Record<string, string> = {};
 
   for (const r of rows) {
-    const t = toVnTimeString(new Date(r.slot_time));
+    const slotTime = new Date(r.slot_time);
+    const t = toVnTimeString(slotTime);
     if (totalVehicles - r.rental_booked > 0) rentalTimes.push(t);
     if (byocCapacity - r.byoc_booked > 0) byocTimes.push(t);
+
+    if (Number.isFinite(basePrice) && basePrice > 0) {
+      const { multiplier } = computeEffectiveMultiplier(slotTime, rules, holidays, overrides);
+      if (multiplier !== 1) priceByTime[t] = formatVnd(basePrice * multiplier);
+    }
   }
 
   return JSON.stringify({
     date: dateStr,
     available: true,
     slotDurationMinutes: slotMinutes,
+    pricing: {
+      basePricePerSlot: formatVnd(basePrice),
+      priceByTime,
+      note: 'Phí sân cho một buổi, tính theo từng người chơi. Thuê xe của quán thì cộng thêm phí thuê xe. Dùng get_pricing nếu khách hỏi kỹ về giá.',
+    },
     rental: {
       available: rentalTimes.length > 0,
       availableTimes: rentalTimes,
