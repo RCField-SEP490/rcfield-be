@@ -1,293 +1,225 @@
 # RCField Backend
 
-REST API cho hệ thống quản lý sân xe RC — B2B SaaS phục vụ chuỗi chi nhánh.
+REST API của **RCField** — nền tảng SaaS cho các quán vận hành sân xe điều khiển từ xa (RC) tại Việt Nam.
 
-## Tech Stack
+Mỗi **Provider** là một doanh nghiệp độc lập, sở hữu một hoặc nhiều **chi nhánh**, và trả cho RCField **phí thuê bao phần mềm**. Nền tảng **không thu phần trăm trên đơn đặt lịch** — `platform_fee_pct` cố định bằng 0; doanh thu đến từ gói thuê bao và phí tổ chức giải đấu.
 
-| Layer | Technology |
-|-------|-----------|
-| Runtime | Node.js 22+ |
-| Language | TypeScript (strict mode) |
-| Framework | Express.js |
-| Database | PostgreSQL 16 via TypeORM |
-| Cache / Lock | Redis 7 |
-| Validation | Zod |
-| Auth | JWT (access + refresh token) |
-| File storage | Cloudinary |
-| Container | Docker + Docker Compose |
+Hệ thống phục vụ bốn vai trò có tài khoản (Customer, Staff, Provider, Admin) cùng khách vãng lai chưa đăng nhập, và bao gồm: đặt lịch — vận hành phiên chơi (nhận/trả xe kèm biên bản ảnh) — thanh toán và đối soát — giải đấu — trợ lý ảo theo từng chi nhánh.
 
 ---
 
-## Yêu cầu
+## Tech stack
 
-- Node.js >= 22
-- npm >= 10
-- Docker + Docker Compose
+| Lớp | Công nghệ |
+|---|---|
+| Runtime | Node.js 20+ (đã chạy được trên 25) |
+| Ngôn ngữ | TypeScript, strict mode |
+| Framework | Express.js — router theo domain |
+| CSDL | PostgreSQL 16 + pgvector, truy cập qua TypeORM |
+| Cache / khoá phân tán / hàng đợi | Redis 7 |
+| Kiểm dữ liệu vào | Zod |
+| Xác thực | JWT (access + refresh), RBAC 4 vai trò |
+| Thanh toán | VNPay · PayOS · VietQR đối soát qua webhook SePay |
+| Lưu ảnh | Cloudinary |
+| AI | Google Gemini + NLU sidecar (Python) |
+| Kênh chat | Facebook Graph API (Messenger) |
+| Email | Brevo |
+| Thời gian thực | WebSocket (`ws`) |
+| Đóng gói | Docker + Docker Compose |
+
+Quy mô hiện tại: **70 bảng** dữ liệu, 67 entity, 62 service, 40 nhóm route, 86 migration, 58 bộ kiểm thử.
 
 ---
 
-## Cài đặt lần đầu
+## Chạy lần đầu
 
 ```bash
-# 1. Clone và cài dependencies Node.js
 npm install
-
-# 2. Dựng toàn bộ stack: PostgreSQL, Redis, NLU service, migration, backend, Swagger
-npm run up:all
+npm run up:all      # dựng PostgreSQL + Redis + NLU + chạy migration + khởi động API
 ```
 
-Sau khi chạy xong:
+Xong thì:
 
-- API: `http://localhost:3000`
-- Swagger UI: `http://localhost:3000/api-docs`
-- Health check: `GET http://localhost:3000/api/v1/health`
+- API — `http://localhost:3000`
+- Swagger UI — `http://localhost:3000/api-docs`
+- Health check — `GET http://localhost:3000/api/v1/health`
 
-Lưu ý: nếu chưa có `.env`, lệnh `npm run up:all` sẽ tự copy từ `.env.example`. Với các tính năng bên thứ ba như Cloudinary, Google, Email, Facebook, mở `.env` và điền key thật khi cần dùng.
+Chưa có `.env` thì `npm run up:all` tự chép từ `.env.example`. Các tính năng cần bên thứ ba (Cloudinary, Google, PayOS, VNPay, Brevo, Facebook) chỉ hoạt động khi bạn điền khoá thật vào `.env`; phần còn lại của hệ thống vẫn chạy bình thường mà không có chúng.
 
-Nếu lệnh báo Docker chưa chạy, mở Docker Desktop trước rồi chạy lại `npm run up:all`.
+Nếu báo lỗi Docker chưa chạy thì mở Docker Desktop rồi chạy lại.
+
+### Dữ liệu mẫu
+
+```bash
+npm run seed:all           # người dùng, chi nhánh, thực đơn, xe, giải đấu, dữ liệu vận hành
+npm run seed               # chỉ tài khoản mẫu của 4 vai trò
+```
 
 ---
 
 ## Biến môi trường
 
-Xem file `.env.example` để biết đầy đủ các biến. Những biến bắt buộc:
+Danh sách đầy đủ nằm ở `.env.example`. Nhóm bắt buộc để chạy được:
 
-| Biến | Mô tả |
-|------|-------|
-| `DB_HOST` | Host PostgreSQL (mặc định: `localhost`) |
-| `DB_NAME` | Tên database (mặc định: `rcfeild_db`) |
-| `DB_USERNAME` | User PostgreSQL |
-| `DB_PASSWORD` | Password PostgreSQL |
-| `JWT_SECRET` | Secret key cho access token — **đổi trước khi deploy** |
-| `JWT_REFRESH_SECRET` | Secret key cho refresh token — **đổi trước khi deploy** |
-| `REDIS_HOST` | Host Redis (mặc định: `localhost`) |
+| Biến | Ý nghĩa |
+|---|---|
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD` | Kết nối PostgreSQL (`docker-compose` map cổng **5435**) |
+| `REDIS_HOST` / `REDIS_PORT` | Kết nối Redis (`docker-compose` map cổng **6380**) |
+| `JWT_SECRET` / `JWT_REFRESH_SECRET` | **Bắt buộc đổi trước khi deploy** |
+| `FRONTEND_URL` | Dùng để dựng link quay về sau khi thanh toán |
+| `PAYMENT_WINDOW_MINUTES` | Hạn thanh toán một đơn đặt lịch, mặc định 30 phút |
+
+Nhóm tuỳ chọn theo tính năng: `CLOUDINARY_*`, `GOOGLE_CLIENT_ID`, `GEMINI_API_KEY`, `PAYOS_*`, `VNPAY_*`, `EMAIL_BREVO_API_KEY`, `FACEBOOK_*`, `BANK_WEBHOOK_API_KEY`.
+
+> `.env` nằm trong `.gitignore` và không được commit. `.env.example` và `.env.test` chỉ chứa giá trị giả.
 
 ---
 
-## Scripts
+## Lệnh thường dùng
 
 ```bash
-npm run dev              # Chạy development (hot reload)
-npm run swagger          # Alias để chạy backend phục vụ Swagger
-npm run up:all           # Một lệnh dựng DB + Redis + NLU + migration + backend + Swagger
-npm run build            # Build TypeScript → dist/
-npm run start            # Chạy production từ dist/
-```
+npm run dev              # chạy dev, tự nạp lại khi sửa file
+npm run build            # biên dịch TypeScript sang dist/
+npm start                # chạy bản đã build
 
-## Swagger
+npm test                 # toàn bộ kiểm thử
+npm test -- bookings     # chỉ chạy file khớp tên
+npm run test:coverage    # kèm báo cáo độ phủ
 
-Swagger UI được mount sẵn ở backend:
+npm run lint             # ESLint
+npm run format:check     # Prettier, chỉ kiểm
+npx tsc --noEmit         # kiểm kiểu, không xuất file
 
-- UI: `http://localhost:3000/api-docs`
-- JSON: `http://localhost:3000/api-docs.json`
-
-### Chạy nhanh
-
-```bash
-npm run up:all
-```
-
-Sau đó mở `http://localhost:3000/api-docs` trên trình duyệt.
-
-### Migration
-
-```bash
-npm run migration:run     # Chạy tất cả migration chưa chạy
-npm run migration:revert  # Rollback migration gần nhất
-npm run migration:create src/migrations/TenMigration   # Tạo file migration mới (trống)
-npm run migration:generate src/migrations/TenMigration # Tự generate migration từ entity diff
+npm run migration:run      # chạy migration còn thiếu
+npm run migration:revert    # lùi migration gần nhất
+npm run migration:generate src/migrations/TenMigration   # sinh từ khác biệt entity
+npm run migration:create   src/migrations/TenMigration   # tạo file trống
 ```
 
 ---
 
-## Docker
-
-```bash
-# Khởi động PostgreSQL + Redis
-docker compose up -d postgres redis
-
-# Một lệnh dựng toàn bộ stack cần thiết để mở Swagger
-npm run up:all
-
-# Tắt (giữ nguyên data)
-docker compose stop
-
-# Tắt + xóa container (vẫn giữ data volume)
-docker compose down
-
-# Reset hoàn toàn (xóa luôn data)
-docker compose down -v
-```
-
-| Service | Port | Container |
-|---------|------|-----------|
-| Backend API / Swagger | 3000 | `rcfeild_backend` |
-| PostgreSQL | 5432 | `rcfeild_postgres` |
-| Redis | 6379 | `rcfeild_redis` |
-| NLU service | internal 8000 | `rcfeild_nlu` |
-
----
-
-## Testing
-
-### Chạy test
-
-```bash
-npm test                        # Chạy toàn bộ test suite
-npm run test:watch              # Watch mode — tự chạy lại khi save file
-npm run test:coverage           # Chạy kèm coverage report
-npm test -- bookings            # Chạy 1 file cụ thể (khớp tên file)
-```
-
-### Cơ chế hoạt động
-
-Test dùng **database riêng** (`rcfeild_test`) — hoàn toàn tách biệt với DB development. Không cần setup thêm gì, Jest tự xử lý:
-
-```
-globalSetup      → tạo rcfeild_test (nếu chưa có) + chạy migration
-beforeEach       → TRUNCATE toàn bộ bảng → mỗi test bắt đầu với DB sạch
-afterAll         → đóng connection
-```
-
-### Thêm test case mới
-
-```typescript
-// src/__tests__/routes/bookings.test.ts
-import request from 'supertest';
-import { app } from '../../app';
-import { createTestUser, createTestCafe, generateToken } from '../helpers';
-import { UserRole } from '../../types';
-
-describe('POST /api/v1/bookings', () => {
-  let token: string;
-  let cafeId: string;
-
-  beforeEach(async () => {
-    const customer = await createTestUser({ role: UserRole.CUSTOMER });
-    token = generateToken(customer);
-    const cafe = await createTestCafe();
-    cafeId = cafe.id;
-  });
-
-  it('tạo booking BYOC thành công', async () => {
-    const res = await request(app)
-      .post('/api/v1/bookings')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ cafe_id: cafeId, mode: 'BYOC', track_type: 'DRIFT', ... });
-
-    expect(res.status).toBe(201);
-    expect(res.body.data.status).toBe('PENDING');
-  });
-});
-```
-
-### Helpers có sẵn
-
-| Helper | Mô tả |
-|--------|-------|
-| `createTestUser({ role, email })` | Tạo user trong DB test |
-| `createTestCafe({ status, track_types })` | Tạo cafe trong DB test |
-| `createTestVehicle({ cafe_id, tier })` | Tạo xe trong DB test |
-| `generateToken(user)` | Tạo JWT token hợp lệ |
-
-### Cấu trúc thư mục test
-
-```
-src/__tests__/
-├── global-setup.ts      # Tạo DB test + chạy migration (1 lần)
-├── global-teardown.ts   # Cleanup sau khi xong
-├── load-env.ts          # Load .env.test trước mọi import
-├── jest-setup.ts        # TRUNCATE bảng trước mỗi test
-├── helpers/
-│   └── index.ts         # createTestUser, createTestCafe, generateToken...
-└── routes/
-    ├── health.test.ts
-    └── bookings.test.ts  # (template — bổ sung khi implement controller)
-```
-
----
-
-## Cấu trúc thư mục
+## Cấu trúc mã nguồn
 
 ```
 src/
-├── server.ts               # Entry point — khởi động server (dùng khi chạy thật)
-├── app.ts                  # Express app — export để test dùng qua supertest
-├── config/
-│   ├── database.ts         # TypeORM DataSource
-│   ├── redis.ts            # ioredis client
-│   └── env.ts              # Toàn bộ biến môi trường (type-safe)
-├── routes/
-│   └── index.ts            # Router gốc /api/v1 — mount tất cả sub-router tại đây
-├── controllers/            # Request handlers, parse input, gọi service
-├── services/               # Business logic
-├── models/                 # TypeORM entities (mapping với DB tables)
-├── middlewares/
-│   ├── auth.middleware.ts  # authenticate() + authorize(...roles)
-│   └── error.middleware.ts # Global error handler (Zod + AppError)
-├── jobs/                   # Cron jobs (auto-cancel booking, expire feature flags)
-├── migrations/             # DB migration files
-└── types/
-    └── index.ts            # Enums, AppError, AuthRequest
+├── server.ts            # điểm khởi động
+├── app.ts               # Express app — test dùng lại qua supertest
+├── config/              # DataSource, Redis, biến môi trường có kiểu, Swagger, logger
+├── routes/              # router theo domain, mount dưới /api/v1
+├── controllers/         # nhận request, kiểm dữ liệu bằng Zod, gọi service
+├── services/            # toàn bộ nghiệp vụ
+├── models/              # entity TypeORM
+├── middlewares/         # authenticate, authorize, requireActiveProvider, xử lý lỗi
+├── jobs/                # cron: hết hạn thanh toán, không đến, hết hạn gói, nhắc giải
+├── lib/                 # hàm thuần: giờ Việt Nam, mốc giờ phiên chơi, số điện thoại
+├── migrations/          # migration CSDL
+├── validate/            # toàn bộ schema Zod
+├── types/               # enum, AppError, AuthRequest
+└── __tests__/           # kiểm thử tích hợp chạy trên CSDL thật
 ```
 
+Luồng một request: **route → controller → service → repository**. Controller không chứa nghiệp vụ; service không đọc `req`.
+
 ---
 
-## Phân quyền
+## Quy ước bắt buộc
 
-4 roles trong hệ thống:
+Chi tiết ở [`CLAUDE.md`](./CLAUDE.md). Bốn điểm hay bị quên:
 
-| Role | Mô tả |
-|------|-------|
-| `CUSTOMER` | Khách đặt lịch |
-| `PROVIDER` | Chủ chuỗi — quản lý toàn bộ chi nhánh |
-| `STAFF` | Nhân viên chi nhánh — vận hành check-in/out |
-| `ADMIN` | Team RCField — quản lý hệ thống, feature flags |
+1. **Mỗi handler trong controller phải có comment đường dẫn** ngay phía trên: `// POST /api/v1/bookings  [auth]`
+2. **Không dùng `console`** — dùng `logger` trong `src/config/logger.ts`
+3. **Mọi schema Zod nằm ở `src/validate/index.ts`**, gom theo bảng; không khai trong controller
+4. **Mọi enum nằm ở `src/types/index.ts`**; không khai trong entity hay service
 
-Sử dụng trong route:
+Đặt tên: entity `PascalCase` số ít · file `kebab-case.routes.ts` / `.controller.ts` / `.service.ts` · bảng `snake_case` số nhiều · khoá ngoại `<entity>_id`.
 
-```typescript
-import { authenticate, authorize } from '../middlewares/auth.middleware';
-import { UserRole } from '../types';
+---
 
-router.get('/dashboard',
-  authenticate,
-  authorize(UserRole.PROVIDER, UserRole.ADMIN),
-  controller.getDashboard
-);
+## Vài luật nghiệp vụ quyết định cách viết code
+
+| Luật | Nghĩa là |
+|---|---|
+| **Chốt giá theo ảnh chụp** | Mọi phép tính tiền đọc từ `bookings.snapshot` lấy lúc tạo đơn, **không bao giờ** đọc bảng giá hiện tại |
+| **Không có tiền cọc** | `SECURITY_DEPOSIT` còn trong enum để đọc dữ liệu cũ, nhưng không code nào tạo mới |
+| **Phí nền tảng 0%** | Doanh thu là phí thuê bao và phí tổ chức giải, không phải phần trăm trên đơn |
+| **Tiền đền hư hỏng** | `Σ (parts_price + labor_price)` do nhân viên nhập ở biên bản trả xe — không có hệ số theo hạng xe |
+| **Quá giờ ≠ tự đóng** | Quá `planned_end_at` không tự thu xe cũng không tự chốt tiền; 10 phút ân hạn để chốt gia hạn, 30 phút thì cảnh báo |
+
+---
+
+## Cơ sở dữ liệu
+
+70 bảng, chia theo miền: định danh & truy cập · chi nhánh · đội xe · thực đơn · đặt lịch & thương mại · vận hành phiên chơi · thanh toán · thuê bao · giải đấu · AI & hội thoại · thông báo.
+
+Vài bảng trọng yếu:
+
+| Bảng | Vai trò |
+|---|---|
+| `bookings` | Đơn đặt lịch, giữ `snapshot` giá bất biến |
+| `sessions` | Phiên chơi thật tại quán |
+| `inspections` + `inspection_photos` + `inspection_checklists` | Biên bản nhận/trả xe kèm bằng chứng ảnh |
+| `damage_line_items` | Từng dòng hư hỏng và tiền công |
+| `payment_components` | Từng khoản tiền của một đơn, có vòng đời trạng thái riêng |
+| `payment_transactions` | Giao dịch với cổng thanh toán |
+| `bank_transactions` | Sổ đối soát chuyển khoản |
+| `contests` + 15 bảng liên quan | Giải đấu: đăng ký, trận, kết quả, phí, kỷ luật |
+
+Quy ước: khoá chính `uuid`, thời gian `timestamptz`, xoá mềm bằng `deleted_at` cho các thực thể người dùng thu hồi được (21/70 bảng — bảng ghi nhận sự kiện thì không bao giờ xoá).
+
+Xem sơ đồ trực quan bằng SchemaSpy: `npm run db-view`.
+
+---
+
+## Kiểm thử
+
+58 bộ kiểm thử chạy trên **CSDL thật** (`rcfeild_test`), tách hoàn toàn khỏi DB phát triển. Không cần dựng gì thêm:
+
+```
+globalSetup   → tạo rcfeild_test nếu chưa có, chạy migration
+beforeEach    → TRUNCATE toàn bộ bảng, mỗi test bắt đầu với DB sạch
+afterAll      → đóng kết nối
 ```
 
----
+Chạy tuần tự (`--runInBand`) vì dùng chung một CSDL. Lệnh `npm test` đi qua `scripts/run-jest.sh` — script này tự thêm tuỳ chọn Node cần thiết khi bạn chạy Node 25 trở lên.
 
-## Database
+Cổng ra ngoài (PayOS, Gemini, Brevo…) đều bị chặn ở biên bằng mock: kiểm thử kiểm luật của hệ thống, không kiểm mạng của bên thứ ba.
 
-26 bảng — xem schema đầy đủ tại `docs/spec/06-database.md`.
+Trợ giúp có sẵn trong `src/__tests__/helpers`:
 
-Các bảng chính:
+| Hàm | Việc |
+|---|---|
+| `createTestUser({ role })` | Tạo người dùng |
+| `createTestCafe({ provider_id })` | Tạo chi nhánh |
+| `createTestVehicle({ cafe_id })` | Tạo danh mục xe kèm một xe |
+| `generateToken(user)` | Sinh JWT hợp lệ |
 
-| Bảng | Mô tả |
-|------|-------|
-| `users` | Tất cả users (4 roles) |
-| `cafes` | Chi nhánh — config vận hành per-branch |
-| `vehicles` | Fleet xe của từng chi nhánh |
-| `bookings` | Đơn đặt lịch (RENTAL / BYOC) |
-| `payment_components` | Ledger thanh toán (immutable) |
-| `inspection_records` | Check-in / check-out kèm ảnh |
-| `promotions` | Mã giảm giá (global hoặc per-branch) |
+Viết tính năng đụng tới tiền hoặc dữ liệu vận hành thì **viết test trước và xác nhận nó đỏ**, rồi mới implement.
 
 ---
 
-## Tài liệu spec
+## Chất lượng mã
 
-Đọc trước khi implement bất kỳ feature nào:
+`.github/workflows/ci.yml` chạy trên mọi pull request, theo đúng thứ tự:
 
-| File | Nội dung |
-|------|---------|
-| `docs/spec/00-overview.md` | Tổng quan hệ thống, actors |
-| `docs/spec/01-domain-model.md` | Entity và enums |
-| `docs/spec/02-state-machine.md` | Booking lifecycle |
-| `docs/spec/03-payment-engine.md` | Logic tính tiền, hoàn tiền |
-| `docs/spec/04-inspection-flow.md` | Check-in / check-out |
-| `docs/spec/05-api-contracts.md` | API endpoints |
-| `docs/spec/06-database.md` | Schema đầy đủ 26 bảng |
-| `docs/spec/business-rules/` | Business rules theo domain |
+```
+npm ci → format:check → lint → tsc --noEmit → npm test → dựng báo cáo kiểm thử
+```
+
+Máy cục bộ có `husky` chạy `lint-staged` trước mỗi commit. Độ phủ trên các miền đặt lịch, thanh toán, kiểm xe là **mục tiêu 80%** của nhóm, không phải cổng chặn build.
+
+---
+
+## Tài liệu API
+
+- Swagger UI — `http://localhost:3000/api-docs`
+- OpenAPI JSON — `http://localhost:3000/api-docs.json`
+
+Sinh trực tiếp từ schema Zod (`@asteasolutions/zod-to-openapi`), nên tài liệu không lệch khỏi phần kiểm dữ liệu thật.
+
+Mọi phản hồi bọc trong `{ success, data }`; lỗi đi qua middleware chung và mang **mã lỗi ổn định** — ví dụ `SLOT_LOCKED`, `BYOC_CAPACITY_FULL`, `PACKAGE_NOT_ENOUGH_SLOTS`, `CONTEST_FEE_REQUIRED`, `INVALID_INSPECTION_PHOTO_COUNT`.
+
+---
+
+## Tài liệu nghiệp vụ
+
+Đặc tả chi tiết (tổng quan, mô hình miền, máy trạng thái, cỗ máy thanh toán, luồng kiểm xe, hợp đồng API, quy tắc nghiệp vụ) nằm ở **kho tài liệu riêng** `rcfield-spec`, không nằm trong repo này. Đụng vào nghiệp vụ thì đọc bên đó trước khi viết code.

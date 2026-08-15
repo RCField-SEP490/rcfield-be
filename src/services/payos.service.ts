@@ -5,6 +5,7 @@ import { AppDataSource } from '../config/database';
 import { PaymentRequest } from '../models/payment-request.entity';
 import { AppError, NotificationType, PaymentRequestStatus } from '../types';
 import { createNotification } from './notification.service';
+import { confirmFromGateway } from './payment-request.service';
 
 let payOS: PayOS | null = null;
 
@@ -180,15 +181,16 @@ export async function handlePayOSPaid(request: PaymentRequest): Promise<void> {
     return;
   }
 
-  const repo = AppDataSource.getRepository(PaymentRequest);
-  request.adminNotes = 'Đã thanh toán thành công vui lòng chờ Admin duyệt.';
-  await repo.save(request);
+  // Tiền đã vào tài khoản và cổng đã xác nhận — không có gì cho admin đối soát
+  // nữa, nên kích hoạt gói ngay. Bắt provider chờ duyệt tay sau khi đã trả tiền
+  // qua cổng là giữ tiền của họ mà không giao hàng.
+  await confirmFromGateway(request, 'Đã thanh toán qua cổng PayOS, hệ thống tự xác nhận.');
 
   await createNotification(
     request.providerId,
     NotificationType.SYSTEM,
     'Thanh toán thành công qua PayOS',
-    'Giao dịch thanh toán qua cổng PayOS đã hoàn tất thành công. Vui lòng chờ Admin phê duyệt để bắt đầu sử dụng gói hội viên.',
+    'Giao dịch qua cổng PayOS đã hoàn tất. Gói hội viên của bạn được kích hoạt ngay.',
   );
 }
 

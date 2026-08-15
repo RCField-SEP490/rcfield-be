@@ -1906,3 +1906,12 @@ export const ListBankTransactionsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
+
+// ── admin payment ledger ──────────────────────────────────────────────────────
+export const AdminLedgerQuerySchema = z.object({
+  source: z.enum(['SAAS', 'CONTEST_FEE']).optional(),
+  status: z.string().trim().max(40).optional(),
+  q: z.string().trim().max(120).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});

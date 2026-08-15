@@ -23,6 +23,9 @@ jest.mock('../services/email.service', () => ({
     sendContestReminder: jest.fn().mockResolvedValue(undefined),
     sendStaffInvite: jest.fn().mockResolvedValue(undefined),
     sendPasswordResetCode: jest.fn().mockResolvedValue(undefined),
+    sendSubscriptionConfirmed: jest.fn().mockResolvedValue(undefined),
+    sendContestRegistrationPendingPayment: jest.fn().mockResolvedValue(undefined),
+    sendContestRegistrationApproved: jest.fn().mockResolvedValue(undefined),
   },
 }));
 
