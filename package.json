@@ -39,6 +39,8 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint src",
+    "api:coverage": "node scripts/api-coverage.js",
+    "api:contract": "node scripts/check-api-contract.js ../rcfield-fe",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
