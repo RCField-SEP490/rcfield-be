@@ -145,6 +145,17 @@ export const env = {
   features: {
     fbChatQueueEnabled: parseBoolean(process.env.FB_CHAT_QUEUE_ENABLED, true),
   },
+
+  /**
+   * Công cụ nội bộ dựng dữ liệu thử (Contest Lab).
+   *
+   * Mặc định bật ở mọi môi trường TRỪ production. Nó chỉ gọi lại API công khai
+   * bằng token đăng nhập thật nên không mở thêm quyền nào, nhưng vẫn tắt ở
+   * production vì đây là công cụ của người phát triển, không phải tính năng.
+   */
+  devTools: {
+    enabled: parseBoolean(process.env.DEV_TOOLS_ENABLED, nodeEnv !== 'production'),
+  },
 } as const;
 
 // Ngân hàng mô phỏng gọi ngược vào điểm nhận thông báo của chính hệ thống và
