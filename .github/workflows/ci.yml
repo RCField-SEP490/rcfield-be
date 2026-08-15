@@ -167,10 +167,35 @@ jobs:
 
       # ── Báo cáo kiểm thử ────────────────────────────────────────────────────
       #
+      # ── Số liệu API, sinh TRƯỚC khi dựng báo cáo ────────────────────────────
+      #
+      # Phải chạy trước, vì hai tệp JSON dưới đây được nhồi thẳng vào báo cáo
+      # kiểm thử. Sinh sau thì báo cáo gửi cho nhóm thiếu mất phần API — mà đó
+      # lại là phần trả lời câu hỏi hay bị hỏi nhất: bao nhiêu API đã có kiểm thử.
+      - name: Đo độ phủ kiểm thử API
+        if: always()
+        run: node scripts/api-coverage.js --json > api-coverage.json
+
+      # Đối chiếu lệnh gọi của giao diện với route máy chủ. Loại lệch này chỉ lộ
+      # ra khi người dùng bấm đúng nút đó, nên phải bắt ở đây.
+      - name: Đối chiếu hợp đồng API với giao diện
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -d ../rcfield-fe ]; then
+            node scripts/check-api-contract.js ../rcfield-fe --json > api-contract.json
+          else
+            echo "Không có mã nguồn giao diện cạnh bên, bỏ qua bước đối chiếu."
+          fi
+
       # `always()` để test hỏng vẫn có báo cáo — đó chính là lúc cần báo cáo nhất.
       - name: Dựng báo cáo kiểm thử
         if: always()
-        run: node scripts/build-test-report.js jest-results.json coverage/coverage-summary.json test-report
+        run: |
+          ARGS=""
+          [ -f api-coverage.json ] && ARGS="$ARGS --api-coverage=api-coverage.json"
+          [ -f api-contract.json ] && ARGS="$ARGS --api-contract=api-contract.json"
+          node scripts/build-test-report.js jest-results.json coverage/coverage-summary.json test-report $ARGS
 
       # Tóm tắt hiện thẳng ở trang tổng kết của lần chạy, khỏi phải tải về.
       - name: Đưa tóm tắt lên trang tổng kết

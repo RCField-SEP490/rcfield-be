@@ -35,6 +35,7 @@ const readJsonOrNull = (file) => {
 };
 const apiContract = readJsonOrNull(argOf('api-contract'));
 const apiSmoke = readJsonOrNull(argOf('api-smoke'));
+const apiCoverage = readJsonOrNull(argOf('api-coverage'));
 if (!resultsPath) {
   console.error('Thiếu đường dẫn tới tệp JSON kết quả Jest.');
   process.exit(1);
@@ -220,10 +221,23 @@ const md = [
   '',
   '| Nghiệp vụ | Số ca | Đạt | Bảo đảm |',
   '|---|---:|---:|---|',
-  ...areas.map(
-    (a) => `| ${a.name} | ${a.cases} | ${a.passed} | ${a.guarantee} |`,
-  ),
+  ...areas.map((a) => `| ${a.name} | ${a.cases} | ${a.passed} | ${a.guarantee} |`),
   '',
+  ...(apiCoverage
+    ? [
+        '## Độ phủ kiểm thử API',
+        '',
+        `- **${apiCoverage.covered}/${apiCoverage.total}** endpoint đã được gọi thật ` +
+          `trong kiểm thử tích hợp — **${apiCoverage.pct}%**.`,
+        '',
+        '| Miền | Đã phủ | Tổng | Tỷ lệ |',
+        '|---|---:|---:|---:|',
+        ...apiCoverage.domains.map(
+          (d) => `| \`${d.name}\` | ${d.covered} | ${d.total} | ${d.pct}% |`,
+        ),
+        '',
+      ]
+    : []),
   ...(apiContract
     ? [
         '## Giao kèo API giao diện ↔ máy chủ',
@@ -262,8 +276,7 @@ const ok = totals.failed === 0;
 const contractBroken = apiContract ? apiContract.broken.length : null;
 const smokeBroken = apiSmoke ? apiSmoke.broken.length : null;
 
-const allGreen =
-  ok && !results.crashed && (contractBroken ?? 0) === 0 && (smokeBroken ?? 0) === 0;
+const allGreen = ok && !results.crashed && (contractBroken ?? 0) === 0 && (smokeBroken ?? 0) === 0;
 
 const conclusion = results.crashed
   ? 'Tiến trình kiểm thử chết trước khi ghi được kết quả — chưa kết luận được.'
@@ -272,7 +285,8 @@ const conclusion = results.crashed
     : (() => {
         const issues = [];
         if (totals.failed) issues.push(`${totals.failed} ca kiểm thử lỗi`);
-        if (contractBroken) issues.push(`${contractBroken} endpoint giao diện gọi vào chỗ không tồn tại`);
+        if (contractBroken)
+          issues.push(`${contractBroken} endpoint giao diện gọi vào chỗ không tồn tại`);
         if (smokeBroken) issues.push(`${smokeBroken} endpoint trả lỗi máy chủ`);
         return `${totals.passed}/${totals.tests} ca kiểm thử đạt. Còn tồn đọng: ${issues.join('; ')}.`;
       })();
@@ -343,6 +357,27 @@ ${areas
 </p>
 
 ${
+  apiCoverage
+    ? `<h2>Độ phủ kiểm thử API</h2>
+<p class="lead">Đếm số endpoint đã được gọi thật qua HTTP trong bộ kiểm thử chạy trên cơ sở dữ liệu thật. Khác với độ phủ dòng lệnh: một service phủ nhiều dòng vẫn có thể chưa endpoint nào đi qua lớp xác thực, phân quyền và kiểm dữ liệu vào.</p>
+<div class="cards">
+ <div class="card"><div class="k">Đã có kiểm thử</div><div class="v ok">${apiCoverage.covered}</div></div>
+ <div class="card"><div class="k">Tổng endpoint</div><div class="v">${apiCoverage.total}</div></div>
+ <div class="card"><div class="k">Tỷ lệ</div><div class="v ${apiCoverage.pct >= 60 ? 'ok' : ''}">${apiCoverage.pct}%</div></div>
+</div>
+<table style="margin-top:12px"><tr><th>Miền</th><th class="num">Đã phủ</th><th class="num">Tổng</th><th class="num">Tỷ lệ</th></tr>
+${apiCoverage.domains
+  .map(
+    (d) =>
+      `<tr><td><code>${escapeHtml(d.name)}</code></td><td class="num">${d.covered}</td><td class="num">${d.total}</td><td class="num"><span class="pill ${d.pct >= 60 ? 'ok' : 'bad'}">${d.pct}%</span></td></tr>`,
+  )
+  .join('\n')}
+</table>
+`
+    : ''
+}
+
+${
   apiContract
     ? `<h2>Kiểm tra giao kèo API giữa giao diện và máy chủ</h2>
 <p class="lead">Đối chiếu mọi lệnh gọi API trong mã giao diện với mọi endpoint máy chủ đăng ký, để phát hiện chỗ giao diện gọi vào endpoint không tồn tại.</p>
@@ -355,7 +390,10 @@ ${
   contractBroken
     ? `<table style="margin-top:12px"><tr><th>Endpoint giao diện gọi</th><th>Nơi gọi</th></tr>
 ${apiContract.broken
-  .map((b) => `<tr><td><code>${escapeHtml(b.call)}</code></td><td style="color:#747878">${escapeHtml(b.where[0] || '')}</td></tr>`)
+  .map(
+    (b) =>
+      `<tr><td><code>${escapeHtml(b.call)}</code></td><td style="color:#747878">${escapeHtml(b.where[0] || '')}</td></tr>`,
+  )
   .join('\n')}</table>`
     : '<div class="note">Không có endpoint nào bị gọi vào chỗ trống.</div>'
 }`
@@ -375,7 +413,10 @@ ${
   smokeBroken
     ? `<table style="margin-top:12px"><tr><th>Endpoint</th><th>Mã</th><th>Thông báo</th></tr>
 ${apiSmoke.broken
-  .map((b) => `<tr><td><code>${escapeHtml(b.route)}</code></td><td class="num">${b.status === -1 ? 'chết' : b.status}</td><td style="color:#747878">${escapeHtml((b.note || '').slice(0, 120))}</td></tr>`)
+  .map(
+    (b) =>
+      `<tr><td><code>${escapeHtml(b.route)}</code></td><td class="num">${b.status === -1 ? 'chết' : b.status}</td><td style="color:#747878">${escapeHtml((b.note || '').slice(0, 120))}</td></tr>`,
+  )
   .join('\n')}</table>`
     : '<div class="note">Không endpoint nào trả lỗi máy chủ.</div>'
 }`

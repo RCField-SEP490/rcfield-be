@@ -14,9 +14,9 @@ const AREAS = [
   {
     key: 'auth',
     name: 'Xác thực & phân quyền',
-    match: [/routes\/auth/],
+    match: [/routes\/auth/, /lib\/vietnam-phone/],
     guarantee:
-      'Đăng ký, đăng nhập, làm mới phiên và đặt lại mật khẩu hoạt động đúng; mỗi vai trò chỉ vào được phần của mình.',
+      'Đăng ký, đăng nhập, làm mới phiên và đặt lại mật khẩu hoạt động đúng; mỗi vai trò chỉ vào được phần của mình; số điện thoại Việt Nam nhận đúng đầu số di động và cố định, chặn số sai định dạng.',
   },
   {
     key: 'booking',
@@ -39,6 +39,8 @@ const AREAS = [
     key: 'payment',
     name: 'Thanh toán, hoàn tiền & đối soát',
     match: [
+      /routes\/admin-payments/,
+      /services\/payos-subscription/,
       /services\/payment\.service/,
       /services\/pricing\.service/,
       /routes\/bank-checkout/,
@@ -52,7 +54,7 @@ const AREAS = [
       /routes\/promotions/,
     ],
     guarantee:
-      'Số tiền khách trả khớp bảng giá đã chốt lúc đặt; hoàn tiền đúng mốc 24 giờ và 12 giờ; mã VietQR sinh đúng chuẩn và webhook ngân hàng không xác nhận nhầm đơn.',
+      'Sổ thu tiền của nền tảng chỉ gồm tiền đối tác trả, không lẫn tiền khách trả cho quán; cổng báo nhận tiền gói thuê bao thì kích hoạt ngay, không chờ duyệt tay. Số tiền khách trả khớp bảng giá đã chốt lúc đặt; hoàn tiền đúng mốc 24 giờ và 12 giờ; mã VietQR sinh đúng chuẩn và webhook ngân hàng không xác nhận nhầm đơn.',
   },
   {
     key: 'handover',
@@ -71,9 +73,15 @@ const AREAS = [
   {
     key: 'catalog',
     name: 'Chi nhánh, đội xe & thực đơn',
-    match: [/routes\/cafes/, /routes\/cafe-images/, /routes\/vehicle-catalog/, /routes\/menu/],
+    match: [
+      /routes\/cafes/,
+      /routes\/cafe-images/,
+      /routes\/vehicle-catalog/,
+      /routes\/vehicle-unit-lifecycle/,
+      /routes\/menu/,
+    ],
     guarantee:
-      'Chi nhánh chỉ hiển thị với khách khi đã được duyệt; danh mục xe, ảnh và thực đơn chỉ chủ sở hữu sửa được.',
+      'Chi nhánh chỉ hiển thị với khách khi đã được duyệt; danh mục xe, ảnh và thực đơn chỉ chủ sở hữu sửa được; không xoá hay thu hồi được chiếc xe đang trong phiên chơi.',
   },
   {
     key: 'provider',
@@ -83,16 +91,29 @@ const AREAS = [
       /routes\/provider-staff/,
       /routes\/provider-review/,
       /services\/tax-lookup/,
+      /services\/channel-quota/,
     ],
     guarantee:
-      'Hồ sơ doanh nghiệp và mã số thuế lưu đúng; nhân viên chỉ thao tác được trên chi nhánh được phân công.',
+      'Hồ sơ doanh nghiệp và mã số thuế lưu đúng; nhân viên chỉ thao tác được trên chi nhánh được phân công; số kênh chat nối được không vượt hạn mức của gói thuê bao.',
+  },
+  {
+    key: 'assistant',
+    name: 'Trợ lý ảo',
+    match: [/routes\/chat/, /chat-tools/, /contest-lab-page/],
+    guarantee:
+      'Trợ lý trả lời dựa trên dữ liệu thật của chi nhánh: giá sân đọc qua đúng hàm mà đặt lịch dùng để tính tiền, nên không bao giờ báo một con số khác con số khách phải trả.',
   },
   {
     key: 'platform',
     name: 'Nền tảng & tài liệu API',
-    match: [/routes\/health/, /routes\/swagger/, /routes\/chat/, /routes\/racing-network/],
+    match: [
+      /routes\/health/,
+      /routes\/swagger/,
+      /routes\/racing-network/,
+      /routes\/admin-feature-flags/,
+    ],
     guarantee:
-      'Máy chủ báo đúng tình trạng sống; tài liệu API sinh tự động khớp với mã thật; trợ lý ảo và bảng xếp hạng phản hồi đúng.',
+      'Máy chủ báo đúng tình trạng sống; tài liệu API sinh tự động khớp với mã thật; bảng xếp hạng phản hồi đúng; bật tắt cờ tính năng chỉ ảnh hưởng đúng dòng được chọn, không đụng chi nhánh khác.',
   },
 ];
 
