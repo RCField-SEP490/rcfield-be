@@ -7,6 +7,7 @@ import { router } from './routes';
 import { vnpayRouter } from './routes/vnpay.routes';
 import { bankWebhookRouter } from './routes/bank-webhook.routes';
 import { sandboxBankRouter } from './routes/sandbox-bank.routes';
+import { devToolsRouter } from './routes/dev-tools.routes';
 import { logger } from './config/logger';
 import {
   createVnpayPayment,
@@ -53,6 +54,10 @@ app.use('/api/v1/payments', bankWebhookRouter);
 // Mount có điều kiện chứ không chặn bằng middleware: tắt cờ thì Express không
 // biết đường dẫn này tồn tại và trả 404: không có dòng mã nào của phần mô phỏng
 // chạy. Chặn bằng middleware thì mã vẫn nạp, vẫn chạy, chỉ là từ chối ở cuối.
+if (env.devTools.enabled) {
+  app.use('/dev-tools', devToolsRouter);
+}
+
 if (env.sandboxBank.enabled) {
   app.use('/api/v1/sandbox-bank', sandboxBankRouter);
   logger.warn(

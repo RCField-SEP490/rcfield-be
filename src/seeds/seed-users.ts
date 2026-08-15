@@ -53,6 +53,17 @@ const USERS = [
     avatar_url:
       'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=300',
   },
+  {
+    // Khách thứ hai là BẮT BUỘC, không phải cho đẹp: seed-commercial-data.ts
+    // đòi đúng hai khách (`customers.length !== 2`) rồi mới chịu tạo gói chơi
+    // và khuyến mãi. Thiếu người này thì cả chuỗi seed:all chết giữa chừng.
+    email: 'customer_other@gmail.com',
+    full_name: 'Khách Hàng Thứ Hai',
+    role: 'CUSTOMER',
+    password: '123456',
+    avatar_url:
+      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=300',
+  },
 ];
 
 async function seed() {
