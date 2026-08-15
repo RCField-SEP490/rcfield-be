@@ -7,6 +7,8 @@ import { definition as getPromotionsDef, handler as getPromotionsHandler } from 
 import { definition as getPackagesDef, handler as getPackagesHandler } from './get-packages';
 import { definition as getMenuDef, handler as getMenuHandler } from './get-menu';
 import { definition as getVehiclesDef, handler as getVehiclesHandler } from './get-vehicles';
+import { definition as getPricingDef, handler as getPricingHandler } from './get-pricing';
+import type { GetPricingArgs } from './get-pricing';
 
 export const toolDefinitions = [
   checkAvailabilityDef,
@@ -14,6 +16,7 @@ export const toolDefinitions = [
   getPackagesDef,
   getMenuDef,
   getVehiclesDef,
+  getPricingDef,
 ];
 
 // cafeId luôn đến từ widget context, không bao giờ từ args
@@ -33,6 +36,8 @@ export async function dispatchTool(
       return getMenuHandler(cafeId);
     case 'get_vehicles':
       return getVehiclesHandler(cafeId);
+    case 'get_pricing':
+      return getPricingHandler(cafeId, args as GetPricingArgs);
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }

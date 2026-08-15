@@ -1,5 +1,6 @@
 import { Type } from '@google/genai';
 import { AppDataSource } from '../../config/database';
+import { formatVnd } from './money';
 
 export const definition = {
   name: 'get_vehicles',
@@ -51,7 +52,8 @@ export async function handler(cafeId: string): Promise<string> {
     const item: Record<string, unknown> = {
       name: r.name,
       tier: TIER_LABEL[r.tier] ?? r.tier,
-      hourlyRate: `${Math.round(parseFloat(r.hourly_rate)).toLocaleString('vi-VN')}đ/buổi`,
+      // Phí thuê xe tính theo giờ: rental_fee = hourly_rate × (số phút chơi / 60)
+      hourlyRate: `${formatVnd(parseFloat(r.hourly_rate))}/giờ`,
       securityDeposit: 'Không yêu cầu cọc',
       available: available > 0 ? `${available} xe sẵn sàng` : 'Hết xe hiện tại',
     };
@@ -59,5 +61,11 @@ export async function handler(cafeId: string): Promise<string> {
     return item;
   });
 
-  return JSON.stringify({ vehicles });
+  return JSON.stringify({
+    vehicles,
+    note:
+      'Đây là phí THUÊ XE, chưa bao gồm phí sân — hai khoản này cộng thêm với nhau. ' +
+      'Khách thuê xe của quán trả: phí sân + phí thuê xe. Khách mang xe riêng (BYOC) chỉ trả phí sân. ' +
+      'Dùng get_pricing để tra phí sân rồi cộng lại khi báo tổng cho khách.',
+  });
 }

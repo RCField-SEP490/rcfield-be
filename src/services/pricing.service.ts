@@ -85,7 +85,13 @@ export function computeEffectiveMultiplier(
     if (rule.ruleType !== PricingRuleType.PEAK_HOURS) continue;
     if (!rule.isActive || rule.deletedAt) continue;
     if (!rule.peakStartTime || !rule.peakEndTime) continue;
-    if (timeStr >= rule.peakStartTime && timeStr < rule.peakEndTime) {
+    // Cột TIME của Postgres trả về 'HH:MM:SS' còn timeStr là 'HH:MM'. So chuỗi
+    // trực tiếp thì '18:00' >= '18:00:00' là false và '21:00' < '21:00:00' là
+    // true — khung giờ bị dịch thành (mở, đóng] thay vì [mở, đóng). Cắt về cùng
+    // 'HH:MM' trước khi so.
+    const peakStart = rule.peakStartTime.slice(0, 5);
+    const peakEnd = rule.peakEndTime.slice(0, 5);
+    if (timeStr >= peakStart && timeStr < peakEnd) {
       candidates.push({ multiplier: Number(rule.multiplier), label: 'Giờ cao điểm' });
     }
   }
