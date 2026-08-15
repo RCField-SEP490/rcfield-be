@@ -8,4 +8,4 @@ export const adminFeatureFlagsRouter = Router();
 adminFeatureFlagsRouter.use(authenticate, authorize(UserRole.ADMIN));
 
 adminFeatureFlagsRouter.get('/', adminFeatureFlagsController.list);
-adminFeatureFlagsRouter.patch('/:key', adminFeatureFlagsController.update);
+adminFeatureFlagsRouter.patch('/:id', adminFeatureFlagsController.update);
