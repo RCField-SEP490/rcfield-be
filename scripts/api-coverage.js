@@ -98,9 +98,46 @@ for (const r of rows) {
   d.total += 1;
   if (r.covered) d.covered += 1;
 }
-const domains = [...byDomain.entries()]
-  .map(([name, v]) => ({ name, ...v, pct: Math.round((v.covered / v.total) * 100) }))
-  .sort((a, b) => b.total - a.total);
+/**
+ * Gộp miền nhỏ và xếp theo SỐ ENDPOINT CÒN THIẾU.
+ *
+ * Xếp theo phần trăm thì một miền 0/1 nằm ngang hàng với miền 4/45, và bảng ra
+ * 80% màu đỏ — người đọc không rút được gì ngoài cảm giác mọi thứ đều hỏng.
+ * Thứ tự đúng là theo số endpoint chưa ai gọi thử: đó mới là khối lượng việc
+ * còn lại và cũng là chỗ rủi ro thật.
+ */
+const MIN_DOMAIN_SIZE = 3;
+
+const allDomains = [...byDomain.entries()].map(([name, v]) => ({
+  name,
+  ...v,
+  pct: Math.round((v.covered / v.total) * 100),
+  missing: v.total - v.covered,
+}));
+
+const bigDomains = allDomains.filter((d) => d.total >= MIN_DOMAIN_SIZE);
+const smallDomains = allDomains.filter((d) => d.total < MIN_DOMAIN_SIZE);
+
+const domains = bigDomains.sort((a, b) => b.missing - a.missing || b.total - a.total);
+if (smallDomains.length) {
+  const t = smallDomains.reduce((s, d) => s + d.total, 0);
+  const c = smallDomains.reduce((s, d) => s + d.covered, 0);
+  domains.push({
+    name: `khác (${smallDomains.length} miền nhỏ)`,
+    total: t,
+    covered: c,
+    missing: t - c,
+    pct: Math.round((c / t) * 100),
+  });
+}
+
+/** Ba mức thay vì đạt/hỏng: bảng chỉ có hai màu thì mọi thứ dưới chuẩn đều đỏ như nhau. */
+function levelOf(d) {
+  if (d.pct >= 60) return 'ok';
+  if (d.pct >= 30) return 'warn';
+  return 'gap';
+}
+for (const d of domains) d.level = levelOf(d);
 
 // ── xuất ─────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -124,10 +161,14 @@ if (args.includes('--json')) {
     `**${covered}/${total} endpoint** đã được gọi thật trong kiểm thử tích hợp — **${pct}%**`,
   );
   lines.push('');
-  lines.push('| Miền | Đã phủ | Tổng | Tỷ lệ |');
-  lines.push('|---|---:|---:|---|');
+  lines.push('Xếp theo số endpoint còn thiếu — đó là khối lượng việc còn lại.');
+  lines.push('');
+  lines.push('| Miền | Còn thiếu | Đã phủ | Tổng | Tỷ lệ |');
+  lines.push('|---|---:|---:|---:|---|');
   for (const d of domains) {
-    lines.push(`| \`${d.name}\` | ${d.covered} | ${d.total} | ${bar(d.pct)} ${d.pct}% |`);
+    lines.push(
+      `| \`${d.name}\` | ${d.missing || '—'} | ${d.covered} | ${d.total} | ${bar(d.pct)} ${d.pct}% |`,
+    );
   }
   lines.push('');
   const uncovered = rows.filter((r) => !r.covered);
@@ -147,9 +188,12 @@ if (args.includes('--json')) {
   console.log('');
   console.log(`  Độ phủ kiểm thử API:  ${covered}/${total}  (${pct}%)  ${bar(pct)}`);
   console.log('');
+  console.log('    (xếp theo số endpoint còn thiếu)');
+  console.log('');
   for (const d of domains) {
     console.log(
-      `    ${d.name.padEnd(24)} ${String(d.covered).padStart(3)}/${String(d.total).padEnd(3)}  ${bar(d.pct)} ${d.pct}%`,
+      `    ${d.name.padEnd(26)} thiếu ${String(d.missing).padStart(3)}   ` +
+        `${String(d.covered).padStart(3)}/${String(d.total).padEnd(3)}  ${bar(d.pct)} ${d.pct}%`,
     );
   }
   console.log('');

@@ -30,6 +30,15 @@ describe('trang Contest Lab', () => {
     expect(CLIENT_SCRIPT).toContain('loadTrackTypesForCafe');
   });
 
+  it('khoá mở trang được gắn vào cả CSS lẫn JS', () => {
+    // Trình duyệt tải hai tệp con bằng lời gọi riêng và không tự mang theo khoá
+    // của trang cha. Quên truyền tiếp thì trang mở ra 200 nhưng trắng trơn —
+    // không lỗi mạng, không log, chỉ là không có gì chạy.
+    const html = renderContestLab('?key=abc123');
+    expect(html).toContain('href="/dev-tools/contest-lab.css?key=abc123"');
+    expect(html).toContain('<script src="/dev-tools/contest-lab.js?key=abc123">');
+  });
+
   it('loại sân đọc theo chi nhánh, không đọc danh mục toàn hệ thống', () => {
     // Lấy từ /track-types thì loại sân chi nhánh đã tắt vẫn hiện ra, chọn vào
     // là tạo giải bị từ chối với CONTEST_TRACK_TYPE_UNAVAILABLE.

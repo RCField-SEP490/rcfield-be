@@ -56,6 +56,16 @@ app.use('/api/v1/payments', bankWebhookRouter);
 // chạy. Chặn bằng middleware thì mã vẫn nạp, vẫn chạy, chỉ là từ chối ở cuối.
 if (env.devTools.enabled) {
   app.use('/dev-tools', devToolsRouter);
+  if (env.NODE_ENV === 'production') {
+    logger.warn(
+      'DevTools',
+      env.devTools.token
+        ? 'Contest Lab ĐANG BẬT ở production, có khoá bảo vệ. Dữ liệu dựng ra là dữ liệu THẬT ' +
+            'trong cơ sở dữ liệu vận hành.'
+        : 'Contest Lab ĐANG BẬT ở production mà KHÔNG có khoá — ai biết đường dẫn cũng mở được. ' +
+            'Khai DEV_TOOLS_TOKEN, hoặc tắt bằng DEV_TOOLS_ENABLED=false sau khi demo xong.',
+    );
+  }
 }
 
 if (env.sandboxBank.enabled) {

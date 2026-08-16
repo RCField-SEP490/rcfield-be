@@ -58,17 +58,41 @@ function collectBackendRoutes() {
 
   const routes = new Map();
 
-  function collectFromRouter(file, prefix, seen = new Set()) {
+  /** Các biến router khai trong một tệp, để biết tệp có nhiều router hay không. */
+  function declaredRouters(src) {
+    const out = new Set();
+    const re = /(?:export\s+)?const\s+(\w+)\s*=\s*Router\s*\(/g;
+    let m;
+    while ((m = re.exec(src))) out.add(m[1]);
+    return out;
+  }
+
+  function collectFromRouter(file, prefix, seen = new Set(), routerVar = null) {
     const full = path.join(ROUTES_DIR, `${file}.ts`);
-    if (!fs.existsSync(full) || seen.has(full)) return;
-    seen.add(full);
+    // Khoá gồm cả prefix: cùng một tệp gắn ở hai prefix là hai bộ route khác nhau.
+    const visitKey = `${full}|${prefix}|${routerVar ?? ''}`;
+    if (!fs.existsSync(full) || seen.has(visitKey)) return;
+    seen.add(visitKey);
     const src = fs.readFileSync(full, 'utf8');
 
-    const re = new RegExp(`\\.(${METHODS.join('|')})\\s*\\(\\s*['"]([^'"]*)['"]`, 'g');
+    // Bắt cả TÊN BIẾN router đứng trước, không chỉ phương thức.
+    //
+    // Một tệp có thể khai nhiều router gắn ở nhiều prefix khác nhau —
+    // `bank-payment.routes.ts` có `banksRouter`, `bankTransactionRouter` và
+    // `cafeBankPaymentRouter`. Quét cả tệp rồi gán hết cho mọi prefix sẽ sinh ra
+    // endpoint ma: `/banks/payment-settings` và `/bank-transactions/payment-settings`
+    // cùng xuất hiện trong khi thật ra chỉ tồn tại một cái.
+    const re = new RegExp(
+      `(\\w+)\\.(${METHODS.join('|')})\\s*\\(\\s*['"]([^'"]*)['"]`,
+      'g',
+    );
     let m;
     while ((m = re.exec(src))) {
-      const p = normalize((prefix + m[2]).replace(/\/+/g, '/'));
-      routes.set(`${m[1].toUpperCase()} ${p}`, `${file}.ts`);
+      // Tệp chỉ khai một router thì nhận hết; nhiều router thì chỉ nhận đúng
+      // biến đang được gắn vào prefix này.
+      if (routerVar && m[1] !== routerVar && declaredRouters(src).size > 1) continue;
+      const p = normalize((prefix + m[3]).replace(/\/+/g, '/'));
+      routes.set(`${m[2].toUpperCase()} ${p}`, `${file}.ts`);
     }
 
     // Router lồng khai ngay trong tệp con, không phải ở index.ts.
@@ -88,7 +112,7 @@ function collectBackendRoutes() {
 
   for (const { prefix, varName } of mounts) {
     const file = importMap.get(varName);
-    if (file) collectFromRouter(file, prefix);
+    if (file) collectFromRouter(file, prefix, new Set(), varName);
   }
 
   // Route khai thẳng trong index.ts, ví dụ /track-types.
