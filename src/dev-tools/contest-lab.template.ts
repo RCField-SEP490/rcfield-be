@@ -26,6 +26,13 @@ textarea{font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:70px
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
 @media(max-width:700px){.grid4{grid-template-columns:1fr 1fr}}
+.tabs{display:flex;gap:6px;margin-bottom:14px}
+.tab{background:#131c2e;border:1px solid #2b3648;color:#8fa3bf;font-weight:600;
+     padding:9px 18px;border-radius:8px;cursor:pointer}
+.tab.on{background:#1d6feb;border-color:#1d6feb;color:#fff}
+label.inline{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-weight:400;
+     text-transform:none;letter-spacing:0;cursor:pointer}
+label.inline input{width:auto;margin:0}
 .picker{max-height:260px;overflow-y:auto;border:1px solid #2b3648;border-radius:8px;
         padding:8px;margin-top:8px;font-size:12px;background:#0e1626}
 .picker label{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;
@@ -101,6 +108,68 @@ export function renderContestLab(assetQuery = ''): string {
   </div>
 
   <div>
+    <div class="tabs">
+      <button class="tab on" data-tab="lab">Dựng giải đấu</button>
+      <button class="tab" data-tab="users">Tạo tài khoản</button>
+      <button class="tab" data-tab="cafes">Tạo chi nhánh</button>
+    </div>
+
+    <div id="tabCafes" style="display:none">
+    <div class="panel">
+      <h2>Tạo chi nhánh cho provider</h2>
+      <p class="hint">Chi nhánh dựng bằng đúng <code>POST /cafes</code> mà giao diện thật gọi, với
+        quận huyện và tên đường <b>có thật</b>, toạ độ đúng khu vực, giờ mở cửa khác nhau theo kiểu
+        sân. Ảnh bìa để trống — bạn tự thêm sau.</p>
+      <p class="hint">Dùng tài khoản provider ở tab <b>Dựng giải đấu</b>. Chưa đăng nhập thì bấm
+        nút đăng nhập bên đó trước.</p>
+      <div class="grid4">
+        <div><label>Số chi nhánh</label><input id="cfCount" type="number" min="1" max="8" value="2"></div>
+        <div><label>Thành phố</label><select id="cfCity">
+          <option value="">Rải đều cả ba</option>
+          <option value="TP. Hồ Chí Minh">TP. Hồ Chí Minh</option>
+          <option value="Hà Nội">Hà Nội</option>
+          <option value="Đà Nẵng">Đà Nẵng</option>
+        </select></div>
+        <div><label>Số xe mỗi dòng</label><input id="cfUnits" type="number" min="1" max="8" value="3"></div>
+        <div><label>&nbsp;</label><button id="btnGenCafes" style="width:100%">Tạo chi nhánh</button></div>
+      </div>
+      <label class="inline"><input type="checkbox" id="cfPricing" checked>
+        Bảng giá — phụ thu cuối tuần và khung giờ cao điểm</label>
+      <label class="inline"><input type="checkbox" id="cfFleet" checked>
+        Dòng xe cho thuê kèm từng chiếc xe — thiếu cái này thì không đặt xe được</label>
+      <label class="inline"><input type="checkbox" id="cfMenu" checked>
+        Thực đơn đồ ăn thức uống theo nhóm</label>
+      <label class="inline"><input type="checkbox" id="cfBank" checked>
+        Tài khoản nhận chuyển khoản — để hiện mã QR lúc thanh toán</label>
+      <label class="inline"><input type="checkbox" id="cfApprove" checked>
+        Admin duyệt luôn — chi nhánh mới nằm ở <code>PENDING</code> và
+        <b>không hiện ở đâu cả</b> cho tới khi được duyệt</label>
+      <div id="cfList" class="picker">Chưa tạo chi nhánh nào trong phiên này.</div>
+      <p class="hint" id="cfStatus">Mỗi chi nhánh tính vào hạn mức gói thuê bao của provider.</p>
+    </div>
+    </div>
+
+    <div id="tabUsers" style="display:none">
+    <div class="panel">
+      <h2>Tạo tài khoản khách</h2>
+      <p class="hint">Sinh tên người Việt mạch lạc — tên đệm đi đúng với tên chính, không ghép bừa.
+        Email lấy theo tên chính đã bỏ dấu (<code>Trọng Trí</code> → <code>tri@gmail.com</code>);
+        trùng thì tự thêm số đuôi cho tới khi còn trống.</p>
+      <div class="grid4">
+        <div><label>Số lượng</label><input id="genCount" type="number" min="1" max="100" value="16"></div>
+        <div><label>Tên miền email</label><input id="genDomain" value="gmail.com"></div>
+        <div><label>Mật khẩu</label><input id="genPwd" value="123456"></div>
+        <div><label>&nbsp;</label><button id="btnGenUsers" style="width:100%">Tạo tài khoản</button></div>
+      </div>
+      <label class="inline"><input type="checkbox" id="genPick" checked>
+        Chọn luôn làm vận động viên sau khi tạo xong</label>
+      <div id="genList" class="picker">Chưa tạo tài khoản nào trong phiên này.</div>
+      <p class="hint" id="genStatus">Tài khoản tạo ra là tài khoản THẬT, đi qua đúng
+        <code>POST /auth/register</code> — không chèn thẳng vào bảng.</p>
+    </div>
+    </div>
+
+    <div id="tabLab">
     <div class="panel">
       <h2>1 · Tài khoản</h2>
       <label>Provider lấy đâu ra</label>
@@ -252,6 +321,7 @@ contest.customer4@gmail.com</textarea>
       <h2>6 · Các bước</h2>
       <div id="steps"></div>
     </div>
+    </div>
   </div>
 
   <div>
@@ -366,22 +436,60 @@ async function loginOrRegister(email, password, fullName) {
 }
 
 /**
- * Tên người dùng cho tài khoản công cụ tự tạo.
+ * Tên người Việt dùng cho tài khoản công cụ tự tạo.
  *
  * Đặt "Vận động viên 1" thì mọi màn hình vận hành đều hiện đúng chuỗi đó, và
- * người xem tưởng giao diện đang in nhãn chung thay vì tên thật. Tên người Việt
- * có dấu còn kiểm luôn được phần hiển thị chữ có dấu ở bảng và biên bản.
+ * người xem tưởng giao diện đang in nhãn chung thay vì tên thật.
+ *
+ * Tách nam/nữ vì tên đệm và tên chính đi theo cặp: ghép bừa sẽ ra "Nguyễn Thị
+ * Cường" hay "Trần Văn Quỳnh" — người Việt nhìn là biết máy sinh, và một buổi
+ * demo mất tin cậy vì đúng những chi tiết nhỏ như thế.
  */
-const HO = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Huỳnh', 'Vũ', 'Đặng',
-  'Bùi', 'Đỗ', 'Ngô', 'Dương'];
-const DEM = ['Văn', 'Thị', 'Hoàng', 'Minh', 'Quốc', 'Gia', 'Khánh', 'Thanh'];
-const TEN = ['An', 'Bảo', 'Cường', 'Dũng', 'Hà', 'Hùng', 'Khoa', 'Linh',
-  'Long', 'Nam', 'Phúc', 'Quân', 'Sơn', 'Trang', 'Tuấn', 'Vy'];
+const HO = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Huỳnh', 'Phan', 'Vũ', 'Võ',
+  'Đặng', 'Bùi', 'Đỗ', 'Hồ', 'Ngô', 'Dương', 'Lý', 'Đinh', 'Trịnh', 'Mai', 'Lâm'];
 
-function fakeVietnameseName(seed) {
-  return HO[seed % HO.length] + ' ' +
-    DEM[(seed * 3) % DEM.length] + ' ' +
-    TEN[(seed * 7) % TEN.length];
+const DEM_NAM = ['Văn', 'Minh', 'Quốc', 'Hữu', 'Đức', 'Công', 'Thành', 'Xuân',
+  'Bá', 'Đình', 'Trọng', 'Anh'];
+const TEN_NAM = ['An', 'Bảo', 'Cường', 'Dũng', 'Đạt', 'Hải', 'Hiếu', 'Hoàng',
+  'Huy', 'Khoa', 'Khôi', 'Kiên', 'Lâm', 'Long', 'Nam', 'Nghĩa', 'Phong', 'Phúc',
+  'Quân', 'Sơn', 'Thắng', 'Thịnh', 'Trí', 'Trung', 'Tuấn', 'Vinh'];
+
+const DEM_NU = ['Thị', 'Ngọc', 'Thanh', 'Thu', 'Kim', 'Diệu', 'Hồng', 'Mỹ',
+  'Phương', 'Khánh', 'Bảo', 'Gia'];
+const TEN_NU = ['Anh', 'Chi', 'Dung', 'Duyên', 'Hà', 'Hằng', 'Hạnh', 'Hiền',
+  'Hoa', 'Hương', 'Lan', 'Linh', 'Mai', 'My', 'Nga', 'Ngân', 'Nhi', 'Nhung',
+  'Oanh', 'Phương', 'Quỳnh', 'Thảo', 'Trang', 'Trâm', 'Uyên', 'Vy', 'Yến'];
+
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+/** Một cái tên mạch lạc, kèm phần tên chính để còn dựng email. */
+function vietnameseName() {
+  const nam = Math.random() < 0.5;
+  const ten = nam ? pick(TEN_NAM) : pick(TEN_NU);
+  // Tránh trùng họ với tên: "Hoàng Hữu Hoàng", "Lâm Văn Lâm" nghe như máy sinh
+  // hơn là tên thật. Vài họ cũng là tên chính nên phải lọc lại.
+  let ho = pick(HO);
+  for (let i = 0; i < 8 && ho === ten; i++) ho = pick(HO);
+  return { full: ho + ' ' + (nam ? pick(DEM_NAM) : pick(DEM_NU)) + ' ' + ten, ten };
+}
+
+function fakeVietnameseName() {
+  return vietnameseName().full;
+}
+
+/** Bỏ dấu để dựng email từ tên: "Trí" thành "tri", "Quỳnh" thành "quynh". */
+function slugTen(ten) {
+  return ten
+    // NFD tách "í" thành "i" cộng một dấu sắc rời, rồi bộ lọc ở cuối dọn nốt
+    // phần dấu. Thiếu bước này thì "í" là ký tự nguyên khối không nằm trong
+    // [a-z0-9] nên bị xoá cả chữ lẫn dấu — "Trí" ra "tr".
+    .normalize('NFD')
+    // "đ" phải xử riêng vì nó là một CHỮ CÁI, không phải "d" cộng dấu phụ: NFD
+    // không tách được, và bộ lọc cuối sẽ xoá thẳng — "Đạt" ra "at".
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 }
 
 /** Một dòng vận động viên: "email" hoặc "email:mật_khẩu". */
@@ -673,7 +781,7 @@ const STEPS = [
       let created = 0;
       for (const [i, line] of lines.entries()) {
         const { email, password } = parseAthlete(line);
-        const a = await loginOrRegister(email, password, fakeVietnameseName(i));
+        const a = await loginOrRegister(email, password, fakeVietnameseName());
         ctx.athletes.push({ email, token: a.token, userId: a.user.id });
         if (a.createdNow) created += 1;
       }
@@ -1409,6 +1517,447 @@ async function loadCustomers() {
   log('ok', 'Đã nạp ' + ctx.customers.length + ' tài khoản khách.');
 }
 
+// ── Tạo chi nhánh ────────────────────────────────────────────────────────────
+//
+// Toàn bộ số liệu dưới đây là địa danh, tên đường và toạ độ CÓ THẬT. Sinh bừa
+// thì bản đồ ghim chi nhánh xuống giữa ruộng hoặc ngoài biển, và người xem demo
+// nhận ra ngay — mà bản đồ lại là thứ đầu tiên hiện lên ở trang tìm chi nhánh.
+
+const KHU_VUC = [
+  { city: 'TP. Hồ Chí Minh', district: 'Quận 7', lat: 10.7340, lng: 106.7215,
+    streets: ['Nguyễn Thị Thập', 'Huỳnh Tấn Phát', 'Nguyễn Lương Bằng'] },
+  { city: 'TP. Hồ Chí Minh', district: 'TP. Thủ Đức', lat: 10.8020, lng: 106.7500,
+    streets: ['Nguyễn Duy Trinh', 'Đỗ Xuân Hợp', 'Lê Văn Việt'] },
+  { city: 'TP. Hồ Chí Minh', district: 'Quận Tân Bình', lat: 10.8010, lng: 106.6520,
+    streets: ['Cộng Hòa', 'Hoàng Văn Thụ', 'Trường Chinh'] },
+  { city: 'TP. Hồ Chí Minh', district: 'Quận Gò Vấp', lat: 10.8380, lng: 106.6650,
+    streets: ['Quang Trung', 'Phan Văn Trị', 'Nguyễn Oanh'] },
+  { city: 'TP. Hồ Chí Minh', district: 'Quận Bình Thạnh', lat: 10.8040, lng: 106.7100,
+    streets: ['Điện Biên Phủ', 'Xô Viết Nghệ Tĩnh', 'Nguyễn Xí'] },
+  { city: 'Hà Nội', district: 'Quận Cầu Giấy', lat: 21.0300, lng: 105.7900,
+    streets: ['Trần Thái Tông', 'Duy Tân', 'Nguyễn Phong Sắc'] },
+  { city: 'Hà Nội', district: 'Quận Thanh Xuân', lat: 20.9950, lng: 105.8050,
+    streets: ['Nguyễn Trãi', 'Lê Văn Lương', 'Khuất Duy Tiến'] },
+  { city: 'Hà Nội', district: 'Quận Long Biên', lat: 21.0450, lng: 105.8800,
+    streets: ['Nguyễn Văn Cừ', 'Ngô Gia Tự', 'Cổ Linh'] },
+  { city: 'Hà Nội', district: 'Quận Hà Đông', lat: 20.9710, lng: 105.7750,
+    streets: ['Quang Trung', 'Tô Hiệu', 'Lê Trọng Tấn'] },
+  { city: 'Đà Nẵng', district: 'Quận Hải Châu', lat: 16.0600, lng: 108.2100,
+    streets: ['Nguyễn Văn Linh', 'Hoàng Diệu', '2 Tháng 9'] },
+  { city: 'Đà Nẵng', district: 'Quận Sơn Trà', lat: 16.0800, lng: 108.2300,
+    streets: ['Ngô Quyền', 'Phạm Văn Đồng', 'Hồ Nghinh'] },
+  { city: 'Đà Nẵng', district: 'Quận Ngũ Hành Sơn', lat: 16.0300, lng: 108.2500,
+    streets: ['Võ Nguyên Giáp', 'Lê Văn Hiến', 'Nguyễn Văn Thoại'] },
+];
+
+const TEN_QUAN = ['RC Arena', 'Drift House', 'Speed Zone', 'RC Field', 'Turbo Track',
+  'Apex RC', 'Nitro Club', 'Off-Road Base', 'Pit Stop RC', 'Redline RC'];
+
+/** Hai kiểu sân có giờ giấc khác hẳn nhau — sân ngoài trời nghỉ thứ Hai. */
+const KIEU_SAN = [
+  {
+    ten: 'trong nhà',
+    mo: (d) => ({ open: '09:00', close: '22:00', is_closed: false }),
+    mo_ta: 'Sân RC trong nhà, mặt sàn nhựa cho xe on-road và đường drift riêng. ' +
+      'Có khu pit sửa xe, quầy cà phê và chỗ ngồi cho người đi kèm.',
+  },
+  {
+    ten: 'ngoài trời',
+    // Thứ Hai nghỉ bảo trì mặt sân — chi tiết nhỏ này làm lịch trông như lịch
+    // thật thay vì bảy ngày giống hệt nhau.
+    mo: (d) => (d === 'mon'
+      ? { open: '00:00', close: '00:00', is_closed: true }
+      : (d === 'sat' || d === 'sun')
+        ? { open: '08:00', close: '22:00', is_closed: false }
+        : { open: '14:00', close: '22:00', is_closed: false }),
+    mo_ta: 'Sân off-road ngoài trời có địa hình đồi dốc và hố cát, kèm một vòng ' +
+      'circuit nền bê tông. Nghỉ thứ Hai để bảo trì mặt sân.',
+  },
+];
+
+const NOI_QUY = [
+  'Không mang xe chạy xăng vào khu vực sân trong nhà',
+  'Trẻ dưới 12 tuổi phải có người lớn đi kèm',
+  'Kiểm tra pin và tần số trước khi vào sân để tránh nhiễu sóng',
+  'Hư hỏng do va chạm cố ý sẽ tính phí theo bảng giá linh kiện',
+  'Trả xe đúng giờ, quá 15 phút tính thêm một lượt',
+];
+
+/** Dòng xe có thật kèm giá thuê hợp lý theo phân hạng. */
+const DONG_XE = [
+  { name: 'Tamiya TT-02 Drift Spec', tier: 'STANDARD', rate: 45000,
+    desc: 'Xe drift phổ thông, dễ điều khiển, hợp người mới.' },
+  { name: 'Yokomo YD-2 EXII', tier: 'PREMIUM', rate: 120000,
+    desc: 'Khung drift chuyên dụng, gyro chỉnh được, dành cho người đã quen tay.' },
+  { name: 'Traxxas Slash 4x4', tier: 'PREMIUM', rate: 95000,
+    desc: 'Short course 4WD, chạy tốt cả nền bê tông lẫn đường đất.' },
+  { name: 'Arrma Typhon 3S BLX', tier: 'PREMIUM', rate: 110000,
+    desc: 'Buggy tốc độ cao, mô tơ không chổi than, cần sân rộng.' },
+  { name: 'Kyosho Fazer Mk2', tier: 'STANDARD', rate: 55000,
+    desc: 'Touring on-road bền, phù hợp chạy vòng circuit.' },
+  { name: 'Team Associated RC10B7', tier: 'RESTRICTED', rate: 160000,
+    desc: 'Buggy thi đấu, chỉ giao cho người đã có kinh nghiệm.' },
+  { name: 'Losi Mini-T 2.0', tier: 'STANDARD', rate: 35000,
+    desc: 'Xe cỡ nhỏ, hợp sân hẹp và người chơi nhỏ tuổi.' },
+];
+
+const MAU_XE = ['Đỏ', 'Xanh dương', 'Đen', 'Trắng', 'Cam', 'Xanh lá', 'Vàng', 'Xám'];
+
+const THUC_DON = [
+  { nhom: 'Cà phê', mon: [
+    { name: 'Cà phê sữa đá', price: 30000, desc: 'Cà phê phin truyền thống, sữa đặc.' },
+    { name: 'Bạc xỉu', price: 35000, desc: 'Nhiều sữa, ít cà phê.' },
+    { name: 'Americano', price: 40000, desc: 'Espresso pha loãng, không đường.' },
+    { name: 'Cold brew', price: 50000, desc: 'Ủ lạnh 12 tiếng, vị dịu.' },
+  ] },
+  { nhom: 'Trà và nước ép', mon: [
+    { name: 'Trà đào cam sả', price: 45000, desc: 'Đào ngâm, cam tươi, sả đập.' },
+    { name: 'Trà vải', price: 42000, desc: 'Trà đen ủ lạnh với vải thiều.' },
+    { name: 'Nước ép cam', price: 45000, desc: 'Cam sành vắt tại quầy.' },
+  ] },
+  { nhom: 'Đồ ăn vặt', mon: [
+    { name: 'Khoai tây chiên', price: 45000, desc: 'Ăn kèm sốt phô mai.' },
+    { name: 'Gà rán 3 miếng', price: 65000, desc: 'Chiên giòn, kèm tương ớt.' },
+    { name: 'Bánh mì que pate', price: 25000, desc: 'Bánh nhỏ ăn nhanh giữa lượt chạy.' },
+    { name: 'Mì xào bò', price: 60000, desc: 'Mì trứng xào thịt bò và rau cải.' },
+  ] },
+];
+
+const MA_NGAN_HANG = ['VCB', 'TCB', 'MB', 'ACB', 'TPB', 'VPB', 'BIDV'];
+const NGAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/** Số di động Việt Nam hợp lệ — đầu số thật, không phải dãy số bịa. */
+function soDienThoai() {
+  const dau = ['090', '091', '093', '094', '096', '097', '098', '032', '033',
+    '034', '035', '036', '037', '038', '039', '070', '076', '077', '078', '079'];
+  let s = pick(dau);
+  for (let i = 0; i < 7; i++) s += Math.floor(Math.random() * 10);
+  return s;
+}
+
+/** Nhích toạ độ vài trăm mét quanh tâm quận, để nhiều chi nhánh không chồng lên nhau. */
+function lech(goc) {
+  return Math.round((goc + (Math.random() - 0.5) * 0.02) * 1e6) / 1e6;
+}
+
+/**
+ * Phần tên lấy từ quận để đặt tên quán.
+ *
+ * Cắt thẳng chữ "Quận " thì "Quận 7" còn trơ lại số 7, ra "Drift House 7" —
+ * nghe như chi nhánh thứ bảy chứ không phải quán ở Quận 7.
+ */
+function tenKhu(district) {
+  const so = district.match(/^Quận (\d+)$/);
+  if (so) return 'Q' + so[1];
+  return district.replace(/^(Quận|Huyện|Thị xã|TP\.) /, '');
+}
+
+function duLieuChiNhanh(khu, i) {
+  const kieu = KIEU_SAN[i % KIEU_SAN.length];
+  const hours = {};
+  NGAY.forEach((d) => { hours[d] = kieu.mo(d); });
+  return {
+    name: TEN_QUAN[i % TEN_QUAN.length] + ' ' + tenKhu(khu.district),
+    description: kieu.mo_ta,
+    phone: soDienThoai(),
+    address: (1 + Math.floor(Math.random() * 300)) + ' ' + pick(khu.streets),
+    district: khu.district,
+    city: khu.city,
+    latitude: lech(khu.lat),
+    longitude: lech(khu.lng),
+    operating_hours: hours,
+    slot_duration_minutes: 60,
+    // Giá lẻ theo khu: quán trung tâm đắt hơn, giống thị trường thật.
+    slot_fee_rate: [40000, 50000, 60000, 70000][i % 4],
+    max_concurrent_bookings: [6, 8, 10, 12][i % 4],
+    min_booking_notice_minutes: 60,
+    max_advance_booking_days: 30,
+    byoc_capacity: [4, 6, 8][i % 3],
+    rules: NOI_QUY.slice(0, 3 + (i % 3)),
+  };
+}
+
+function renderCafes() {
+  const box = $('cfList');
+  const rows = ctx.builtCafes || [];
+  if (!rows.length) { box.textContent = 'Chưa tạo chi nhánh nào trong phiên này.'; return; }
+  box.innerHTML = '';
+  rows.forEach((c) => {
+    const lb = document.createElement('label');
+    const em = document.createElement('span');
+    em.className = 'em'; em.textContent = c.name;
+    const nm = document.createElement('span');
+    nm.className = 'nm'; nm.textContent = c.note;
+    lb.appendChild(em); lb.appendChild(nm);
+    box.appendChild(lb);
+  });
+}
+
+/**
+ * Dựng phần vận hành cho một chi nhánh vừa tạo.
+ *
+ * Mỗi lớp bọc try riêng: một chi nhánh có bảng giá nhưng chưa có thực đơn vẫn
+ * dùng được. Để một lỗi làm đổ cả hàm thì chi nhánh nằm lại nửa vời mà người
+ * dùng tưởng nó hỏng hoàn toàn.
+ */
+async function dungLopVanHanh(cafeId, trackIds, xong, hong) {
+  const t = ctx.providerToken;
+
+  if ($('cfPricing').checked) {
+    try {
+      await call('PUT', '/provider/cafes/' + cafeId + '/pricing/rules', {
+        weekend_multiplier: 1.2,
+        peak_hours: [
+          { start: '11:30', end: '13:30', multiplier: 1.15 },
+          { start: '18:00', end: '21:00', multiplier: 1.3 },
+        ],
+      }, t);
+      xong.push('bảng giá');
+    } catch (e) { hong.push('bảng giá (' + e.message + ')'); }
+  }
+
+  if ($('cfFleet').checked) {
+    try {
+      const soXe = Math.max(1, Math.min(Number($('cfUnits').value) || 3, 8));
+      let dong = 0; let chiec = 0;
+      for (const x of DONG_XE.slice(0, 4)) {
+        const cat = await call('POST', '/cafes/' + cafeId + '/vehicle-catalogs', {
+          name: x.name, description: x.desc, tier: x.tier,
+          hourly_rate: x.rate, security_deposit: 0,
+          compatible_track_types: trackIds,
+        }, t);
+        dong++;
+        // Dòng xe không có chiếc nào thì khách đặt được mà nhân viên không có gì
+        // để giao — phiếu thuê treo ngay ở bước nhận xe.
+        const ma = x.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
+        for (let k = 1; k <= soXe; k++) {
+          await call('POST', '/cafes/' + cafeId + '/vehicle-catalogs/' + cat.id + '/units', {
+            identifier: ma + '-' + String(k).padStart(2, '0'),
+            color: MAU_XE[(dong * 3 + k) % MAU_XE.length],
+            status: 'AVAILABLE',
+          }, t);
+          chiec++;
+        }
+      }
+      xong.push(dong + ' dòng xe / ' + chiec + ' chiếc');
+    } catch (e) { hong.push('dòng xe (' + e.message + ')'); }
+  }
+
+  if ($('cfMenu').checked) {
+    try {
+      let mon = 0;
+      for (const nhom of THUC_DON) {
+        const cat = await call('POST', '/cafes/' + cafeId + '/menu/categories',
+          { name: nhom.nhom }, t);
+        for (const m of nhom.mon) {
+          await call('POST', '/cafes/' + cafeId + '/menu', {
+            name: m.name, description: m.desc, price: m.price,
+            category_id: cat.id || (cat.data && cat.data.id),
+          }, t);
+          mon++;
+        }
+      }
+      xong.push(THUC_DON.length + ' nhóm / ' + mon + ' món');
+    } catch (e) { hong.push('thực đơn (' + e.message + ')'); }
+  }
+
+  if ($('cfBank').checked) {
+    try {
+      let stk = '';
+      for (let i = 0; i < 11; i++) stk += Math.floor(Math.random() * 10);
+      await call('PUT', '/cafes/' + cafeId + '/payment-settings', {
+        method: 'BANK_TRANSFER',
+        bank_code: pick(MA_NGAN_HANG),
+        account_number: stk,
+        account_name: 'CONG TY RCFIELD',
+      }, t);
+      xong.push('tài khoản nhận tiền');
+    } catch (e) { hong.push('tài khoản ngân hàng (' + e.message + ')'); }
+  }
+}
+
+async function generateCafes() {
+  if (!ctx.providerToken) {
+    throw new Error('Chưa đăng nhập provider. Sang tab "Dựng giải đấu" bấm nút ' +
+      'đăng nhập trước, vì chi nhánh phải thuộc về một provider cụ thể.');
+  }
+
+  const want = Math.max(1, Math.min(Number($('cfCount').value) || 1, 8));
+  const cityFilter = $('cfCity').value;
+  const st = $('cfStatus');
+
+  const tracks = await call('GET', '/track-types');
+  const trackRows = Array.isArray(tracks) ? tracks : tracks.data || [];
+  if (!trackRows.length) throw new Error('Hệ thống chưa có loại sân nào — chạy seed loại sân trước.');
+
+  let amenityIds = [];
+  try {
+    const am = await call('GET', '/amenities');
+    const amRows = Array.isArray(am) ? am : am.data || [];
+    amenityIds = amRows.slice(0, 5).map((a) => a.id);
+  } catch (e) { log('dim', '  (không đọc được tiện ích, bỏ qua)'); }
+
+  // Không lặp lại quận trong cùng một lượt: hai chi nhánh cùng tên cùng quận
+  // trông như bấm nhầm hai lần chứ không như một chuỗi cửa hàng.
+  const pool = KHU_VUC.filter((k) => !cityFilter || k.city === cityFilter);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+  }
+
+  const created = [];
+  const failed = [];
+  for (let i = 0; i < want; i++) {
+    const khu = pool[i % pool.length];
+    st.textContent = 'Chi nhánh ' + (i + 1) + '/' + want + ' — ' + khu.district + '…';
+    const body = duLieuChiNhanh(khu, i);
+    // Mỗi chi nhánh mở 2–3 loại sân, không phải tất cả — quán thật cũng vậy.
+    const trackIds = trackRows.slice(0, 2 + (i % 2)).map((t) => t.id);
+    body.track_types = trackIds;
+    if (amenityIds.length) body.amenity_ids = amenityIds;
+
+    let cafe;
+    try {
+      cafe = await call('POST', '/cafes/', body, ctx.providerToken);
+    } catch (e) {
+      failed.push(body.name + ' (' + e.message + ')');
+      // Hết hạn mức chi nhánh thì các lượt sau cũng hỏng y hệt — dừng luôn thay
+      // vì gọi thêm bảy lần để nhận cùng một lỗi.
+      if (/hạn mức|QUOTA|LIMIT/i.test(e.message)) {
+        failed.push('Dừng sớm: gói thuê bao của provider đã hết suất chi nhánh.');
+        break;
+      }
+      continue;
+    }
+
+    const xong = [];
+    const hong = [];
+    await dungLopVanHanh(cafe.id, trackIds, xong, hong);
+
+    if ($('cfApprove').checked) {
+      // Chi nhánh mới sinh ra ở PENDING và endpoint /cafes chỉ trả về ACTIVE,
+      // nên chưa duyệt thì nó vô hình: không lên bản đồ, không vào được ô chọn
+      // chi nhánh, không tạo giải ở đó được. Provider bị CHẶN tự duyệt
+      // (cafe.service.ts:816) nên phải mượn tay admin.
+      try {
+        if (!ctx.adminToken) {
+          const a = await login($('aEmail').value, $('aPwd').value);
+          ctx.adminToken = a.token;
+        }
+        await call('PATCH', '/cafes/' + cafe.id + '/status', { status: 'ACTIVE' }, ctx.adminToken);
+        xong.push('đã duyệt');
+      } catch (e) { hong.push('duyệt (' + e.message + ')'); }
+    }
+    created.push({
+      id: cafe.id,
+      name: body.name,
+      note: khu.city + ' · ' + xong.join(' · ') + (hong.length ? ' · THIẾU: ' + hong.join(', ') : ''),
+    });
+    log('ok', '  ' + body.name + ' — ' + xong.join(' · '));
+  }
+
+  ctx.builtCafes = created.concat(ctx.builtCafes || []);
+  renderCafes();
+
+  // Ô chọn chi nhánh ở tab dựng giải phải thấy ngay chi nhánh mới.
+  await loadMyCafes();
+
+  st.textContent = 'Đã tạo ' + created.length + '/' + want + ' chi nhánh' +
+    (failed.length ? '. Hỏng: ' + failed.slice(0, 3).join('; ') : '.');
+  log(failed.length ? 'err' : 'ok', '── Tạo chi nhánh: ' + created.length + '/' + want + ' ──');
+  saveState();
+}
+
+// ── Tạo tài khoản khách ──────────────────────────────────────────────────────
+
+/**
+ * Tìm một email còn trống dựa trên tên chính.
+ *
+ * "tri@gmail.com" đẹp nhưng chỉ một người dùng được. Người thứ hai tên Trí phải
+ * là "tri2@", thứ ba "tri3@" — hỏi hệ thống từng bước thay vì đoán, vì tài khoản
+ * có thể do lần chạy trước hoặc do người khác tạo.
+ *
+ * Tham số dungTrongLo chặn trùng NGAY TRONG một lượt tạo: hai người cùng tên Trí sinh
+ * ra cách nhau một phần nghìn giây thì cả hai đều hỏi lúc "tri@" còn trống, cả
+ * hai cùng nhắm vào nó, và người thứ hai đăng ký hỏng.
+ */
+async function findFreeEmail(ten, domain, dungTrongLo) {
+  const base = slugTen(ten) || 'user';
+  for (let i = 1; i <= 60; i++) {
+    const email = base + (i === 1 ? '' : String(i)) + '@' + domain;
+    if (dungTrongLo.has(email)) continue;
+    const res = await call('POST', '/auth/check-exists', { email });
+    if (!res.emailExists) {
+      dungTrongLo.add(email);
+      return email;
+    }
+  }
+  return null;
+}
+
+function renderGenerated() {
+  const box = $('genList');
+  const rows = ctx.generated || [];
+  if (!rows.length) { box.textContent = 'Chưa tạo tài khoản nào trong phiên này.'; return; }
+  box.innerHTML = '';
+  rows.forEach((u) => {
+    const lb = document.createElement('label');
+    const em = document.createElement('span');
+    em.className = 'em'; em.textContent = u.email;
+    const nm = document.createElement('span');
+    nm.className = 'nm'; nm.textContent = u.full_name;
+    lb.appendChild(em); lb.appendChild(nm);
+    box.appendChild(lb);
+  });
+}
+
+async function generateUsers() {
+  const want = Math.max(1, Math.min(Number($('genCount').value) || 1, 100));
+  const domain = $('genDomain').value.trim().replace(/^@/, '') || 'gmail.com';
+  const password = $('genPwd').value;
+  const st = $('genStatus');
+
+  const created = [];
+  const failed = [];
+  const dungTrongLo = new Set();
+
+  for (let i = 0; i < want; i++) {
+    st.textContent = 'Đang tạo ' + (i + 1) + '/' + want + '…';
+    const nguoi = vietnameseName();
+    const email = await findFreeEmail(nguoi.ten, domain, dungTrongLo);
+    if (!email) {
+      failed.push(nguoi.ten + ' (hết biến thể email còn trống)');
+      continue;
+    }
+    try {
+      await call('POST', '/auth/register', {
+        full_name: nguoi.full, email, password, role: 'CUSTOMER',
+      });
+      created.push({ email, full_name: nguoi.full });
+    } catch (e) {
+      failed.push(email + ' (' + e.message + ')');
+    }
+  }
+
+  ctx.generated = created.concat(ctx.generated || []);
+  renderGenerated();
+
+  if ($('genPick').checked && created.length) {
+    // Gộp vào lựa chọn sẵn có thay vì thay thế: người dùng có thể đã tick vài
+    // tài khoản cũ và muốn dùng chung với đám mới.
+    const set = new Set(ctx.picked || []);
+    created.forEach((u) => set.add(u.email));
+    ctx.picked = Array.from(set);
+    syncPicked();
+  }
+
+  st.textContent = 'Đã tạo ' + created.length + '/' + want + ' tài khoản' +
+    (created.length ? ', mật khẩu chung "' + password + '"' : '') +
+    (failed.length ? '. Hỏng: ' + failed.slice(0, 3).join('; ') : '.');
+  log(failed.length ? 'err' : 'ok', '── Tạo tài khoản: ' + created.length + '/' + want + ' ──');
+  saveState();
+}
+
 async function loadCatalog() {
   const flat = (x) => (Array.isArray(x) ? x : (x && x.data) || []);
   const results = await Promise.allSettled(CATALOG.map((c) => call('GET', c.path)));
@@ -1465,6 +2014,35 @@ $('btnProviderCafes').onclick = async () => {
 };
 
 $('btnBatch').onclick = () => runBatch();
+
+// ── Chuyển tab ───────────────────────────────────────────────────────────────
+// Cột nhật ký bên phải KHÔNG nằm trong tab nào: tạo tài khoản cũng gọi API, và
+// giấu nhật ký đi thì lúc hỏng không thấy nó hỏng ở đâu.
+document.querySelectorAll('[data-tab]').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('[data-tab]').forEach((x) => { x.className = 'tab'; });
+    b.className = 'tab on';
+    $('tabLab').style.display = b.dataset.tab === 'lab' ? '' : 'none';
+    $('tabUsers').style.display = b.dataset.tab === 'users' ? '' : 'none';
+    $('tabCafes').style.display = b.dataset.tab === 'cafes' ? '' : 'none';
+  };
+});
+
+$('btnGenCafes').onclick = async () => {
+  $('btnGenCafes').disabled = true;
+  try { await generateCafes(); } catch (e) {
+    $('cfStatus').textContent = 'Hỏng: ' + e.message;
+    log('err', e.message);
+  } finally { $('btnGenCafes').disabled = false; }
+};
+
+$('btnGenUsers').onclick = async () => {
+  $('btnGenUsers').disabled = true;
+  try { await generateUsers(); } catch (e) {
+    $('genStatus').textContent = 'Hỏng: ' + e.message;
+    log('err', e.message);
+  } finally { $('btnGenUsers').disabled = false; }
+};
 
 // ── Nút của bảng chọn vận động viên ──────────────────────────────────────────
 $('btnLoadCustomers').onclick = async () => {
@@ -1534,7 +2112,9 @@ const SAVE_KEY = 'rcfield-contest-lab';
 const FORM_IDS = ['pMode', 'pEmail', 'pPwd', 'aEmail', 'aPwd', 'athPwd', 'athletes',
   'cName', 'cCap', 'cType', 'cFormat', 'cTemplate', 'cCafe', 'cTrack', 'cPolicy',
   'cFee', 'cDays', 'byocPhoto',
-  'bDraft', 'bOpen', 'bApproved', 'bClosed', 'bRunning', 'bCompleted', 'bCancelled'];
+  'bDraft', 'bOpen', 'bApproved', 'bClosed', 'bRunning', 'bCompleted', 'bCancelled',
+  'genCount', 'genDomain', 'genPwd',
+  'cfCount', 'cfCity', 'cfUnits'];
 
 function saveState() {
   const form = {};
@@ -1601,7 +2181,11 @@ if (saved) {
   // Danh sách tài khoản KHÔNG khôi phục — nó là ảnh chụp của cơ sở dữ liệu và
   // sẽ cũ đi. Lựa chọn thì giữ, vì đã nằm sẵn trong ô nhập rồi.
   ctx.customers = [];
+  ctx.generated = ctx.generated || [];
+  ctx.builtCafes = ctx.builtCafes || [];
   renderBuilt();
+  renderGenerated();
+  renderCafes();
   if (ctx.picked.length) syncPicked();
   showResume();
   if (ctx.contestId) log('dim', 'Khôi phục phiên trước — giải ' + ctx.contestId);

@@ -44,7 +44,9 @@ function loadScript() {
   vm.createContext(sandbox);
   // Trả STEPS/STEP ra ngoài — cả hai là const ở phạm vi cao nhất của script.
   new vm.Script(
-    CLIENT_SCRIPT + '\n;globalThis.__probe = { STEPS, STEP, SCENARIOS, BATCH, devPath };',
+    CLIENT_SCRIPT +
+      '\n;globalThis.__probe = { STEPS, STEP, SCENARIOS, BATCH, devPath, vietnameseName, slugTen,' +
+      ' TEN_NAM, TEN_NU, DEM_NAM, DEM_NU, KHU_VUC, duLieuChiNhanh, tenKhu, soDienThoai };',
   ).runInContext(sandbox);
   return (sandbox as unknown as { __probe: Probe }).__probe;
 }
@@ -55,6 +57,16 @@ interface Probe {
   SCENARIOS: Record<string, { label: string; run: () => Promise<void> }>;
   BATCH: Array<{ input: string; label: string; to: number; cancel?: boolean }>;
   devPath: (p: string) => string;
+  vietnameseName: () => { full: string; ten: string };
+  slugTen: (t: string) => string;
+  TEN_NAM: string[];
+  TEN_NU: string[];
+  DEM_NAM: string[];
+  DEM_NU: string[];
+  KHU_VUC: Array<{ city: string; district: string; lat: number; lng: number; streets: string[] }>;
+  duLieuChiNhanh: (khu: Probe['KHU_VUC'][number], i: number) => Record<string, unknown>;
+  tenKhu: (district: string) => string;
+  soDienThoai: () => string;
 }
 
 describe('phần JS của Contest Lab', () => {
@@ -119,6 +131,101 @@ describe('phần JS của Contest Lab', () => {
     expect(probe.devPath('/dev-tools/customers?limit=500')).toBe(
       '/dev-tools/customers?limit=500&key=abc',
     );
+  });
+
+  describe('sinh tên người Việt cho tài khoản tạo mới', () => {
+    it('bỏ dấu đúng để dựng email — email lọt ký tự ngoài ASCII là địa chỉ hỏng', () => {
+      expect(probe.slugTen('Trí')).toBe('tri');
+      expect(probe.slugTen('Quỳnh')).toBe('quynh');
+      expect(probe.slugTen('Thảo')).toBe('thao');
+      expect(probe.slugTen('Nghĩa')).toBe('nghia');
+      // "đ" KHÔNG phải "d" cộng dấu phụ nên NFD không tách được — phải xử riêng.
+      expect(probe.slugTen('Đạt')).toBe('dat');
+    });
+
+    it('tên đệm đi đúng với tên chính, không ghép lệch giới', () => {
+      // "Nguyễn Thị Cường" hay "Trần Văn Quỳnh" — người Việt nhìn là biết máy
+      // sinh, và buổi demo mất tin cậy vì đúng những chi tiết nhỏ như thế.
+      const nam = new Set(probe.TEN_NAM);
+      const nu = new Set(probe.TEN_NU);
+      const demNam = new Set(probe.DEM_NAM);
+      const demNu = new Set(probe.DEM_NU);
+
+      for (let i = 0; i < 500; i++) {
+        const [, dem, ten] = probe.vietnameseName().full.split(' ');
+        // Vài tên đệm dùng chung cho cả hai giới; chỉ xét những cái riêng biệt.
+        if (demNam.has(dem) && !demNu.has(dem)) expect(nu.has(ten) && !nam.has(ten)).toBe(false);
+        if (demNu.has(dem) && !demNam.has(dem)) expect(nam.has(ten) && !nu.has(ten)).toBe(false);
+      }
+    });
+
+    it('luôn đủ ba phần và họ không trùng tên chính', () => {
+      for (let i = 0; i < 500; i++) {
+        const n = probe.vietnameseName();
+        const parts = n.full.split(' ');
+        expect(parts).toHaveLength(3);
+        expect(parts[2]).toBe(n.ten);
+        expect(parts[0]).not.toBe(parts[2]);
+        expect(probe.slugTen(n.ten)).toMatch(/^[a-z]+$/);
+      }
+    });
+  });
+
+  describe('dữ liệu chi nhánh', () => {
+    /** Khung bao quanh phần đất liền Việt Nam, nới rộng một chút cho hải đảo. */
+    const VN = { latMin: 8.2, latMax: 23.5, lngMin: 102.1, lngMax: 109.5 };
+
+    it('mọi toạ độ nằm trong lãnh thổ Việt Nam', () => {
+      // Toạ độ bịa thì bản đồ ghim chi nhánh xuống giữa biển, mà bản đồ lại là
+      // thứ đầu tiên hiện lên ở trang tìm chi nhánh.
+      probe.KHU_VUC.forEach((k) => {
+        expect(k.lat).toBeGreaterThan(VN.latMin);
+        expect(k.lat).toBeLessThan(VN.latMax);
+        expect(k.lng).toBeGreaterThan(VN.lngMin);
+        expect(k.lng).toBeLessThan(VN.lngMax);
+        expect(k.streets.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('toạ độ nhích ra vẫn đúng khu vực, không trôi sang tỉnh khác', () => {
+      probe.KHU_VUC.forEach((k) => {
+        for (let i = 0; i < 40; i++) {
+          const c = probe.duLieuChiNhanh(k, i) as { latitude: number; longitude: number };
+          // Nhích tối đa ~1km để nhiều chi nhánh không chồng lên nhau, nhưng
+          // lệch quá thì địa chỉ ghi Quận 7 mà ghim rơi sang quận khác.
+          expect(Math.abs(c.latitude - k.lat)).toBeLessThan(0.011);
+          expect(Math.abs(c.longitude - k.lng)).toBeLessThan(0.011);
+        }
+      });
+    });
+
+    it('quận đánh số rút gọn thành Q7, không còn trơ lại con số', () => {
+      // Cắt thẳng chữ "Quận " thì "Quận 7" còn lại "7", ra "Drift House 7" —
+      // nghe như chi nhánh thứ bảy chứ không phải quán ở Quận 7.
+      expect(probe.tenKhu('Quận 7')).toBe('Q7');
+      expect(probe.tenKhu('Quận Cầu Giấy')).toBe('Cầu Giấy');
+      expect(probe.tenKhu('TP. Thủ Đức')).toBe('Thủ Đức');
+    });
+
+    it('số điện thoại dùng đầu số di động Việt Nam có thật', () => {
+      const dauSo = /^(03[2-9]|05[6889]|07[06-9]|08[1-9]|09[0-9])\d{7}$/;
+      for (let i = 0; i < 200; i++) expect(probe.soDienThoai()).toMatch(dauSo);
+    });
+
+    it('giờ mở cửa đủ bảy ngày và giờ đóng luôn sau giờ mở', () => {
+      const ngay = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+      for (let i = 0; i < 10; i++) {
+        const c = probe.duLieuChiNhanh(probe.KHU_VUC[i % probe.KHU_VUC.length], i) as {
+          operating_hours: Record<string, { open: string; close: string; is_closed: boolean }>;
+        };
+        expect(Object.keys(c.operating_hours).sort()).toEqual(ngay.slice().sort());
+        Object.values(c.operating_hours).forEach((h) => {
+          // Ngày nghỉ mới được phép mở bằng đóng; ngày mở cửa mà đóng trước giờ
+          // mở thì mọi khung đặt lịch của ngày đó rỗng, và không có gì báo.
+          if (!h.is_closed) expect(h.close > h.open).toBe(true);
+        });
+      }
+    });
   });
 
   it('bốn kịch bản lệch đường đều có nhãn và hàm chạy', () => {
