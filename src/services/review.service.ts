@@ -202,10 +202,18 @@ export async function listCustomerReviews(
 
 export function maskName(fullName: string): string {
   const tokens = fullName.trim().split(/\s+/);
-  if (tokens.length <= 1) return fullName;
+  if (tokens.length === 0) return '';
+  if (tokens.length === 1) return tokens[0];
+
   const ho = tokens[0];
-  const rest = tokens.slice(1);
-  return `${rest.join(' ')} ${ho[0]}.`;
+  const ten = tokens[tokens.length - 1];
+
+  if (tokens.length >= 3) {
+    const dem = tokens[1];
+    return `${ho} ${dem[0]}. ${ten[0]}.`;
+  }
+
+  return `${ho} ${ten[0]}.`;
 }
 
 // ── US3: Public cafe review aggregate ────────────────────────────────────────
@@ -250,7 +258,9 @@ export async function getCafeAggregate(cafeId: string): Promise<CafeAggregate> {
 
 export interface PublicReview {
   id: string;
+  customerId: string;
   customerName: string;
+  fullName: string;
   overallScore: number;
   vehicleScore: number | null;
   staffScore: number | null;
@@ -267,9 +277,11 @@ export async function getCafeReviews(
   const offset = (page - 1) * limit;
 
   const [rows, [{ count }]] = await Promise.all([
-    AppDataSource.query<(PublicReview & { full_name: string })[]>(
+    AppDataSource.query<(PublicReview & { full_name: string; customer_id: string })[]>(
       `SELECT
          r.id,
+         r.customer_id AS "customerId",
+         u.full_name AS "fullName",
          u.full_name,
          r.rating AS "overallScore",
          r.vehicle_score AS "vehicleScore",
@@ -290,7 +302,12 @@ export async function getCafeReviews(
     ),
   ]);
 
-  const data = rows.map((r) => ({ ...r, customerName: maskName(r.full_name) }));
+  const data = rows.map((r) => ({
+    ...r,
+    customerId: r.customerId,
+    fullName: r.fullName,
+    customerName: r.fullName, // Hiển thị đầy đủ tên thật không che theo yêu cầu
+  }));
   return { data, total: parseInt(count, 10) };
 }
 
