@@ -204,15 +204,15 @@ export function maskName(fullName: string): string {
   const tokens = fullName.trim().split(/\s+/);
   if (tokens.length === 0) return '';
   if (tokens.length === 1) return tokens[0];
-  
+
   const ho = tokens[0];
   const ten = tokens[tokens.length - 1];
-  
+
   if (tokens.length >= 3) {
     const dem = tokens[1];
     return `${ho} ${dem[0]}. ${ten[0]}.`;
   }
-  
+
   return `${ho} ${ten[0]}.`;
 }
 

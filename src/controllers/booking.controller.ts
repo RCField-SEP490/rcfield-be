@@ -333,20 +333,28 @@ export const bookingController = {
       }
 
       // Load related records
-      const [rawParticipants, vehicles, components, fnbOrders, cafe, session, transactions, review] =
-        await Promise.all([
-          AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
-          AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
-          AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
-          AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
-          AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
-          AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
-          AppDataSource.getRepository(PaymentTransaction).find({
-            where: { bookingId },
-            order: { createdAt: 'ASC' },
-          }),
-          AppDataSource.getRepository(Review).findOne({ where: { bookingId } }),
-        ]);
+      const [
+        rawParticipants,
+        vehicles,
+        components,
+        fnbOrders,
+        cafe,
+        session,
+        transactions,
+        review,
+      ] = await Promise.all([
+        AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
+        AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
+        AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
+        AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
+        AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
+        AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
+        AppDataSource.getRepository(PaymentTransaction).find({
+          where: { bookingId },
+          order: { createdAt: 'ASC' },
+        }),
+        AppDataSource.getRepository(Review).findOne({ where: { bookingId } }),
+      ]);
 
       // Damage/inspection details are handled by the cafe's staff team. Providers
       // do not participate in disputes and must not receive this breakdown.
