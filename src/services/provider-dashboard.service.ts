@@ -205,27 +205,49 @@ export async function getProviderRevenueTrend(
     truncUnit = 'month';
   }
 
+  // Dùng generate_series để tạo đủ tất cả nhãn thời gian trong khoảng,
+  // sau đó LEFT JOIN với dữ liệu thực tế → các khoảng không có booking sẽ được fill 0.
+  const intervalUnit =
+    truncUnit === 'week' ? '1 week' : truncUnit === 'month' ? '1 month' : '1 day';
+
   const query = `
+    WITH series AS (
+      SELECT generate_series(
+        DATE_TRUNC($2, $4::timestamptz),
+        DATE_TRUNC($2, $5::timestamptz),
+        $7::interval
+      ) AS period_start
+    ),
+    booking_revenue AS (
+      SELECT
+        DATE_TRUNC($2, b.slot_start) AS period,
+        COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN pc.amount END), 0)::float       AS "slotFee",
+        COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN pc.amount END), 0)::float     AS "rentalFee",
+        COALESCE(SUM(CASE WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN pc.amount END), 0)::float AS "fnbPreorder",
+        COALESCE(SUM(CASE WHEN pc.type = 'EXTENSION_FEE' THEN pc.amount END), 0)::float  AS "extensionFee",
+        COALESCE(SUM(CASE WHEN pc.type = 'DAMAGE_CHARGE' THEN pc.amount END), 0)::float  AS "damageCharge"
+      FROM bookings b
+      JOIN payment_components pc ON pc.booking_id = b.id
+      JOIN cafes c ON c.id = b.cafe_id
+      WHERE c.provider_id = $3
+        AND pc.status IN ('HELD', 'DISBURSED')
+        AND pc.type != 'SECURITY_DEPOSIT'
+        AND b.slot_start >= $4::timestamptz
+        AND b.slot_start <= $5::timestamptz
+        AND ($6::uuid IS NULL OR b.cafe_id = $6::uuid)
+      GROUP BY DATE_TRUNC($2, b.slot_start)
+    )
     SELECT
-      TO_CHAR(b.slot_start, $1) AS "label",
-      COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN pc.amount END), 0)::float AS "slotFee",
-      COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN pc.amount END), 0)::float AS "rentalFee",
-      COALESCE(SUM(CASE WHEN pc.type = 'FNB_PREORDER' THEN pc.amount END), 0)::float AS "fnbPreorder",
-      COALESCE(SUM(CASE WHEN pc.type = 'EXTENSION_FEE' THEN pc.amount END), 0)::float AS "extensionFee",
-      COALESCE(SUM(CASE WHEN pc.type = 'DAMAGE_CHARGE' THEN pc.amount END), 0)::float AS "damageCharge",
-      COALESCE(SUM(pc.amount), 0)::float AS "total",
-      DATE_TRUNC($2, b.slot_start) as "trunc_date"
-    FROM bookings b
-    JOIN payment_components pc ON pc.booking_id = b.id
-    JOIN cafes c ON c.id = b.cafe_id
-    WHERE c.provider_id = $3
-      AND pc.status IN ('HELD', 'DISBURSED')
-      AND pc.type != 'SECURITY_DEPOSIT'
-      AND b.slot_start >= $4::timestamptz
-      AND b.slot_start <= $5::timestamptz
-      AND ($6::uuid IS NULL OR b.cafe_id = $6)
-    GROUP BY TO_CHAR(b.slot_start, $1), DATE_TRUNC($2, b.slot_start)
-    ORDER BY "trunc_date" ASC
+      TO_CHAR(s.period_start, $1)           AS "label",
+      COALESCE(br."slotFee", 0)             AS "slotFee",
+      COALESCE(br."rentalFee", 0)           AS "rentalFee",
+      COALESCE(br."fnbPreorder", 0)         AS "fnbPreorder",
+      COALESCE(br."extensionFee", 0)        AS "extensionFee",
+      COALESCE(br."damageCharge", 0)        AS "damageCharge",
+      s.period_start                        AS "trunc_date"
+    FROM series s
+    LEFT JOIN booking_revenue br ON br.period = s.period_start
+    ORDER BY s.period_start ASC
   `;
 
   const rows = await AppDataSource.query<
@@ -236,27 +258,46 @@ export async function getProviderRevenueTrend(
       fnbPreorder: number;
       extensionFee: number;
       damageCharge: number;
-      total: number;
     }[]
-  >(query, [groupFormat, truncUnit, providerId, fromDate, toDate, cafeId || null]);
+  >(query, [groupFormat, truncUnit, providerId, fromDate, toDate, cafeId || null, intervalUnit]);
 
-  // Query package purchases trend
+  // Query package purchases trend — cũng dùng generate_series để fill 0 đủ kỳ
+  const pkgQuery = `
+    WITH series AS (
+      SELECT generate_series(
+        DATE_TRUNC($2, $3::timestamptz),
+        DATE_TRUNC($2, $4::timestamptz),
+        $6::interval
+      ) AS period_start
+    ),
+    pkg_revenue AS (
+      SELECT
+        DATE_TRUNC($2, cp.created_at) AS period,
+        COALESCE(SUM(cp.purchased_price), 0)::float AS "packageFee"
+      FROM customer_packages cp
+      JOIN cafes c ON c.id = cp.cafe_id
+      WHERE c.provider_id = $1
+        AND cp.status IN ('ACTIVE', 'EXHAUSTED')
+        AND cp.created_at >= $3::timestamptz
+        AND cp.created_at <= $4::timestamptz
+        AND ($5::uuid IS NULL OR cp.cafe_id = $5::uuid)
+      GROUP BY DATE_TRUNC($2, cp.created_at)
+    )
+    SELECT
+      TO_CHAR(s.period_start, $7) AS "label",
+      COALESCE(pr."packageFee", 0) AS "packageFee"
+    FROM series s
+    LEFT JOIN pkg_revenue pr ON pr.period = s.period_start
+    ORDER BY s.period_start ASC
+  `;
+
   const pkgTrendRows = await AppDataSource.query<{ label: string; packageFee: number }[]>(
-    `SELECT
-       TO_CHAR(cp.created_at, $1) AS "label",
-       COALESCE(SUM(cp.purchased_price), 0)::float AS "packageFee"
-     FROM customer_packages cp
-     JOIN cafes c ON c.id = cp.cafe_id
-     WHERE c.provider_id = $2
-       AND cp.status IN ('ACTIVE', 'EXHAUSTED')
-       AND cp.created_at >= $3::timestamptz
-       AND cp.created_at <= $4::timestamptz
-       AND ($5::uuid IS NULL OR cp.cafe_id = $5)
-     GROUP BY TO_CHAR(cp.created_at, $1)`,
-    [groupFormat, providerId, fromDate, toDate, cafeId || null],
+    pkgQuery,
+    [providerId, truncUnit, fromDate, toDate, cafeId || null, intervalUnit, groupFormat],
   );
   const pkgMap = new Map(pkgTrendRows.map((r) => [r.label, Number(r.packageFee)]));
 
+  // Lấy tập nhãn từ series chính (đã đủ tất cả khoảng), merge packageFee
   return rows.map((row) => {
     const packageFee = pkgMap.get(row.label) || 0;
     const slotFee = Number(row.slotFee);
@@ -289,11 +330,14 @@ export async function getProviderRevenueBreakdown(
 
   const query = `
     SELECT
-      pc.type,
+      CASE
+        WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN 'FNB_PREORDER'
+        ELSE pc.type
+      END AS "type",
       CASE
         WHEN pc.type = 'SLOT_FEE' THEN 'Phí sân'
         WHEN pc.type = 'RENTAL_FEE' THEN 'Thuê xe'
-        WHEN pc.type = 'FNB_PREORDER' THEN 'F&B'
+        WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN 'F&B'
         WHEN pc.type = 'EXTENSION_FEE' THEN 'Phí gia hạn'
         WHEN pc.type = 'DAMAGE_CHARGE' THEN 'Phí bồi thường'
         ELSE pc.type::text
@@ -308,7 +352,19 @@ export async function getProviderRevenueBreakdown(
       AND b.slot_start >= $2::timestamptz
       AND b.slot_start <= $3::timestamptz
       AND ($4::uuid IS NULL OR b.cafe_id = $4)
-    GROUP BY pc.type
+    GROUP BY 
+      CASE
+        WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN 'FNB_PREORDER'
+        ELSE pc.type
+      END,
+      CASE
+        WHEN pc.type = 'SLOT_FEE' THEN 'Phí sân'
+        WHEN pc.type = 'RENTAL_FEE' THEN 'Thuê xe'
+        WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN 'F&B'
+        WHEN pc.type = 'EXTENSION_FEE' THEN 'Phí gia hạn'
+        WHEN pc.type = 'DAMAGE_CHARGE' THEN 'Phí bồi thường'
+        ELSE pc.type::text
+      END
   `;
 
   const rows = await AppDataSource.query<
