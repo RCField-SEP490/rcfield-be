@@ -38,6 +38,7 @@ import { contestRouter } from './contest.routes';
 import { racingNetworkRouter } from './racing-network.routes';
 import { featuredPopupRouter } from './featured-popup.routes';
 import { seoController } from '../controllers/seo.controller';
+import { getRecentReviews } from '../controllers/review.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -114,6 +115,8 @@ router.get('/track-types', async (_req, res, next) => {
     next(err);
   }
 });
+
+router.get('/reviews/recent', getRecentReviews);
 
 router.use('/auth', authRouter);
 router.use('/auth/staff-invite', staffInviteRouter);

@@ -153,3 +153,18 @@ export async function getCafeReviews(
     next(err);
   }
 }
+
+// GET /api/v1/reviews/recent  [public]
+export async function getRecentReviews(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit ?? 5), 10), 20);
+    const result = await reviewService.getRecentReviews(limit);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+}
