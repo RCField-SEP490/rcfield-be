@@ -311,6 +311,52 @@ export async function getCafeReviews(
   return { data, total: parseInt(count, 10) };
 }
 
+// ── Public recent reviews (dành cho HomeScreen mobile) ────────────────────────
+export async function getRecentReviews(
+  limit: number,
+): Promise<{ data: (PublicReview & { cafeName: string })[] }> {
+  const rows = await AppDataSource.query<
+    (PublicReview & { full_name: string; customer_id: string; cafeName: string })[]
+  >(
+    `SELECT
+       r.id,
+       r.customer_id AS "customerId",
+       u.full_name AS "fullName",
+       r.rating AS "overallScore",
+       r.vehicle_score AS "vehicleScore",
+       r.staff_score AS "staffScore",
+       r.facility_score AS "facilityScore",
+       r.note,
+       r.created_at AS "createdAt",
+       c.name AS "cafeName"
+     FROM reviews r
+     JOIN users u ON u.id = r.customer_id
+     JOIN cafes c ON c.id = r.cafe_id
+     WHERE r.status = 'VISIBLE'
+       AND r.note IS NOT NULL
+       AND r.note <> ''
+     ORDER BY r.created_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+
+  const data = rows.map((r) => ({
+    id: r.id,
+    customerId: r.customerId,
+    customerName: r.fullName,
+    fullName: r.fullName,
+    overallScore: r.overallScore,
+    vehicleScore: r.vehicleScore,
+    staffScore: r.staffScore,
+    facilityScore: r.facilityScore,
+    note: r.note,
+    createdAt: r.createdAt,
+    cafeName: r.cafeName,
+  }));
+
+  return { data };
+}
+
 // ── US4: Provider review list ─────────────────────────────────────────────────
 
 export interface ProviderReviewItem {
@@ -418,7 +464,7 @@ export async function getProviderReviews(
 
   const data: ProviderReviewItem[] = rows.map((r) => ({
     ...r,
-    customerName: maskName(r.fullName),
+    customerName: r.fullName,
   }));
 
   return { data, total: parseInt(count, 10), newSince24h: parseInt(newCount, 10) };
