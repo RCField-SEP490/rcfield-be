@@ -149,12 +149,20 @@ export const env = {
   /**
    * Công cụ nội bộ dựng dữ liệu thử (Contest Lab).
    *
-   * Mặc định bật ở mọi môi trường TRỪ production. Nó chỉ gọi lại API công khai
-   * bằng token đăng nhập thật nên không mở thêm quyền nào, nhưng vẫn tắt ở
-   * production vì đây là công cụ của người phát triển, không phải tính năng.
+   * Mặc định bật ở mọi môi trường TRỪ production, vì đây là công cụ của người
+   * phát triển chứ không phải tính năng. Bật ở production bằng
+   * `DEV_TOOLS_ENABLED=true` khi cần dựng dữ liệu demo trên môi trường thật.
+   *
+   * Trang không tự có quyền gì — mọi lời gọi đều mang token đăng nhập người
+   * dùng tự nhập, nên nó không mở thêm cửa nào so với việc gọi API trực tiếp.
+   * Nhưng nó vẫn phơi ra một bảng điều khiển trên tên miền thật, nên khai
+   * `DEV_TOOLS_TOKEN` để chỉ ai cầm khoá mới mở được trang.
+   * Bỏ trống khoá thì trang mở tự do — chấp nhận được ở máy phát triển, không
+   * nên ở production.
    */
   devTools: {
     enabled: parseBoolean(process.env.DEV_TOOLS_ENABLED, nodeEnv !== 'production'),
+    token: process.env.DEV_TOOLS_TOKEN ?? '',
   },
 } as const;
 

@@ -315,6 +315,7 @@ const html = `<!doctype html>
  td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}
  .pill.ok{background:#d1fae5;color:#047857} .pill.bad{background:#fee2e2;color:#b91c1c}
+ .pill.warn{background:#fef3c7;color:#92400e}
  .note{background:#fff;border:1px solid #e5e2e1;border-left:3px solid #c4c7c8;border-radius:8px;padding:12px 16px;color:#5d5f5f;font-size:13px}
  code{background:#f6f3f2;padding:1px 5px;border-radius:4px;font-size:12px}
 </style></head><body><div class="wrap">
@@ -365,14 +366,21 @@ ${
  <div class="card"><div class="k">Tổng endpoint</div><div class="v">${apiCoverage.total}</div></div>
  <div class="card"><div class="k">Tỷ lệ</div><div class="v ${apiCoverage.pct >= 60 ? 'ok' : ''}">${apiCoverage.pct}%</div></div>
 </div>
-<table style="margin-top:12px"><tr><th>Miền</th><th class="num">Đã phủ</th><th class="num">Tổng</th><th class="num">Tỷ lệ</th></tr>
+<p class="lead">Xếp theo <strong>số endpoint còn thiếu</strong> — đó là khối lượng việc còn lại, và cũng là thứ tự rủi ro. Xếp theo phần trăm thì một miền 0/1 nằm ngang hàng với miền 4/45.</p>
+<table style="margin-top:12px"><tr><th>Miền</th><th class="num">Còn thiếu</th><th class="num">Đã phủ</th><th class="num">Tổng</th><th class="num">Tỷ lệ</th></tr>
 ${apiCoverage.domains
-  .map(
-    (d) =>
-      `<tr><td><code>${escapeHtml(d.name)}</code></td><td class="num">${d.covered}</td><td class="num">${d.total}</td><td class="num"><span class="pill ${d.pct >= 60 ? 'ok' : 'bad'}">${d.pct}%</span></td></tr>`,
-  )
+  .map((d) => {
+    // Ba mức, không phải đạt/hỏng. Bảng chỉ hai màu thì mọi thứ dưới chuẩn đều
+    // đỏ như nhau, và người đọc không thấy được chỗ nào đáng lo trước.
+    const cls = d.level === 'ok' ? 'ok' : d.level === 'warn' ? 'warn' : 'bad';
+    return `<tr><td><code>${escapeHtml(d.name)}</code></td><td class="num">${d.missing || '—'}</td><td class="num">${d.covered}</td><td class="num">${d.total}</td><td class="num"><span class="pill ${cls}">${d.pct}%</span></td></tr>`;
+  })
   .join('\n')}
 </table>
+<p class="lead" style="margin-top:10px">
+  Đây là số liệu để biết còn phải viết thêm ở đâu, không phải điểm đánh giá chất lượng.
+  Endpoint chưa có kiểm thử tích hợp không có nghĩa là nó hỏng — nghĩa là chưa ai gọi thử qua HTTP.
+</p>
 `
     : ''
 }
