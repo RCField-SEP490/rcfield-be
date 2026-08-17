@@ -202,10 +202,18 @@ export async function listCustomerReviews(
 
 export function maskName(fullName: string): string {
   const tokens = fullName.trim().split(/\s+/);
-  if (tokens.length <= 1) return fullName;
+  if (tokens.length === 0) return '';
+  if (tokens.length === 1) return tokens[0];
+
   const ho = tokens[0];
-  const rest = tokens.slice(1);
-  return `${rest.join(' ')} ${ho[0]}.`;
+  const ten = tokens[tokens.length - 1];
+
+  if (tokens.length >= 3) {
+    const dem = tokens[1];
+    return `${ho} ${dem[0]}. ${ten[0]}.`;
+  }
+
+  return `${ho} ${ten[0]}.`;
 }
 
 // ── US3: Public cafe review aggregate ────────────────────────────────────────
@@ -250,7 +258,9 @@ export async function getCafeAggregate(cafeId: string): Promise<CafeAggregate> {
 
 export interface PublicReview {
   id: string;
+  customerId: string;
   customerName: string;
+  fullName: string;
   overallScore: number;
   vehicleScore: number | null;
   staffScore: number | null;
@@ -267,9 +277,11 @@ export async function getCafeReviews(
   const offset = (page - 1) * limit;
 
   const [rows, [{ count }]] = await Promise.all([
-    AppDataSource.query<(PublicReview & { full_name: string })[]>(
+    AppDataSource.query<(PublicReview & { full_name: string; customer_id: string })[]>(
       `SELECT
          r.id,
+         r.customer_id AS "customerId",
+         u.full_name AS "fullName",
          u.full_name,
          r.rating AS "overallScore",
          r.vehicle_score AS "vehicleScore",
@@ -290,8 +302,59 @@ export async function getCafeReviews(
     ),
   ]);
 
-  const data = rows.map((r) => ({ ...r, customerName: maskName(r.full_name) }));
+  const data = rows.map((r) => ({
+    ...r,
+    customerId: r.customerId,
+    fullName: r.fullName,
+    customerName: r.fullName, // Hiển thị đầy đủ tên thật không che theo yêu cầu
+  }));
   return { data, total: parseInt(count, 10) };
+}
+
+// ── Public recent reviews (dành cho HomeScreen mobile) ────────────────────────
+export async function getRecentReviews(
+  limit: number,
+): Promise<{ data: (PublicReview & { cafeName: string })[] }> {
+  const rows = await AppDataSource.query<
+    (PublicReview & { full_name: string; customer_id: string; cafeName: string })[]
+  >(
+    `SELECT
+       r.id,
+       r.customer_id AS "customerId",
+       u.full_name AS "fullName",
+       r.rating AS "overallScore",
+       r.vehicle_score AS "vehicleScore",
+       r.staff_score AS "staffScore",
+       r.facility_score AS "facilityScore",
+       r.note,
+       r.created_at AS "createdAt",
+       c.name AS "cafeName"
+     FROM reviews r
+     JOIN users u ON u.id = r.customer_id
+     JOIN cafes c ON c.id = r.cafe_id
+     WHERE r.status = 'VISIBLE'
+       AND r.note IS NOT NULL
+       AND r.note <> ''
+     ORDER BY r.created_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+
+  const data = rows.map((r) => ({
+    id: r.id,
+    customerId: r.customerId,
+    customerName: r.fullName,
+    fullName: r.fullName,
+    overallScore: r.overallScore,
+    vehicleScore: r.vehicleScore,
+    staffScore: r.staffScore,
+    facilityScore: r.facilityScore,
+    note: r.note,
+    createdAt: r.createdAt,
+    cafeName: r.cafeName,
+  }));
+
+  return { data };
 }
 
 // ── US4: Provider review list ─────────────────────────────────────────────────
@@ -401,7 +464,7 @@ export async function getProviderReviews(
 
   const data: ProviderReviewItem[] = rows.map((r) => ({
     ...r,
-    customerName: maskName(r.fullName),
+    customerName: r.fullName,
   }));
 
   return { data, total: parseInt(count, 10), newSince24h: parseInt(newCount, 10) };

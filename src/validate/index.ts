@@ -1915,3 +1915,24 @@ export const AdminLedgerQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
+
+// ── admin quản lý người dùng ──────────────────────────────────────────────────
+
+export const AdminUserQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+  q: z.string().trim().max(255).optional(),
+  status: z.enum(['active', 'locked']).optional(),
+  sort: z.enum(['newest', 'risk']).optional().default('newest'),
+});
+
+/**
+ * Lý do là BẮT BUỘC và phải viết cho ra hồn.
+ *
+ * Khoá tài khoản là chặn người ta dùng dịch vụ. Cho phép lý do rỗng hay "abc"
+ * thì ô này thành thủ tục, và nhật ký kỷ luật mất sạch giá trị đúng lúc cần
+ * nhất — khi khách khiếu nại.
+ */
+export const ModerateUserSchema = z.object({
+  reason: z.string().trim().min(10, 'Nêu lý do cụ thể, ít nhất 10 ký tự').max(1000),
+});

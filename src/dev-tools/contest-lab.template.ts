@@ -239,10 +239,19 @@ contest.customer4@gmail.com</textarea>
           <option value="MIXED">Cả hai</option>
         </select></div>
       </div>
-      <div class="grid2">
-        <div><label>Phí dự thi mỗi người (đ)</label><input id="cFee" type="number" value="0"></div>
+      <div class="grid3">
+        <div><label>Phí dự thi mỗi người (đ)</label><input id="cFee" type="number" value="150000"></div>
+        <div><label>Phí dự thi xử lý thế nào</label><select id="cFeeMode">
+          <option value="paid">Đã thu tiền — MARKED_PAID</option>
+          <option value="waived">Miễn phí — WAIVED</option>
+          <option value="unpaid">Để nguyên chưa trả — PENDING_PAYMENT</option>
+        </select></div>
         <div><label>Giải bắt đầu sau (ngày)</label><input id="cDays" type="number" value="7"></div>
       </div>
+      <p class="hint">Để phí bằng <code>0</code> thì mọi đăng ký nằm ở <code>NOT_REQUIRED</code> —
+        giải không thu đồng nào và mọi màn hình tiền đều trống. Chọn
+        <b>Để nguyên chưa trả</b> thì bước duyệt sau sẽ bị chặn bằng
+        <code>ENTRY_FEE_PENDING</code>, đúng như thiết kế.</p>
       <label>Ảnh xe cá nhân — dùng khi vận động viên mang xe riêng</label>
       <input id="byocPhoto"
         value="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTk0T_b5O3R4fn0f8nZ13zRY8TNzvPkkvQIPjxoqwzVdw&amp;s=10">
@@ -875,15 +884,30 @@ const STEPS = [
     },
   },
   {
-    name: 'Xử lý phí dự thi — miễn phí cho nhanh',
-    api: 'POST /contest-registrations/:id/waive-entry-fee',
+    name: 'Xử lý phí dự thi',
+    api: 'POST /contest-registrations/:id/mark-entry-fee-paid · /waive-entry-fee',
     run: async () => {
       if (effectiveEntryFee() <= 0) return 'giải không thu phí, bỏ qua';
-      for (const r of ctx.registrations) {
-        await call('POST', '/contest-registrations/' + r.id + '/waive-entry-fee',
-          { note: 'Miễn phí từ Contest Lab' }, ctx.providerToken);
+
+      // Mặc định là ĐÃ THU, không phải miễn phí. Miễn phí là ngoại lệ do ban tổ
+      // chức quyết, còn giải thật thì vận động viên đóng tiền — dựng toàn bộ ở
+      // WAIVED làm mọi màn hình doanh thu trống trơn và báo cáo thu chi vô nghĩa.
+      const mode = $('cFeeMode').value;
+      if (mode === 'unpaid') {
+        return 'để nguyên PENDING_PAYMENT — bước duyệt sau sẽ bị chặn bằng ' +
+          'ENTRY_FEE_PENDING, đúng như thiết kế';
       }
-      return 'đã miễn phí cho ' + ctx.registrations.length + ' người';
+
+      const path = mode === 'waived' ? '/waive-entry-fee' : '/mark-entry-fee-paid';
+      const note = mode === 'waived' ? 'Miễn phí từ Contest Lab' : 'Đã thu phí dự thi';
+      for (const r of ctx.registrations) {
+        await call('POST', '/contest-registrations/' + r.id + path, { note }, ctx.providerToken);
+      }
+      const tong = effectiveEntryFee() * ctx.registrations.length;
+      return mode === 'waived'
+        ? 'đã miễn phí cho ' + ctx.registrations.length + ' người'
+        : 'đã thu ' + tong.toLocaleString('vi-VN') + 'đ của ' +
+          ctx.registrations.length + ' người';
     },
   },
   {
@@ -2111,7 +2135,7 @@ $('btnCopy').onclick = () => navigator.clipboard.writeText(logBox.innerText);
 const SAVE_KEY = 'rcfield-contest-lab';
 const FORM_IDS = ['pMode', 'pEmail', 'pPwd', 'aEmail', 'aPwd', 'athPwd', 'athletes',
   'cName', 'cCap', 'cType', 'cFormat', 'cTemplate', 'cCafe', 'cTrack', 'cPolicy',
-  'cFee', 'cDays', 'byocPhoto',
+  'cFee', 'cFeeMode', 'cDays', 'byocPhoto',
   'bDraft', 'bOpen', 'bApproved', 'bClosed', 'bRunning', 'bCompleted', 'bCancelled',
   'genCount', 'genDomain', 'genPwd',
   'cfCount', 'cfCity', 'cfUnits'];
@@ -2194,7 +2218,7 @@ if (saved) {
 loadCatalog()
   .then(() => {
     if (saved && saved.form) {
-      ['cType', 'cFormat', 'cTemplate', 'cCafe', 'cPolicy'].forEach((id) => {
+      ['cType', 'cFormat', 'cTemplate', 'cCafe', 'cPolicy', 'cFeeMode', 'cfCity'].forEach((id) => {
         if (saved.form[id]) $(id).value = saved.form[id];
       });
       return loadTrackTypesForCafe().then(() => {

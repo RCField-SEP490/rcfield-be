@@ -8,6 +8,7 @@ import { providerOnboardingRouter } from './provider-onboarding.routes';
 import { businessLookupRouter } from './business-lookup.routes';
 import { adminProviderRouter } from './admin-provider.routes';
 import { adminPaymentRequestRouter } from './admin-payment-request.routes';
+import { adminUserRouter } from './admin-user.routes';
 import { notificationRouter } from './notification.routes';
 import { providerSubscriptionRouter } from './provider-subscription.routes';
 import { staffInviteRouter } from './staff-invite.routes';
@@ -37,6 +38,7 @@ import { contestRouter } from './contest.routes';
 import { racingNetworkRouter } from './racing-network.routes';
 import { featuredPopupRouter } from './featured-popup.routes';
 import { seoController } from '../controllers/seo.controller';
+import { getRecentReviews } from '../controllers/review.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { UserRole } from '../types';
 import { AppDataSource } from '../config/database';
@@ -114,12 +116,15 @@ router.get('/track-types', async (_req, res, next) => {
   }
 });
 
+router.get('/reviews/recent', getRecentReviews);
+
 router.use('/auth', authRouter);
 router.use('/auth/staff-invite', staffInviteRouter);
 router.use('/auth', providerOnboardingRouter);
 router.use('/business-lookup', businessLookupRouter);
 router.use('/admin/providers', adminProviderRouter);
 router.use('/admin/payment-requests', adminPaymentRequestRouter);
+router.use('/admin/users', adminUserRouter);
 router.use('/admin/subscription-plans', adminSubscriptionPlanRouter);
 router.use('/admin/amenities', adminAmenityRouter);
 router.use('/admin/track-types', adminTrackTypeRouter);

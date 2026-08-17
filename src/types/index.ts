@@ -718,3 +718,15 @@ export class AppError extends Error {
     this.name = 'AppError';
   }
 }
+
+/**
+ * Hành động admin thực hiện trên tài khoản người dùng.
+ *
+ * Khoá dùng lại đúng cờ `users.is_active` mà luồng đăng nhập đã kiểm
+ * (`auth.service.ts:150`), nên không phải dựng thêm cơ chế chặn nào — người bị
+ * khoá nhận `ACCOUNT_LOCKED` ngay ở bước đăng nhập.
+ */
+export enum UserModerationAction {
+  LOCK = 'LOCK',
+  UNLOCK = 'UNLOCK',
+}
