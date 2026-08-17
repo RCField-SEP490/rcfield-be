@@ -1,5 +1,7 @@
 import cron from 'node-cron';
 import { AppDataSource } from '../config/database';
+import { env } from '../config/env';
+import { writeContestAudit } from '../services/contest.helpers';
 import { logger } from '../config/logger';
 import { cancelContestRegistrationOnBookingCancel, transition } from '../services/booking.service';
 import { processRefund } from '../services/payment.service';
@@ -178,11 +180,74 @@ async function expireStaleExtensionProposals(): Promise<void> {
   }
 }
 
+/**
+ * Nhả suất giải của người đăng ký rồi bỏ dở khâu trả phí dự thi.
+ *
+ * Khách đóng tab giữa chừng thì cổng thanh toán KHÔNG gọi lại gì cả — không có
+ * tín hiệu nào để bắt. Chỉ còn cách đợi hết cửa sổ thanh toán rồi dọn, giống
+ * hệt cách đơn đặt sân chưa trả tiền được nhả chỗ.
+ *
+ * Ba nhóm cố ý không đụng tới:
+ *  · phí đã xong (đã thu / miễn / đang chờ đối soát) — không có gì để quá hạn;
+ *  · giải miễn phí, `entry_fee_amount = 0`;
+ *  · đăng ký có `booking_id` — phí gộp trong đơn đặt, và đơn đó đã có cơ chế
+ *    hết hạn riêng. Dọn ở cả hai nơi là hai đường cùng huỷ một thứ.
+ *
+ * Trả về số suất đã nhả, để chỗ gọi còn ghi log và test còn kiểm được.
+ */
+export async function expireUnpaidContestRegistrations(): Promise<number> {
+  const raw = await AppDataSource.query(
+    `UPDATE contest_registrations
+        SET status = 'CANCELLED',
+            cancelled_at = NOW(),
+            cancellation_reason = 'Quá hạn thanh toán phí dự thi',
+            updated_at = NOW()
+      WHERE status <> 'CANCELLED'
+        AND payment_status = 'PENDING_PAYMENT'
+        AND entry_fee_amount > 0
+        AND booking_id IS NULL
+        AND created_at < NOW() - ($1 || ' minutes')::interval
+      RETURNING id, contest_id`,
+    [String(env.platform.paymentWindowMinutes)],
+  );
+  // TypeORM trả [rows[], rowCount] cho câu UPDATE — lấy thẳng biến vào sẽ ra
+  // một MẢNG LỒNG, và `rows[0].contest_id` là undefined. Ghi nhật ký hỏng lặng
+  // lẽ vì lỗi đã bị bắt và chỉ log lại.
+  const rows: { id: string; contest_id: string }[] = Array.isArray(raw[0]) ? raw[0] : raw;
+
+  for (const row of rows) {
+    await writeContestAudit({
+      contestId: row.contest_id,
+      registrationId: row.id,
+      actorId: null,
+      actorRole: 'SYSTEM',
+      eventType: 'registration.cancelled_unpaid_entry_fee',
+      afterJson: { status: 'CANCELLED' },
+      reason: 'Quá hạn thanh toán phí dự thi',
+    }).catch((err) =>
+      logger.error('BookingTimeout', `audit write failed registrationId=${row.id}`, err),
+    );
+  }
+
+  if (rows.length) {
+    logger.info('BookingTimeout', `nhả ${rows.length} suất giải do quá hạn trả phí dự thi`);
+  }
+  return rows.length;
+}
+
 /** Runs every minute — expires PENDING bookings and marks CONFIRMED no-shows */
 export function scheduleBookingTimeout(): void {
   cron.schedule('* * * * *', async () => {
     try {
-      await processExpiredBookings();
+      // Mỗi việc tự chịu lỗi của mình. Gộp chung một try thì việc đầu tiên
+      // ném lỗi là những việc sau KHÔNG chạy lần nào nữa — im lặng, mỗi phút,
+      // mãi mãi. Nhìn từ ngoài chỉ thấy "job không làm gì cả".
+      await processExpiredBookings().catch((err) =>
+        logger.error('BookingTimeout', 'processExpiredBookings failed', err),
+      );
+      await expireUnpaidContestRegistrations().catch((err) =>
+        logger.error('BookingTimeout', 'expireUnpaidContestRegistrations failed', err),
+      );
 
       // NO_SHOW is only for a customer who never checked in. Once a staff member
       // starts handover, the customer may already be physically present; marking

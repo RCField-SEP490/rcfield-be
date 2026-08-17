@@ -27,6 +27,12 @@ textarea{font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:70px
 .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
 @media(max-width:700px){.grid4{grid-template-columns:1fr 1fr}}
 .tabs{display:flex;gap:6px;margin-bottom:14px}
+details>summary{cursor:pointer;font-size:12px;font-weight:700;color:#8fa3bf;
+     text-transform:uppercase;letter-spacing:.06em;list-style:none;padding:2px 0}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:'▸ ';color:#5b7089}
+details[open]>summary::before{content:'▾ '}
+details>summary:hover{color:#cfe0f5}
 .tab{background:#131c2e;border:1px solid #2b3648;color:#8fa3bf;font-weight:600;
      padding:9px 18px;border-radius:8px;cursor:pointer}
 .tab.on{background:#1d6feb;border-color:#1d6feb;color:#fff}
@@ -193,6 +199,10 @@ export function renderContestLab(assetQuery = ''): string {
       </div>
       <p class="hint" id="provStatus">Chưa đăng nhập — ô chi nhánh ở mục 2 còn trống.
         Chi nhánh của provider khác không hiện ra, vì chọn nhầm là tạo giải bị từ chối.</p>
+    </div>
+
+    <div class="panel">
+      <h2>2 · Vận động viên</h2>
       <div class="grid2">
         <div><label>Mật khẩu chung của vận động viên</label><input id="athPwd" value="123456"></div>
         <div><label>&nbsp;</label>
@@ -220,7 +230,7 @@ contest.customer4@gmail.com</textarea>
     </div>
 
     <div class="panel">
-      <h2>2 · Thông tin giải</h2>
+      <h2>3 · Thông tin giải</h2>
       <div class="grid2">
         <div><label>Tên giải</label><input id="cName" value="Giải thử nghiệm"></div>
         <div><label>Sức chứa</label><input id="cCap" type="number" value="16"></div>
@@ -263,22 +273,7 @@ contest.customer4@gmail.com</textarea>
     </div>
 
     <div class="panel">
-      <h2>Giải đã dựng trong phiên</h2>
-      <div id="builtBox" class="hint">Chưa dựng giải nào.</div>
-    </div>
-
-    <div class="panel" id="resumePanel" style="display:none">
-      <h2>Giải đang dở</h2>
-      <p class="hint" id="resumeInfo" style="margin:0"></p>
-      <div class="row">
-        <button class="ghost" id="btnRefreshContest">Xem trạng thái hiện tại</button>
-        <button class="warn" id="btnNewContest">Bỏ, bắt đầu giải mới</button>
-      </div>
-      <p class="hint">Bấm một nút ở mục dưới sẽ chạy tiếp trên chính giải này, không tạo giải mới.</p>
-    </div>
-
-    <div class="panel">
-      <h2>3 · Dừng ở trạng thái nào</h2>
+      <h2>4 · Chạy tới một trạng thái</h2>
       <div class="row">
         <button class="ghost" data-goto="5">DRAFT — vừa tạo</button>
         <button class="ghost" data-goto="9">OPEN — đang mở đăng ký</button>
@@ -295,7 +290,7 @@ contest.customer4@gmail.com</textarea>
     </div>
 
     <div class="panel">
-      <h2>4 · Chạy lô — dựng nhiều giải một lượt</h2>
+      <h2>5 · Chạy lô — nhiều giải một lượt</h2>
       <p class="hint">Khai số giải cần cho từng trạng thái. Phần chuẩn bị (tài khoản, gói thuê bao,
         chi nhánh, danh mục) chỉ chạy <b>một lần</b> cho cả lô — mỗi giải sau đó dựng riêng.</p>
       <div class="grid4">
@@ -314,7 +309,7 @@ contest.customer4@gmail.com</textarea>
     </div>
 
     <div class="panel">
-      <h2>5 · Kịch bản lệch đường</h2>
+      <h2>6 · Kịch bản lệch đường</h2>
       <p class="hint">Đường hạnh phúc hiếm khi lộ bug. Mỗi nút dựng một giải <b>riêng</b> rồi cố ý
         đẩy nó chệch khỏi luồng chuẩn, và báo lại hệ thống phản ứng thế nào.</p>
       <div class="row">
@@ -327,13 +322,40 @@ contest.customer4@gmail.com</textarea>
     </div>
 
     <div class="panel">
-      <h2>6 · Các bước</h2>
-      <div id="steps"></div>
+      <details>
+        <summary>Từng bước một — 17 bước, mở ra khi cần chạy lẻ</summary>
+        <div id="steps"></div>
+      </details>
     </div>
     </div>
   </div>
 
   <div>
+<div class="panel" id="resumePanel" style="display:none">
+      <h2>Giải đang làm việc</h2>
+      <p class="hint" id="resumeInfo" style="margin:0"></p>
+      <div class="row">
+        <button class="ghost" id="btnRefreshContest">Xem trạng thái hiện tại</button>
+        <button class="warn" id="btnNewContest">Bỏ, bắt đầu giải mới</button>
+      </div>
+      <p class="hint">Bấm một nút ở mục dưới sẽ chạy tiếp trên chính giải này, không tạo giải mới.</p>
+    </div>
+
+<div class="panel">
+      <h2>Đi tiếp một giải có sẵn</h2>
+      <p class="hint">Giải tạo ở nơi khác — trên giao diện thật, bằng seed, hay từ máy khác — thì
+        công cụ chưa biết gì về nó. Nạp vào đây để nó đọc lại danh sách đăng ký và trận đấu từ
+        máy chủ, rồi chạy tiếp từ đúng chỗ giải đang đứng.</p>
+      <div class="row">
+        <button class="ghost" id="btnLoadContests">Nạp giải của provider này</button>
+      </div>
+      <select id="pickContest" style="margin-top:8px"></select>
+      <div class="row">
+        <button class="ghost" id="btnAdoptContest">Đi tiếp giải đã chọn</button>
+      </div>
+      <p class="hint" id="adoptStatus">Cần đăng nhập provider ở mục 1 trước.</p>
+    </div>
+
     <div class="panel" style="position:sticky;top:24px">
       <h2>Nhật ký gọi API</h2>
       <div id="log"><span class="l-dim">Chưa chạy bước nào.</span></div>
@@ -342,6 +364,11 @@ contest.customer4@gmail.com</textarea>
         <button class="ghost" id="btnCopy">Chép nhật ký</button>
       </div>
       <div id="ctxBox" class="hint"></div>
+    </div>
+
+<div class="panel">
+      <h2>Giải đã dựng trong phiên</h2>
+      <div id="builtBox" class="hint">Chưa dựng giải nào.</div>
     </div>
   </div>
 </div>
@@ -548,6 +575,20 @@ async function checkInOne(r) {
     if (unit) body.rental_vehicle_id = unit.vehicle_id || unit.id;
   }
   await call('POST', '/contest-registrations/' + r.id + '/check-in', body, ctx.providerToken);
+}
+
+/**
+ * Chặn các bước chạy trên danh sách đăng ký rỗng.
+ *
+ * Vòng lặp qua mảng rỗng không chạy lần nào và bước vẫn trả về "đã duyệt 0
+ * người" — nhìn hệt như thành công. Xảy ra khi người dùng bấm thẳng vào một
+ * bước giữa chừng, hoặc nạp giải có sẵn mà chưa đọc được đăng ký nào.
+ */
+function assertCoDangKy(viec) {
+  if (!ctx.registrations || !ctx.registrations.length) {
+    throw new Error('Chưa có đăng ký nào trong phiên để ' + viec + '. Chạy bước "Vận động ' +
+      'viên đăng ký" trước, hoặc nạp lại giải ở mục "Đi tiếp một giải có sẵn".');
+  }
 }
 
 /** Phí dự thi đang thật sự áp dụng — ghi đè của kịch bản thắng giá trị trên form. */
@@ -887,6 +928,7 @@ const STEPS = [
     name: 'Xử lý phí dự thi',
     api: 'POST /contest-registrations/:id/mark-entry-fee-paid · /waive-entry-fee',
     run: async () => {
+      assertCoDangKy('xử lý phí dự thi');
       if (effectiveEntryFee() <= 0) return 'giải không thu phí, bỏ qua';
 
       // Mặc định là ĐÃ THU, không phải miễn phí. Miễn phí là ngoại lệ do ban tổ
@@ -914,6 +956,7 @@ const STEPS = [
     name: 'Duyệt đăng ký',
     api: 'POST /contest-registrations/:id/approve',
     run: async () => {
+      assertCoDangKy('duyệt');
       for (const r of ctx.registrations) {
         await call('POST', '/contest-registrations/' + r.id + '/approve', {}, ctx.providerToken);
       }
@@ -932,6 +975,7 @@ const STEPS = [
     name: 'Điểm danh vận động viên',
     api: 'POST /contest-registrations/:id/check-in',
     run: async () => {
+      assertCoDangKy('điểm danh');
       for (const r of ctx.registrations) await checkInOne(r);
       return 'đã điểm danh ' + ctx.registrations.length + ' người';
     },
@@ -1541,6 +1585,101 @@ async function loadCustomers() {
   log('ok', 'Đã nạp ' + ctx.customers.length + ' tài khoản khách.');
 }
 
+// ── Đi tiếp một giải có sẵn ──────────────────────────────────────────────────
+//
+// Công cụ chỉ tự nhớ giải do CHÍNH nó tạo, và chỉ trong trình duyệt này. Giải
+// tạo ở nơi khác thì ctx.registrations rỗng — mà các bước duyệt, điểm danh,
+// nhập kết quả đều lặp qua mảng đó. Rỗng thì vòng lặp không chạy lần nào và
+// bước vẫn báo "đã duyệt 0 người" như thể xong việc.
+//
+// Nạp lại từ máy chủ là cách duy nhất để chạy tiếp mà không dựng dữ liệu lệch.
+
+async function loadProviderContests() {
+  const st = $('adoptStatus');
+  if (!ctx.providerToken) {
+    st.textContent = 'Chưa đăng nhập provider — bấm nút đăng nhập ở mục 1 trước.';
+    return;
+  }
+  const res = await call('GET', '/contests?limit=100', null, ctx.providerToken);
+  const rows = (res.data || res).filter((c) => c.provider_id === ctx.providerId ||
+    c.providerId === ctx.providerId || !c.provider_id);
+  fillSelect('pickContest', rows.map((c) => ({
+    id: c.id,
+    name: '[' + c.status + '] ' + c.name,
+  })), 'name');
+  st.textContent = rows.length
+    ? 'Đã nạp ' + rows.length + ' giải. Chọn một cái rồi bấm đi tiếp.'
+    : 'Provider này chưa có giải nào.';
+}
+
+/**
+ * Nhận một giải có sẵn vào phiên làm việc.
+ *
+ * Đọc lại đăng ký và trận đấu từ máy chủ chứ không đoán: chỉ giữ những đăng ký
+ * CÒN SỐNG, vì người đã huỷ hay bị loại không được đưa vào các bước sau. Duyệt
+ * lại một người đã huỷ thì hoặc lỗi, hoặc tệ hơn là kéo họ về giải.
+ */
+async function adoptContest(contestId) {
+  const st = $('adoptStatus');
+  if (!contestId) { st.textContent = 'Chưa chọn giải nào.'; return; }
+  if (!ctx.providerToken) { st.textContent = 'Chưa đăng nhập provider.'; return; }
+
+  const contest = await call('GET', '/contests/' + contestId, null, ctx.providerToken);
+
+  const regRes = await call('GET', '/contests/' + contestId + '/registrations',
+    null, ctx.providerToken);
+  const regRows = regRes.data || regRes;
+  const CHET = ['CANCELLED', 'REJECTED'];
+  const song = (Array.isArray(regRows) ? regRows : []).filter((r) => !CHET.includes(r.status));
+
+  resetContest();
+  ctx.contestId = contest.id;
+  // Chi nhánh lấy từ chính giải, không lấy từ ô chọn: ô đó có thể đang trỏ
+  // chi nhánh khác, và điểm danh sai chi nhánh là dữ liệu lệch không thấy ngay.
+  ctx.cafeId = (contest.participating_cafe_ids && contest.participating_cafe_ids[0]) ||
+    (contest.cafes && contest.cafes[0] && contest.cafes[0].id) ||
+    $('cCafe').value;
+
+  ctx.registrations = song.map((r) => ({
+    id: r.id,
+    email: (r.participant && r.participant.email) || r.user_id,
+    status: r.status,
+    source: r.vehicle_source || r.vehicleSource,
+  }));
+
+  try {
+    ctx.matches = await fetchMatches();
+  } catch (e) { ctx.matches = []; }
+
+  // Điền lại ô nhập vận động viên theo đúng người đang có trong giải, để các
+  // bước còn dùng tới danh sách email không chạy trên người của giải khác.
+  const emails = ctx.registrations.map((r) => r.email).filter((e) => String(e).includes('@'));
+  if (emails.length) $('athletes').value = emails.join('\n');
+
+  saveState(); showResume(); showCtx(); renderSteps();
+
+  const bo = CHET.length && regRows.length !== song.length
+    ? ' (bỏ qua ' + (regRows.length - song.length) + ' đăng ký đã huỷ/bị từ chối)'
+    : '';
+  st.innerHTML = 'Đang đi tiếp <b>' + contest.name + '</b> — trạng thái <b>' + contest.status +
+    '</b>, ' + ctx.registrations.length + ' đăng ký còn hiệu lực' + bo + ', ' +
+    ctx.matches.length + ' trận.<br>' + goiYBuocTiep(contest.status);
+  log('ok', 'Đã nạp giải ' + contest.id + ' — ' + contest.status);
+}
+
+/** Chỉ đúng nút nên bấm tiếp, thay vì bắt người dùng tự đoán trong 17 bước. */
+function goiYBuocTiep(status) {
+  const goiY = {
+    DRAFT: 'Bấm <b>OPEN — đang mở đăng ký</b> để mở đăng ký.',
+    OPEN: 'Bấm <b>OPEN + đã duyệt VĐV</b> hoặc <b>CLOSED + đã điểm danh</b>.',
+    CLOSED: 'Bấm <b>RUNNING — đã có trận</b> để sinh bảng đấu.',
+    RUNNING: 'Bấm <b>COMPLETED — đủ kết quả</b> để nhập kết quả và công bố.',
+    COMPLETED: 'Giải đã xong — không còn bước nào để chạy.',
+    CANCELLED: 'Giải đã huỷ — không chạy tiếp được.',
+  };
+  return goiY[status] || 'Chọn một nút ở mục dừng-trạng-thái để chạy tiếp.';
+}
+
 // ── Tạo chi nhánh ────────────────────────────────────────────────────────────
 //
 // Toàn bộ số liệu dưới đây là địa danh, tên đường và toạ độ CÓ THẬT. Sinh bừa
@@ -2051,6 +2190,20 @@ document.querySelectorAll('[data-tab]').forEach((b) => {
     $('tabCafes').style.display = b.dataset.tab === 'cafes' ? '' : 'none';
   };
 });
+
+$('btnLoadContests').onclick = async () => {
+  try { await loadProviderContests(); } catch (e) {
+    $('adoptStatus').textContent = 'Không nạp được: ' + e.message;
+    log('err', e.message);
+  }
+};
+
+$('btnAdoptContest').onclick = async () => {
+  try { await adoptContest($('pickContest').value); } catch (e) {
+    $('adoptStatus').textContent = 'Không đi tiếp được: ' + e.message;
+    log('err', e.message);
+  }
+};
 
 $('btnGenCafes').onclick = async () => {
   $('btnGenCafes').disabled = true;

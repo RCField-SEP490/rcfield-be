@@ -12,10 +12,18 @@ import {
   CustomerPackageStatus,
   PackageStatus,
   PaymentTransactionStatus,
+  PaymentTransactionSubjectType,
   PaymentTransactionType,
   UserRole,
 } from '../types';
 import { createPaymentUrl } from './vnpay.service';
+// Nhập từ module lá, KHÔNG từ `payment.service` — bên đó đã nhập ngược lại
+// `activateCustomerPackage` của chính tệp này, nhập thẳng là thành vòng lặp.
+import {
+  allocatePaymentRefCode,
+  buildBankTransferCheckout,
+  type BankTransferCheckout,
+} from './bank-transfer-checkout.service';
 
 interface Viewer {
   userId: string;
@@ -24,21 +32,39 @@ interface Viewer {
 
 export interface PurchasePackageResult {
   customer_package_id: string;
-  payment_url: string;
+  /** Null khi trả bằng chuyển khoản — khách ở lại quét mã, không chuyển trang. */
+  payment_url: string | null;
   txn_ref: string;
   amount: number;
   expires_at: string;
+  flow: 'redirect' | 'bank_transfer';
+  /** Chỉ có khi cổng là chuyển khoản. */
+  bank_transfer?: BankTransferCheckout;
 }
+
+/** Cổng khách chọn khi mua gói. */
+export type PackagePaymentGateway = 'vnpay' | 'bank_transfer';
 
 // ── purchasePackage ───────────────────────────────────────────────────────────
 
-/** Creates a CustomerPackage in PENDING_PAYMENT and a VNPay checkout URL */
+/**
+ * Tạo CustomerPackage ở PENDING_PAYMENT rồi mở một phiên thanh toán.
+ *
+ * Chuyển khoản dùng đúng tài khoản của CHI NHÁNH bán gói, giống hệt luồng đặt
+ * sân — gói vốn chỉ tiêu được ở đúng chi nhánh đó, nên tiền về thẳng quán là
+ * đường ngắn nhất và không phát sinh đối soát trả lại.
+ *
+ * Nửa sau của luồng này đã chạy sẵn: webhook tra giao dịch theo mã tham chiếu,
+ * và `processConfirmationResult` có nhánh kích hoạt gói khi giao dịch mang
+ * `customerPackageId`. Ở đây chỉ dựng nửa đầu.
+ */
 export async function purchasePackage(
   cafeId: string,
   packageId: string,
   viewer: Viewer,
   ipAddr: string,
   customReturnUrl?: string,
+  gateway: PackagePaymentGateway = 'vnpay',
 ): Promise<PurchasePackageResult> {
   const pkg = await AppDataSource.getRepository(Package).findOne({
     where: { id: packageId, cafeId, deletedAt: IsNull() },
@@ -79,13 +105,62 @@ export async function purchasePackage(
 
   // Tạo txnRef duy nhất bắt đầu bằng pkg_ để tránh trùng lặp khi bấm thanh toán lại đơn mua gói
   const txnRef = `pkg_${savedCp.id.replace(/-/g, '').substring(0, 20)}_${Date.now().toString().slice(-4)}`;
-
   const txRepo = AppDataSource.getRepository(PaymentTransaction);
+
+  if (gateway === 'bank_transfer') {
+    // Mã tham chiếu nằm trên GIAO DỊCH, không nằm trên gói. Gắn lên gói thì mã
+    // QR của lần thử trước vẫn còn hiệu lực sau khi khách mở phiên mới, và một
+    // lần chuyển khoản có thể khớp nhầm phiên đã bỏ.
+    const refCode = await allocatePaymentRefCode();
+    const expiresAt = new Date(Date.now() + env.platform.paymentWindowMinutes * 60 * 1000);
+
+    // Dựng QR TRƯỚC khi ghi giao dịch: chi nhánh chưa khai tài khoản nhận tiền
+    // thì hàm này ném lỗi, và lúc đó chưa có dòng giao dịch rác nào nằm lại chờ
+    // một khoản tiền vĩnh viễn không tới.
+    const checkout = await buildBankTransferCheckout({
+      cafeId,
+      amount: Number(pkg.price),
+      refCode,
+      expiresAt,
+    });
+
+    await txRepo.save(
+      txRepo.create({
+        bookingId: null,
+        customerPackageId: savedCp.id,
+        subjectType: PaymentTransactionSubjectType.CUSTOMER_PACKAGE,
+        type: PaymentTransactionType.PAYMENT,
+        gateway: 'BANK_TRANSFER',
+        txnRef,
+        paymentRefCode: refCode,
+        amount: Number(pkg.price),
+        status: PaymentTransactionStatus.PENDING,
+        rawRequest: { customerId: viewer.userId, packageId, cafeId, refCode },
+      }),
+    );
+
+    logger.info(
+      'CustomerPackageService',
+      `bank transfer session opened customerPackageId=${savedCp.id} ref=${refCode}`,
+    );
+
+    return {
+      customer_package_id: savedCp.id,
+      payment_url: null,
+      txn_ref: txnRef,
+      amount: Number(pkg.price),
+      expires_at: savedCp.expiresAt.toISOString(),
+      flow: 'bank_transfer',
+      bank_transfer: checkout,
+    };
+  }
+
   const existingTx = await txRepo.findOne({ where: { txnRef } });
   if (!existingTx) {
     const tx = txRepo.create({
       bookingId: null,
       customerPackageId: savedCp.id,
+      subjectType: PaymentTransactionSubjectType.CUSTOMER_PACKAGE,
       type: PaymentTransactionType.PAYMENT,
       gateway: 'VNPAY',
       txnRef,
@@ -98,6 +173,9 @@ export async function purchasePackage(
 
   let paymentUrl: string;
 
+  // Cờ mô phỏng chỉ áp cho VNPay. Nhánh chuyển khoản đã thoát ở trên rồi, nếu
+  // không thì gói tự kích hoạt trước khi mã QR kịp hiện ra, và cả luồng đối
+  // soát không bao giờ được chạy thử.
   if (env.vnpay.mockEnabled) {
     // Auto-confirm inline — avoids circular import with payment.service
     await activateCustomerPackage(savedCp.id);
@@ -136,6 +214,7 @@ export async function purchasePackage(
     txn_ref: txnRef,
     amount: Number(pkg.price),
     expires_at: savedCp.expiresAt.toISOString(),
+    flow: 'redirect',
   };
 }
 
@@ -226,6 +305,7 @@ export async function getRepayUrl(
     txn_ref: txnRef,
     amount: Number(pkg.price),
     expires_at: cp.expiresAt.toISOString(),
+    flow: 'redirect',
   };
 }
 

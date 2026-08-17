@@ -63,6 +63,23 @@ export class WebSocketService {
       if (ws.readyState === WebSocket.OPEN) ws.send(payload);
     });
   }
+
+  /**
+   * Cắt mọi kết nối để tiến trình còn thoát được.
+   *
+   * Dùng `terminate()` chứ không `close()`: `close()` gửi khung đóng rồi CHỜ
+   * phía kia đáp lại. Trình duyệt đang ở tab nền có thể không đáp trong nhiều
+   * giây, và trong lúc đó cả tiến trình vẫn giữ cổng — đúng thứ làm lần khởi
+   * động sau chết vì cổng đã có người dùng.
+   */
+  shutdown(): void {
+    if (!this.wss) return;
+    this.wss.clients.forEach((ws) => ws.terminate());
+    this.clients.clear();
+    this.clientsByCafe.clear();
+    this.wss.close();
+    logger.info('WebSocket', 'server stopped');
+  }
 }
 
 export const wsService = new WebSocketService();

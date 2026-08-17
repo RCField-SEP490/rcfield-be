@@ -31,6 +31,10 @@ export interface SandboxPaymentInfo {
  * giới ở trên tồn tại để ngăn.
  */
 export async function findPendingPayment(refCode: string): Promise<SandboxPaymentInfo | null> {
+  // Chi nhánh nhận tiền suy ra từ CHÍNH đối tượng đang được trả — phiếu đặt sân
+  // hoặc gói slot. Nối cứng vào `bookings` như trước thì mọi khoản không phải
+  // đặt sân đều báo "giao dịch không còn hiệu lực": mã QR hiện ra bình thường,
+  // quét xong lại không có gì xảy ra, và chẳng có gì chỉ ra vì sao.
   const rows = await AppDataSource.query(
     `SELECT pt.payment_ref_code,
             pt.amount,
@@ -38,9 +42,11 @@ export async function findPendingPayment(refCode: string): Promise<SandboxPaymen
             cps.account_number,
             cps.account_name
        FROM payment_transactions pt
-       JOIN bookings b            ON b.id = pt.booking_id
+       LEFT JOIN bookings b           ON b.id = pt.booking_id
+       LEFT JOIN customer_packages cp ON cp.id = pt.customer_package_id
        JOIN cafe_payment_settings cps
-              ON cps.cafe_id = b.cafe_id AND cps.deleted_at IS NULL
+              ON cps.cafe_id = COALESCE(b.cafe_id, cp.cafe_id)
+             AND cps.deleted_at IS NULL
       WHERE pt.payment_ref_code = $1
         AND pt.status = 'PENDING'
       LIMIT 1`,
