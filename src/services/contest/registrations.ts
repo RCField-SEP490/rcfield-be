@@ -714,12 +714,18 @@ export async function checkInRegistration(
     throw new AppError('Registration vẫn đang chờ xử lý phí tham gia', 400, 'ENTRY_FEE_PENDING');
   }
 
-  // Cờ dev cho phép thử luồng ngày thi mà không phải chờ đúng giờ giải; nó bị
-  // ép tắt ở production ngay trong `env`, không phụ thuộc biến môi trường.
-  if (env.devBypassContestCheckInWindow) {
+  // Cờ cho phép điểm danh ngoài khung giờ giải, bật được ở mọi môi trường.
+  //
+  // Mỗi lần dùng đều ghi một dòng kiểm toán ngay dưới đây. Bypass lặng lẽ là
+  // thứ nguy hiểm: sáu tháng sau không ai dựng lại được vì sao một người được
+  // điểm danh khi giải còn đang mở đăng ký. Có dòng nhật ký thì câu hỏi đó trả
+  // lời được.
+  const bypassedWindow = env.bypassContestCheckInWindow;
+  if (bypassedWindow) {
     logger.warn(
       'ContestService',
       `DEV_BYPASS_CONTEST_CHECKIN đang bật — bỏ qua kiểm tra thời gian điểm danh cho contest ${contest.id}`,
+      { contestId: contest.id, registrationId, actorId: viewer.userId, status: contest.status },
     );
   } else {
     if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
@@ -924,6 +930,27 @@ export async function checkInRegistration(
     eventType: 'registration.checked_in',
     afterJson: { status: savedRegistration.status, checkedInCafeId },
   });
+
+  // Ghi RIÊNG một dòng cho lần điểm danh ngoài khung giờ, không nhét cờ vào
+  // dòng trên: tra "ai từng điểm danh ngoài giờ" phải lọc được bằng đúng một
+  // điều kiện `event_type`, chứ không phải dò trong JSON của mọi lần điểm danh.
+  if (bypassedWindow) {
+    await writeContestAudit({
+      contestId: contest.id,
+      registrationId: savedRegistration.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.checked_in_outside_window',
+      afterJson: {
+        contest_status: contest.status,
+        contest_starts_at: contest.startsAt,
+        contest_ends_at: contest.endsAt,
+        checked_in_at: new Date().toISOString(),
+      },
+      reason: 'DEV_BYPASS_CONTEST_CHECKIN đang bật',
+    });
+  }
+
   await sendContestRegistrationStatusNotification(
     savedRegistration,
     NotificationType.CONTEST_CHECKIN_CONFIRMED,

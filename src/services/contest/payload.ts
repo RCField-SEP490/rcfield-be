@@ -1,5 +1,6 @@
 import { In } from 'typeorm';
 import { AppDataSource } from '../../config/database';
+import { env } from '../../config/env';
 import { Cafe } from '../../models/cafe.entity';
 import { ContestCafe } from '../../models/contest-cafe.entity';
 import { ContestFormat } from '../../models/contest-format.entity';
@@ -424,6 +425,26 @@ export function deriveCustomerJourneyStatus(
   return 'CHECKED_IN_WAITING_BRACKET';
 }
 
+/**
+ * Thời điểm suất trong giải bị nhả nếu chưa trả lệ phí.
+ *
+ * Điều kiện ở đây phải khớp TỪNG CÁI với truy vấn dọn của job
+ * (`booking-timeout.job.ts` — `expireUnpaidContestRegistrations`). Lệch nhau là
+ * màn hình hứa một hạn còn hệ thống thi hành một hạn khác, và người dùng mất
+ * suất đúng lúc họ tin là còn thời gian.
+ *
+ * `null` khi không có gì để quá hạn: đã trả, được miễn, giải miễn phí, hoặc lệ
+ * phí gộp trong đơn đặt (đơn đó có cơ chế hết hạn riêng).
+ */
+function entryFeeHoldExpiresAt(registration: ContestRegistration): string | null {
+  if (registration.paymentStatus !== ContestEntryFeePaymentStatus.PENDING_PAYMENT) return null;
+  if (Number(registration.entryFeeAmount ?? 0) <= 0) return null;
+  if (registration.bookingId) return null;
+  return new Date(
+    registration.createdAt.getTime() + env.platform.paymentWindowMinutes * 60_000,
+  ).toISOString();
+}
+
 export async function mapContestRegistrationsPayload(
   registrations: ContestRegistration[],
   options?: { includeContest?: boolean },
@@ -468,6 +489,7 @@ export async function mapContestRegistrationsPayload(
       checked_in_at: registration.checkedInAt,
       payment_status: registration.paymentStatus,
       entry_fee_amount: Number(registration.entryFeeAmount ?? 0),
+      entry_fee_hold_expires_at: entryFeeHoldExpiresAt(registration),
       cancellation_reason: registration.cancellationReason,
       metadata: registration.metadata ?? {},
       created_at: registration.createdAt,
