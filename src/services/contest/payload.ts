@@ -251,6 +251,15 @@ export async function mapContestPayload(contests: Contest[]) {
       status: contest.status,
       starts_at: contest.startsAt,
       ends_at: contest.endsAt,
+      /**
+       * Máy chủ có đang bỏ qua khung giờ điểm danh hay không.
+       *
+       * Giao diện phải HỎI chứ không tự đoán: trước đây nó dựa vào một biến
+       * `VITE_*` nướng vào bản build, nên đổi cờ ở máy chủ mà không build lại
+       * giao diện thì nút vẫn khoá — máy chủ đồng ý nhưng không ai bấm được.
+       * Đọc từ đây thì hai bên luôn cùng một câu trả lời.
+       */
+      check_in_window_bypassed: env.bypassContestCheckInWindow,
       registration_opens_at: contest.registrationOpensAt,
       registration_closes_at: contest.registrationClosesAt,
       capacity: contest.capacity,
