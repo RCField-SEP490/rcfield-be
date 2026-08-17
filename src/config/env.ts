@@ -21,14 +21,20 @@ export const env = {
   PORT: parseInt(process.env.PORT ?? '3000', 10),
 
   /**
-   * Cờ TẠM THỜI để thử luồng ngày thi mà không phải chờ tới đúng giờ giải.
+   * Bỏ qua điều kiện thời gian và trạng thái giải khi điểm danh.
    *
-   * Bỏ qua điều kiện thời gian và trạng thái giải khi điểm danh. Cố ý chặn cứng
-   * ở production: một cờ env đặt nhầm trên máy chủ thật sẽ cho điểm danh giải
-   * chưa đóng đăng ký, giao xe cho người chưa chắc suất.
+   * Bật được ở MỌI môi trường, kể cả production — theo yêu cầu vận hành, vì
+   * demo và diễn tập trên máy chủ thật cần điểm danh ngoài khung giờ giải.
+   *
+   * Đổi lại, mỗi lần bypass đều ghi một dòng vào nhật ký kiểm toán của giải
+   * (`registration.checked_in_outside_window`) kèm người thực hiện và trạng
+   * thái giải lúc đó. Cờ bật lặng lẽ là thứ nguy hiểm; cờ bật có dấu vết thì
+   * sau này còn truy được ai điểm danh cho ai, lúc nào, khi giải chưa tới giờ.
+   *
+   * ⚠️ Bật ở production nghĩa là nhân viên điểm danh được cho giải CHƯA đóng
+   * đăng ký, tức giao xe cho người chưa chắc suất. Tắt lại khi không còn cần.
    */
-  devBypassContestCheckInWindow:
-    nodeEnv !== 'production' && parseBoolean(process.env.DEV_BYPASS_CONTEST_CHECKIN),
+  bypassContestCheckInWindow: parseBoolean(process.env.DEV_BYPASS_CONTEST_CHECKIN),
 
   db: {
     url: process.env.DATABASE_URL,

@@ -196,3 +196,50 @@ describe('khách đóng tab, không có tín hiệu nào', () => {
     expect(lan2).toBe(0);
   });
 });
+
+describe('hạn giữ suất báo cho người dùng', () => {
+  /** Đọc mốc hết hạn đúng như giao diện đọc — qua payload trả về. */
+  async function readHold(registrationId: string) {
+    const { mapContestRegistrationsPayload } = await import('../../services/contest/payload');
+    const repo = AppDataSource.getRepository('contest_registrations');
+    const rows = await repo.find({ where: { id: registrationId } });
+    const [mapped] = await mapContestRegistrationsPayload(rows as never, { includeContest: false });
+    return (mapped as { entry_fee_hold_expires_at: string | null }).entry_fee_hold_expires_at;
+  }
+
+  it('mốc báo ra KHỚP với mốc job thật sự dọn', async () => {
+    // Đây là điều kiện sống còn của tính năng này: lệch nhau thì màn hình hứa
+    // một hạn còn hệ thống thi hành một hạn khác, và người dùng mất suất đúng
+    // lúc họ tin là còn thời gian.
+    //
+    // Đặt đăng ký ở NGAY TRƯỚC mốc hết hạn: job phải chưa đụng tới.
+    const { registrationId } = await seedRegistration(29);
+    const hold = await readHold(registrationId);
+    expect(hold).not.toBeNull();
+    expect(new Date(hold!).getTime()).toBeGreaterThan(Date.now());
+
+    expect(await expireUnpaidContestRegistrations()).toBe(0);
+    expect((await readRegistration(registrationId)).status).toBe(ContestRegistrationStatus.PENDING);
+  });
+
+  it('quá mốc đã báo thì job dọn thật', async () => {
+    const { registrationId } = await seedRegistration(31);
+    const hold = await readHold(registrationId);
+    expect(new Date(hold!).getTime()).toBeLessThan(Date.now());
+
+    await expireUnpaidContestRegistrations();
+    expect((await readRegistration(registrationId)).status).toBe(
+      ContestRegistrationStatus.CANCELLED,
+    );
+  });
+
+  it('không có gì để quá hạn thì không báo mốc nào', async () => {
+    // Đã trả tiền — hiện một cái đồng hồ đếm ngược ở đây chỉ làm người ta hoảng.
+    const { registrationId } = await seedRegistration(5);
+    await AppDataSource.query(
+      `UPDATE contest_registrations SET payment_status = $2 WHERE id = $1`,
+      [registrationId, ContestEntryFeePaymentStatus.MARKED_PAID],
+    );
+    expect(await readHold(registrationId)).toBeNull();
+  });
+});

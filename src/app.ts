@@ -68,6 +68,18 @@ if (env.devTools.enabled) {
   }
 }
 
+// Điểm danh ngoài khung giờ giải — bật được cả ở production theo yêu cầu vận
+// hành. Nói to lúc khởi động vì đây là cờ dễ bật rồi quên: nó không gây lỗi gì,
+// chỉ âm thầm cho phép giao xe cho người chưa chắc suất.
+if (env.bypassContestCheckInWindow) {
+  logger.warn(
+    'ContestCheckIn',
+    'DEV_BYPASS_CONTEST_CHECKIN ĐANG BẬT — nhân viên điểm danh được cho giải chưa tới giờ, ' +
+      'kể cả giải còn đang mở đăng ký. Mỗi lần dùng ghi một dòng kiểm toán ' +
+      '`registration.checked_in_outside_window`. Tắt lại khi không còn cần.',
+  );
+}
+
 if (env.sandboxBank.enabled) {
   app.use('/api/v1/sandbox-bank', sandboxBankRouter);
   logger.warn(
