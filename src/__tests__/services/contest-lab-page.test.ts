@@ -30,6 +30,25 @@ describe('trang Contest Lab', () => {
     expect(CLIENT_SCRIPT).toContain('loadTrackTypesForCafe');
   });
 
+  it('mọi ô mà phần JS đụng tới đều có mặt trong HTML', () => {
+    // Sắp xếp lại bố cục là chuyển các khối HTML qua lại giữa hai cột, và rất
+    // dễ đánh rơi một ô. Mất ô thì `$('id')` trả null, dòng đầu tiên chạm vào
+    // nó ném lỗi, và trang chết lặng — không log, không lỗi mạng.
+    const html = renderContestLab();
+    const ids = Array.from(
+      new Set([...CLIENT_SCRIPT.matchAll(/\$\('([A-Za-z][\w-]*)'\)/g)].map((m) => m[1])),
+    );
+    expect(ids.length).toBeGreaterThan(50);
+    expect(ids.filter((id) => !html.includes(`id="${id}"`))).toEqual([]);
+  });
+
+  it('thẻ div đóng mở cân nhau', () => {
+    // Lệch một thẻ là cả phần sau bị hút vào trong khối trước đó — bố cục vỡ
+    // mà trình duyệt vẫn dựng ra được, nên nhìn qua không biết hỏng ở đâu.
+    const html = renderContestLab();
+    expect((html.match(/<div\b/g) ?? []).length).toBe((html.match(/<\/div>/g) ?? []).length);
+  });
+
   it('khoá mở trang được gắn vào cả CSS lẫn JS', () => {
     // Trình duyệt tải hai tệp con bằng lời gọi riêng và không tự mang theo khoá
     // của trang cha. Quên truyền tiếp thì trang mở ra 200 nhưng trắng trơn —

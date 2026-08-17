@@ -1694,6 +1694,11 @@ export const CheckAvailabilitySchema = z.object({
 
 export const PurchasePackageSchema = z.object({
   return_url: z.string().url().optional(),
+  /**
+   * Mặc định VNPay để giữ nguyên hành vi của những chỗ gọi cũ chưa khai trường
+   * này. Khách chọn chuyển khoản thì tiền về thẳng tài khoản chi nhánh bán gói.
+   */
+  gateway: z.enum(['vnpay', 'bank_transfer']).optional().default('vnpay'),
 });
 
 export const ListMyPackagesQuerySchema = z.object({

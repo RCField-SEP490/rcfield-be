@@ -9,6 +9,7 @@ import {
   InspectionType,
   PaymentComponentStatus,
   PaymentComponentType,
+  PaymentTransactionSubjectType,
   ExtensionProposalStatus,
 } from '../types';
 import {
@@ -37,6 +38,7 @@ import { BookingParticipant } from '../models/booking-participant.entity';
 import { BookingVehicle } from '../models/booking-vehicle.entity';
 import { Vehicle } from '../models/vehicle.entity';
 import { PaymentComponent } from '../models/payment-component.entity';
+import { ContestRegistration } from '../models/contest-registration.entity';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { FnbOrderItem } from '../models/fnb-order-item.entity';
 import { Cafe } from '../models/cafe.entity';
@@ -190,12 +192,64 @@ export const bookingController = {
       const transaction = await AppDataSource.getRepository(PaymentTransaction).findOne({
         where: { txnRef: req.params.txnRef },
       });
-      if (!transaction || !transaction.bookingId) {
+      if (!transaction) {
         throw new AppError(
           'Không tìm thấy giao dịch đặt lịch',
           404,
           'PAYMENT_TRANSACTION_NOT_FOUND',
         );
+      }
+
+      /**
+       * Phí dự thi KHÔNG gắn với đơn đặt nào — nó mang `contestRegistrationId`
+       * và để trống `bookingId`.
+       *
+       * Trước đây chỗ này chặn thẳng mọi giao dịch không có `bookingId`, nên
+       * trang kết quả không đối chiếu được và luôn hiện "Chưa thể xác thực
+       * thanh toán" — kể cả khi tiền đã vào và đăng ký đã ghi nhận đã trả. Tức
+       * là khách trả tiền thành công mà màn hình nói ngược lại.
+       */
+      if (!transaction.bookingId) {
+        if (
+          transaction.subjectType !== PaymentTransactionSubjectType.CONTEST_ENTRY ||
+          !transaction.contestRegistrationId
+        ) {
+          throw new AppError(
+            'Không tìm thấy giao dịch đặt lịch',
+            404,
+            'PAYMENT_TRANSACTION_NOT_FOUND',
+          );
+        }
+
+        const registration = await AppDataSource.getRepository(ContestRegistration).findOne({
+          where: { id: transaction.contestRegistrationId },
+        });
+        if (!registration) {
+          throw new AppError('Đăng ký giải không tồn tại', 404, 'REGISTRATION_NOT_FOUND');
+        }
+        // Biên nhận là dữ liệu riêng của người trả tiền. Không kiểm chủ sở hữu
+        // ở đây thì bất kỳ ai đoán được mã giao dịch đều đọc được số tiền và
+        // thời điểm thanh toán của người khác.
+        if (req.user!.role === UserRole.CUSTOMER && registration.userId !== req.user!.userId) {
+          throw new AppError('Access denied', 403, 'NOT_TRANSACTION_OWNER');
+        }
+
+        res.json({
+          success: true,
+          data: {
+            bookingId: null,
+            contestRegistrationId: registration.id,
+            amount: Number(transaction.amount),
+            status: transaction.status,
+            gateway: transaction.gateway,
+            type: transaction.type,
+            additionalPayment: false,
+            components: [{ type: 'CONTEST_ENTRY_FEE', amount: Number(transaction.amount) }],
+            createdAt: transaction.createdAt.toISOString(),
+            paidAt: transaction.updatedAt.toISOString(),
+          },
+        });
+        return;
       }
 
       const booking = await AppDataSource.getRepository(Booking).findOne({

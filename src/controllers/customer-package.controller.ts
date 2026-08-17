@@ -38,6 +38,7 @@ export const customerPackageController = {
         viewer,
         ipAddr,
         body.return_url,
+        body.gateway,
       );
       res.json({ success: true, data });
     } catch (err) {

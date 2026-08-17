@@ -28,6 +28,7 @@ import {
   UserRole,
   NotificationType,
   ContestEntryFeePaymentStatus,
+  ContestRegistrationStatus,
 } from '../types';
 import { broadcastBookingUpdated, transition } from './booking.service';
 import { emailService } from './email.service';
@@ -48,9 +49,13 @@ import {
 import { getPaymentGateway } from './payment-gateway.factory';
 import { resolveVnpayCredentials, type VnpayCredentials } from './vnpay-credentials';
 import type { PaymentVerificationResult } from './payment-gateway.interface';
-import QRCode from 'qrcode';
-import { buildVietQrPayload, findBank, generatePaymentRefCode } from './vietqr';
-import { getVerifiedBankSettings } from './payment-method-resolver';
+import {
+  allocatePaymentRefCode,
+  buildBankTransferCheckout,
+  type BankTransferCheckout,
+} from './bank-transfer-checkout.service';
+
+export type { BankTransferCheckout };
 
 async function pushBookingNew(booking: Booking): Promise<void> {
   try {
@@ -414,20 +419,6 @@ export async function resolveContestPricingAdjustments(
 
   const adjustments = applyContestRentalPricing(booking, getContestRentalPolicy(contest));
   return { ...adjustments, contestId: contest.id };
-}
-
-/** Dữ liệu mã QR chuyển khoản, chỉ có khi cổng là `bank_transfer`. */
-export interface BankTransferCheckout {
-  qr_payload: string;
-  qr_image_data_url: string;
-  ref_code: string;
-  bank_name: string;
-  account_number: string;
-  account_name: string;
-  amount: number;
-  expires_at: string;
-  is_sandbox: boolean;
-  sandbox_url?: string;
 }
 
 export interface CheckoutResult {
@@ -866,87 +857,6 @@ function buildBankTransferPageUrl(bookingId: string): string {
   return new URL(`/payment/bank-transfer/${bookingId}`, env.frontendUrl).toString();
 }
 
-/**
- * Cấp một mã tham chiếu chưa ai dùng.
- *
- * Không gian mã ~1 triệu tổ hợp và chỉ những giao dịch chưa hoàn tất mới thực sự
- * cạnh tranh, nên đụng nhau là hiếm; vòng thử lại ở đây là để đúng chứ không
- * phải để nhanh.
- */
-async function allocatePaymentRefCode(): Promise<string> {
-  const txRepo = AppDataSource.getRepository(PaymentTransaction);
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const candidate = generatePaymentRefCode();
-    const clash = await txRepo.findOne({ where: { paymentRefCode: candidate } });
-    if (!clash) return candidate;
-  }
-  throw new AppError(
-    'Không cấp được mã tham chiếu thanh toán, thử lại sau.',
-    500,
-    'REF_CODE_ALLOCATION_FAILED',
-  );
-}
-
-/** Dựng mã QR VietQR cho một lần thanh toán chuyển khoản. */
-async function buildBankTransferCheckout(input: {
-  cafeId: string;
-  amount: number;
-  refCode: string;
-  expiresAt: Date;
-}): Promise<BankTransferCheckout> {
-  const settings = await getVerifiedBankSettings(input.cafeId);
-  if (!settings?.bankBin || !settings.accountNumber || !settings.accountName) {
-    throw new AppError(
-      'Chi nhánh chưa cấu hình xong tài khoản nhận chuyển khoản.',
-      400,
-      'PAYMENT_METHOD_UNAVAILABLE',
-    );
-  }
-
-  const qrPayload = buildVietQrPayload({
-    bankBin: settings.bankBin,
-    accountNumber: settings.accountNumber,
-    amount: input.amount,
-    memo: input.refCode,
-  });
-
-  const bank = settings.bankCode ? findBank(settings.bankCode) : null;
-
-  // Chế độ mô phỏng đổi NỘI DUNG mã QR sang đường dẫn trang ngân hàng giả lập,
-  // để quét bằng camera là mở được ngay — mã ngân hàng thật sẽ mở app ngân hàng
-  // và không có cách nào tự báo về cho hệ thống.
-  const sandboxUrl = env.sandboxBank.enabled
-    ? new URL(`/api/v1/sandbox-bank/pay?ref=${input.refCode}`, env.apiBaseUrl).toString()
-    : undefined;
-
-  // Sinh ở 720px cho ô hiển thị ~256px: màn retina vẽ ở 2–3x, ảnh nhỏ hơn kích
-  // thước hiển thị thật sẽ bị nội suy nhòe. Ảnh QR đen trắng nén PNG rất tốt
-  // nên phóng to gần như không tốn thêm dung lượng.
-  //
-  // `margin: 4` là vùng trắng tối thiểu theo chuẩn QR. Để 1 thì ai chụp màn
-  // hình rồi cắt riêng mã ra gửi đi sẽ mất vùng trắng, máy quét khó tính đọc
-  // hụt — mà chụp màn gửi cho người khác trả hộ là chuyện xảy ra thật.
-  const qrContent = sandboxUrl ?? qrPayload;
-  const qrImageDataUrl = await QRCode.toDataURL(qrContent, {
-    errorCorrectionLevel: 'M',
-    margin: 4,
-    width: 720,
-  });
-
-  return {
-    qr_payload: qrContent,
-    qr_image_data_url: qrImageDataUrl,
-    ref_code: input.refCode,
-    bank_name: bank?.name ?? settings.bankCode ?? 'Ngân hàng',
-    account_number: settings.accountNumber,
-    account_name: settings.accountName,
-    amount: input.amount,
-    expires_at: input.expiresAt.toISOString(),
-    is_sandbox: env.sandboxBank.enabled,
-    sandbox_url: sandboxUrl,
-  };
-}
-
 // ── createPaymentComponents ───────────────────────────────────────────────────
 
 export async function createPaymentComponents(
@@ -1115,6 +1025,59 @@ export async function processGatewayConfirmation(
   return processConfirmationResult(result);
 }
 
+/** VNPay: "Khách hàng huỷ giao dịch". Mọi mã khác đều là hỏng ngoài ý muốn. */
+const VNPAY_USER_CANCELLED = '24';
+
+/**
+ * Nhả suất giải khi lần thanh toán phí dự thi không đi tới đâu.
+ *
+ * Ghi thẳng bằng SQL có điều kiện thay vì đọc-rồi-ghi: hai đường có thể cùng
+ * gọi vào đây — khách bấm huỷ ở cổng, và job dọn theo giờ — nên phải chống
+ * việc huỷ đè lên một đăng ký đã huỷ, hoặc tệ hơn là huỷ một đăng ký vừa trả
+ * tiền xong trong lúc đang xử lý.
+ */
+async function cancelContestRegistrationForAbandonedPayment(
+  registrationId: string,
+  reason: string,
+): Promise<boolean> {
+  const raw = await AppDataSource.query(
+    `UPDATE contest_registrations
+        SET status = $2, cancelled_at = NOW(), cancellation_reason = $3, updated_at = NOW()
+      WHERE id = $1
+        AND status <> $2
+        AND payment_status = $4
+      RETURNING id, contest_id, user_id`,
+    [
+      registrationId,
+      ContestRegistrationStatus.CANCELLED,
+      reason,
+      ContestEntryFeePaymentStatus.PENDING_PAYMENT,
+    ],
+  );
+  // TypeORM trả [rows[], rowCount] cho câu UPDATE — lấy thẳng biến vào sẽ ra
+  // một MẢNG LỒNG, và `rows[0].contest_id` là undefined. Ghi nhật ký hỏng lặng
+  // lẽ vì lỗi đã bị bắt và chỉ log lại.
+  const rows: { id: string; contest_id: string }[] = Array.isArray(raw[0]) ? raw[0] : raw;
+  if (!rows.length) return false;
+
+  await writeContestAudit({
+    contestId: rows[0].contest_id,
+    registrationId,
+    actorId: null,
+    actorRole: 'SYSTEM',
+    eventType: 'registration.cancelled_unpaid_entry_fee',
+    afterJson: { status: ContestRegistrationStatus.CANCELLED },
+    reason,
+  }).catch((err) =>
+    logger.error('PaymentService', 'audit write failed for unpaid entry fee cancel', err),
+  );
+
+  logger.info('PaymentService', 'nhả suất giải do phí dự thi chưa trả', { registrationId, reason });
+  return true;
+}
+
+export { cancelContestRegistrationForAbandonedPayment };
+
 /** Apply business logic once a transaction has been verified. */
 export async function processConfirmationResult(
   result: PaymentVerificationResult,
@@ -1136,6 +1099,26 @@ export async function processConfirmationResult(
       status: PaymentTransactionStatus.FAILED,
       rawResponse: result.raw as object,
     });
+
+    // Khách CỐ Ý huỷ ở cổng thanh toán thì nhả suất trong giải ngay.
+    //
+    // Chỉ mã 24 — "khách hàng huỷ giao dịch". Sai OTP, lỗi ngân hàng hay hết
+    // giờ ở cổng đều KHÔNG nhả: gõ nhầm một lần mà mất chỗ rồi phải tranh lại
+    // là quá nặng, và ở giải gần đầy thì gần như chắc chắn mất suất thật.
+    //
+    // Suất bị giữ là vấn đề có thật vì bộ đếm sức chứa tính mọi đăng ký chưa
+    // huỷ, kể cả người chưa trả đồng nào.
+    if (
+      tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY &&
+      tx.contestRegistrationId &&
+      result.responseCode === VNPAY_USER_CANCELLED
+    ) {
+      await cancelContestRegistrationForAbandonedPayment(
+        tx.contestRegistrationId,
+        'Khách huỷ thanh toán phí dự thi tại cổng',
+      );
+    }
+
     logger.info('PaymentService', `payment failed txnRef=${result.txnRef}`);
     return { rspCode: result.responseCode, message: 'Payment failed' };
   }
