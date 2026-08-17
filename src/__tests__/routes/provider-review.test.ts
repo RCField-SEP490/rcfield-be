@@ -51,7 +51,7 @@ describe('Provider review routes', () => {
     expect(response.body.data[0]).toMatchObject({
       cafeId: cafe.id,
       overallScore: 4,
-      customerName: 'Vinh Phuc N.',
+      customerName: 'Nguyen Vinh Phuc',
       status: 'VISIBLE',
     });
     expect(response.body.data[0]).toHaveProperty('createdAt');
