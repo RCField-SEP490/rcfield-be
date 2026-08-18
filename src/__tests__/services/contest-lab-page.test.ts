@@ -65,3 +65,85 @@ describe('trang Contest Lab', () => {
     expect(CLIENT_SCRIPT).not.toContain("sel: 'cTrack', path: '/track-types'");
   });
 });
+
+describe('mục tài khoản trong Contest Lab', () => {
+  const html = renderContestLab();
+
+  it('tách chủ sân và quản trị viên thành hai hộp riêng', () => {
+    // Trộn chung một khối thì nhìn vào không biết ô nào của ai, và gõ nhầm mật
+    // khẩu bên này sang bên kia là bị khoá đăng nhập 15 phút.
+    expect((html.match(/class="acct"/g) ?? []).length).toBe(2);
+    expect(html).toContain('>Chủ sân <');
+    expect(html).toContain('>Quản trị viên <');
+  });
+
+  it('mỗi bên có nút đăng nhập và dòng trạng thái riêng', () => {
+    for (const id of ['btnProviderCafes', 'provStatus', 'btnAdminLogin', 'adminStatus']) {
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  it('ô mật khẩu được che', () => {
+    expect((html.match(/type="password"/g) ?? []).length).toBe(2);
+  });
+
+  it('bỏ hẳn ô chọn "tạo provider mới" đã ngừng hoạt động', () => {
+    // Để lại một lựa chọn không dùng được chỉ khiến người ta thử rồi nhận lỗi.
+    expect(html).not.toContain('id="pMode"');
+    expect(CLIENT_SCRIPT).not.toContain("$('pMode')");
+  });
+});
+
+describe('chọn khuôn mẫu giải', () => {
+  const html = renderContestLab();
+
+  it('chỉ còn MỘT ô chọn — loại giải và thể thức suy ra từ khuôn mẫu', () => {
+    // Mỗi khuôn mẫu ghim sẵn đúng một cặp loại giải + thể thức. Ba ô rời nhau
+    // cho ra 18 tổ hợp mà chỉ 3 hợp lệ; 15 tổ hợp còn lại bị backend từ chối
+    // bằng CONTEST_TEMPLATE_MISMATCH, và người dùng chọn xong mới biết mình sai.
+    expect(html).toContain('id="cTemplate"');
+    expect(html).not.toContain('id="cType"');
+    expect(html).not.toContain('id="cFormat"');
+  });
+
+  it('vẫn hiện ra loại giải và thể thức suy ra, để không phải đoán', () => {
+    expect(html).toContain('id="tplStatus"');
+    expect(CLIENT_SCRIPT).toContain('showTemplateDerived');
+  });
+
+  it('bước tạo giải đọc id từ chính khuôn mẫu, không đọc ô riêng', () => {
+    // Đọc ba ô rời là đúng thứ sinh ra tổ hợp lệch ngay từ đầu.
+    expect(CLIENT_SCRIPT).toContain('contest_template_id: tpl.id');
+    expect(CLIENT_SCRIPT).not.toContain("contest_type_id: $('cType')");
+    expect(CLIENT_SCRIPT).not.toContain("contest_format_id: $('cFormat')");
+  });
+});
+
+describe('tab dọn dữ liệu', () => {
+  const html = renderContestLab();
+
+  it('chọn tài khoản bằng bảng tick, không phải gõ mẫu email', () => {
+    // Gõ mẫu thì phải tưởng tượng nó khớp những ai; tick thì nhìn thấy đúng
+    // từng người mình sắp xoá.
+    for (const id of ['pgList', 'pgSearch', 'btnPgLoadUsers', 'btnPgAll', 'btnPgNone']) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    expect(html).not.toContain('id="pgLike"');
+  });
+
+  it('giữ state chọn RIÊNG với bảng chọn vận động viên', () => {
+    // Dùng chung `ctx.picked` thì tick một người cho thi đấu lại vô tình đưa họ
+    // vào danh sách xoá — hai việc trái ngược nhau dùng chung một ô nhớ.
+    expect(CLIENT_SCRIPT).toContain('ctx.pgPicked');
+    expect(CLIENT_SCRIPT).toContain(
+      "callPurge('/dev-tools/purge/users', {\n      ids: ctx.pgPicked",
+    );
+  });
+
+  it('xoá và xem trước là hai nút riêng, và có ô xác nhận', () => {
+    expect(html).toContain('id="btnPgUserPreview"');
+    expect(html).toContain('id="btnPgUserRun"');
+    expect(html).toContain('id="pgUserConfirm"');
+    expect(html).toContain('id="pgContestConfirm"');
+  });
+});

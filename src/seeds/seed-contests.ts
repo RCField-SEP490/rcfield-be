@@ -661,12 +661,16 @@ async function main() {
   if (secondaryCafe) await addContestCafe(openContestId, secondaryCafe.id, 'PARTICIPATING', 1);
   if (staffId) await addContestStaffAssignment(openContestId, staffId, providerId);
 
+  // Khách đăng ký qua giao diện thật là đã trả phí xong rồi; chưa trả chỉ xảy
+  // ra khi họ thoát giữa chừng ở cổng thanh toán, và job dọn sẽ huỷ đăng ký
+  // đó sau 30 phút. Để PENDING_PAYMENT ở đây thì dòng dữ liệu mẫu này TỰ BIẾN
+  // MẤT nửa tiếng sau khi seed, và người demo không hiểu vì sao.
   const openPendingId = await insertRegistration({
     contestId: openContestId,
     userId: customers[0].id,
     vehicleId: hostVehicleId,
     status: 'PENDING',
-    paymentStatus: 'PENDING_PAYMENT',
+    paymentStatus: 'MARKED_PAID',
     entryFeeAmount: 100000,
     checkInCode: 'OPENP001',
   });
@@ -906,12 +910,13 @@ async function main() {
       entryFeeAmount: 150000,
       checkInCode: 'CLOSE002',
     }),
+    // Chưa duyệt nhưng ĐÃ trả tiền — xem chú thích ở openPendingId.
     insertRegistration({
       contestId: closedContestId,
       userId: customers[2].id,
       vehicleId: hostVehicleId,
       status: 'PENDING',
-      paymentStatus: 'PENDING_PAYMENT',
+      paymentStatus: 'MARKED_PAID',
       entryFeeAmount: 150000,
       checkInCode: 'CLOSE003',
     }),

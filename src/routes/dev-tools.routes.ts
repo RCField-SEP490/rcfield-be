@@ -1,9 +1,18 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { CLIENT_SCRIPT, STYLE, renderContestLab } from '../dev-tools/contest-lab.template';
 import { env } from '../config/env';
+import { logger } from '../config/logger';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { AppDataSource } from '../config/database';
-import { UserRole } from '../types';
+import { AppError, AuthRequest, UserRole } from '../types';
+import {
+  executeContestPurge,
+  hardDeleteUsers,
+  inTransaction,
+  previewContestPurge,
+  previewUserPurge,
+  softDeleteUsers,
+} from '../services/purge.service';
 
 /**
  * Công cụ dựng dữ liệu giải đấu cho môi trường thử.
@@ -102,5 +111,130 @@ router.get(
     }
   },
 );
+
+/**
+ * Dọn dữ liệu thử qua giao diện.
+ *
+ * Nguy hiểm hơn hẳn bản dòng lệnh: chạy script cần quyền vào máy chủ, còn ở đây
+ * chỉ cần khoá dev-tools và một phiên admin. Nên siết thêm hai thứ mà CLI không
+ * có:
+ *
+ *  1. Xem trước và thực hiện là HAI endpoint. Không có đường nào xoá chỉ bằng
+ *     một lời gọi — muốn xoá phải chủ ý gọi đúng endpoint xoá.
+ *  2. Thân yêu cầu phải mang lại CHÍNH mục tiêu đang xoá trong trường `confirm`.
+ *     Bấm nhầm nút không đủ để mất dữ liệu; phải gõ lại đúng email hoặc mẫu.
+ *
+ * Toàn bộ logic dùng chung `purge.service` với CLI, nên chốt chặn không thể
+ * lệch giữa hai đường.
+ */
+function assertConfirm(body: unknown, expected: string): void {
+  const confirm = (body as { confirm?: string } | null)?.confirm;
+  if (typeof confirm !== 'string' || confirm.trim() !== expected.trim()) {
+    throw new AppError(
+      `Gõ lại chính xác "${expected}" vào ô xác nhận để thực hiện.`,
+      400,
+      'CONFIRM_MISMATCH',
+    );
+  }
+}
+
+const adminOnly = [authenticate, authorize(UserRole.ADMIN)];
+
+// POST /dev-tools/purge/contests/preview  [admin]
+router.post('/purge/contests/preview', ...adminOnly, async (req, res, next) => {
+  try {
+    const provider = String((req.body as { provider?: string })?.provider ?? '');
+    const data = await inTransaction(false, (qr) => previewContestPurge(qr, provider));
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /dev-tools/purge/contests  [admin]
+router.post('/purge/contests', ...adminOnly, async (req, res, next) => {
+  try {
+    const provider = String((req.body as { provider?: string })?.provider ?? '');
+    const data = await inTransaction(true, async (qr) => {
+      const pv = await previewContestPurge(qr, provider);
+      // Xác nhận bằng EMAIL chủ sân, không phải bằng chuỗi người dùng tự gõ vào
+      // ô tìm kiếm: nhập id rồi xác nhận id thì không đọc lại được mình sắp xoá
+      // giải của ai.
+      assertConfirm(req.body, pv.provider.email);
+      await executeContestPurge(qr, pv.contestIds);
+      return { deleted: pv.contestIds.length, counts: pv.counts };
+    });
+    logger.warn('Purge', `xoá giải qua Contest Lab: ${provider}`, {
+      actor: (req as AuthRequest).user?.userId,
+    });
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Đọc bộ chọn từ thân yêu cầu: danh sách id ưu tiên hơn mẫu email. */
+function readSelector(body: unknown): { like: string } | { ids: string[] } {
+  const b = (body ?? {}) as { like?: string; ids?: unknown };
+  // Mảng RỖNG vẫn là chọn-theo-danh-sách. Rơi sang nhánh mẫu email thì lỗi trả
+  // về là "Thiếu mẫu email", trong khi người dùng đang ở bảng tick và chỉ quên
+  // chọn ai — thông báo chỉ sai chỗ chứ không sai ít.
+  if (Array.isArray(b.ids)) return { ids: b.ids.map(String) };
+  return { like: String(b.like ?? '') };
+}
+
+// POST /dev-tools/purge/users/preview  [admin]
+router.post('/purge/users/preview', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await inTransaction(false, (qr) => previewUserPurge(qr, readSelector(req.body)));
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /dev-tools/purge/users  [admin]
+router.post('/purge/users', ...adminOnly, async (req, res, next) => {
+  try {
+    const body = (req.body ?? {}) as { like?: string; hard?: boolean; cascade?: boolean };
+    const selector = readSelector(req.body);
+
+    const data = await inTransaction(true, async (qr) => {
+      const pv = await previewUserPurge(qr, selector);
+      // Chọn theo danh sách thì không có mẫu để gõ lại, nên xác nhận bằng SỐ
+      // LƯỢNG: buộc phải đọc bảng xem trước mới gõ đúng. Chọn theo mẫu thì gõ
+      // lại chính mẫu đó.
+      assertConfirm(
+        req.body,
+        'ids' in selector ? 'xoa ' + pv.users.length : String(body.like ?? ''),
+      );
+      if (!pv.users.length) return { affected: 0, mode: 'none' };
+      if (pv.nonCustomers.length) {
+        // Ở dòng lệnh có --include-staff, ở đây thì KHÔNG mở cửa đó: một nút web
+        // xoá được chủ sân là rủi ro không đáng đổi lấy tiện lợi.
+        throw new AppError(
+          'Mẫu này quét trúng ' +
+            pv.nonCustomers.map((u) => `${u.email} (${u.role})`).join(', ') +
+            '. Thu hẹp lại để chỉ còn tài khoản khách.',
+          409,
+          'PATTERN_HITS_NON_CUSTOMER',
+        );
+      }
+      const ids = pv.users.map((u) => u.id);
+      if (body.hard) {
+        await hardDeleteUsers(qr, ids, Boolean(body.cascade));
+        return { affected: ids.length, mode: 'hard' };
+      }
+      await softDeleteUsers(qr, ids);
+      return { affected: ids.length, mode: 'soft' };
+    });
+    logger.warn('Purge', 'dọn tài khoản qua Contest Lab', {
+      actor: (req as AuthRequest).user?.userId,
+    });
+    res.json({ success: true, data });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export { router as devToolsRouter };
