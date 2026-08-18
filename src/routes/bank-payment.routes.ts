@@ -102,3 +102,29 @@ bankTransactionRouter.post(
   authorize(UserRole.PROVIDER),
   bankPaymentController.ignoreTransaction,
 );
+
+// ── Đối soát sao kê: gộp mọi chi nhánh của một chủ sân ───────────────────────
+//
+// Không nằm dưới `/cafes/:cafeId` vì đây đúng là màn hình KHÔNG chọn chi nhánh
+// — chủ sân cần một con số tổng để so với sao kê, chứ không phải mở lần lượt
+// từng chi nhánh rồi tự cộng tay.
+//
+// PROVIDER và chỉ PROVIDER. Nhân viên đã có hàng đợi riêng ở
+// `/bank-transactions/pending`, và không có việc gì cần biết cả kỳ quán thu
+// được bao nhiêu.
+
+export const providerReconciliationRouter = Router();
+
+providerReconciliationRouter.get(
+  '/',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  bankPaymentController.listReconciliation,
+);
+
+providerReconciliationRouter.get(
+  '/export',
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  bankPaymentController.exportReconciliation,
+);

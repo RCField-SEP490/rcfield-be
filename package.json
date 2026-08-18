@@ -44,7 +44,8 @@
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
-    "prepare": "husky"
+    "prepare": "husky",
+    "purge": "ts-node --transpile-only src/scripts/purge-data.ts"
   },
   "lint-staged": {
     "src/**/*.ts": [

@@ -27,6 +27,9 @@ textarea{font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:70px
 .grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
 @media(max-width:700px){.grid4{grid-template-columns:1fr 1fr}}
 .tabs{display:flex;gap:6px;margin-bottom:14px}
+.subbox,.acct{border:1px solid #2b3648;border-radius:10px;padding:14px;margin-top:12px;background:#0e1626}
+.subbox h3,.acct h3{margin:0 0 10px;font-size:13px;font-weight:700;color:#cfe0f5}
+.acct-role{font-weight:400;font-size:11px;color:#7d8ea6;margin-left:6px}
 details>summary{cursor:pointer;font-size:12px;font-weight:700;color:#8fa3bf;
      text-transform:uppercase;letter-spacing:.06em;list-style:none;padding:2px 0}
 details>summary::-webkit-details-marker{display:none}
@@ -36,6 +39,9 @@ details>summary:hover{color:#cfe0f5}
 .tab{background:#131c2e;border:1px solid #2b3648;color:#8fa3bf;font-weight:600;
      padding:9px 18px;border-radius:8px;cursor:pointer}
 .tab.on{background:#1d6feb;border-color:#1d6feb;color:#fff}
+.tab-danger{color:#e88}
+.tab-danger.on{background:#a33;border-color:#a33;color:#fff}
+.danger-note{border-left:3px solid #a33;padding-left:10px}
 label.inline{display:flex;align-items:center;gap:8px;margin:10px 0 0;font-weight:400;
      text-transform:none;letter-spacing:0;cursor:pointer}
 label.inline input{width:auto;margin:0}
@@ -118,6 +124,62 @@ export function renderContestLab(assetQuery = ''): string {
       <button class="tab on" data-tab="lab">Dựng giải đấu</button>
       <button class="tab" data-tab="users">Tạo tài khoản</button>
       <button class="tab" data-tab="cafes">Tạo chi nhánh</button>
+      <button class="tab tab-danger" data-tab="purge">Dọn dữ liệu</button>
+    </div>
+
+    <div id="tabPurge" style="display:none">
+    <div class="panel">
+      <h2>Dọn dữ liệu thử</h2>
+      <p class="hint danger-note">Xoá thật, không hoàn tác được. Luôn <b>Xem trước</b> rồi đọc kỹ
+        bảng số liệu; nút xoá chỉ mở sau khi bạn gõ lại đúng mục tiêu vào ô xác nhận.
+        Cần đăng nhập quản trị viên ở mục 1.</p>
+
+      <div class="subbox">
+        <h3>Giải của một chủ sân <span class="acct-role">xoá hẳn giải, đăng ký, trận, đơn phí</span></h3>
+        <div class="grid2">
+          <div><label>Email hoặc id chủ sân</label><input id="pgProvider" value="tri-provider@gmail.com"></div>
+          <div><label>&nbsp;</label>
+            <button class="ghost" id="btnPgContestPreview" style="width:100%">Xem trước</button></div>
+        </div>
+        <div id="pgContestPreview" class="picker">Chưa xem trước.</div>
+        <div class="grid2">
+          <div><label>Gõ lại email chủ sân để xác nhận</label><input id="pgContestConfirm"></div>
+          <div><label>&nbsp;</label>
+            <button class="warn" id="btnPgContestRun" style="width:100%">Xoá giải</button></div>
+        </div>
+        <p class="hint">Phiếu đặt sân KHÔNG bị xoá — chỉ gỡ liên kết tới giải. Tiền của phiếu là
+          tiền thật.</p>
+      </div>
+
+      <div class="subbox">
+        <h3>Tài khoản thử <span class="acct-role">chỉ tài khoản khách</span></h3>
+        <div class="row">
+          <button class="ghost" id="btnPgLoadUsers">Nạp danh sách khách</button>
+          <button class="ghost" id="btnPgAll">Chọn hết đang hiện</button>
+          <button class="ghost" id="btnPgNone">Bỏ chọn</button>
+        </div>
+        <input id="pgSearch" placeholder="Lọc theo email hoặc tên…" style="margin-top:8px">
+        <div id="pgList" class="picker">Bấm <b>Nạp danh sách khách</b> để chọn từng người.</div>
+        <div class="row">
+          <button class="ghost" id="btnPgUserPreview">Xem trước người đã chọn</button>
+        </div>
+        <div id="pgUserPreview" class="picker">Chưa xem trước.</div>
+        <label class="inline"><input type="checkbox" id="pgHard">
+          Xoá hẳn thay vì khoá mềm — chỉ được khi tài khoản không còn bản ghi nào trỏ tới</label>
+        <label class="inline"><input type="checkbox" id="pgCascade">
+          Xoá kèm dữ liệu riêng của khách (gói, đánh giá). Chặn nếu còn phiếu đặt sân hoặc khoản
+          đã đối soát ngân hàng</label>
+        <div class="grid2">
+          <div><label id="pgConfirmLabel">Gõ <code>xoa &lt;số lượng&gt;</code> để xác nhận</label>
+            <input id="pgUserConfirm" placeholder="ví dụ: xoa 4"></div>
+          <div><label>&nbsp;</label>
+            <button class="warn" id="btnPgUserRun" style="width:100%">Thực hiện</button></div>
+        </div>
+        <p class="hint">Khoá mềm là mặc định: tài khoản biến mất khỏi ứng dụng, không đăng nhập
+          được, lịch sử vẫn giữ nguyên. Mẫu quét trúng chủ sân hay nhân viên thì bị chặn — muốn
+          làm vậy phải dùng dòng lệnh.</p>
+      </div>
+    </div>
     </div>
 
     <div id="tabCafes" style="display:none">
@@ -178,67 +240,51 @@ export function renderContestLab(assetQuery = ''): string {
     <div id="tabLab">
     <div class="panel">
       <h2>1 · Tài khoản</h2>
-      <label>Provider lấy đâu ra</label>
-      <select id="pMode">
-        <option value="existing">Dùng tài khoản có sẵn</option>
-        <option value="new">Tạo mới qua API — KHÔNG dùng được nữa</option>
-      </select>
-      <div class="grid2">
-        <div><label>Provider — email</label><input id="pEmail" value="provider@gmail.com"></div>
-        <div><label>Provider — mật khẩu</label><input id="pPwd" value="123456"></div>
+      <p class="hint">Hai tài khoản KHÁC NHAU, làm hai việc khác nhau. Trộn chung một khối thì
+        nhìn vào không biết ô nào của ai, và gõ nhầm mật khẩu bên này sang bên kia là bị khoá
+        đăng nhập 15 phút.</p>
+
+      <div class="acct">
+        <h3>Chủ sân <span class="acct-role">tạo giải, duyệt đăng ký, điểm danh</span></h3>
+        <div class="grid2">
+          <div><label>Email</label><input id="pEmail" value="tri-provider@gmail.com"></div>
+          <div><label>Mật khẩu</label><input id="pPwd" value="12345678" type="password"></div>
+        </div>
+        <div class="row">
+          <button class="ghost" id="btnProviderCafes">Đăng nhập &amp; nạp chi nhánh</button>
+        </div>
+        <p class="hint" id="provStatus">Chưa đăng nhập — ô chi nhánh ở mục 2 còn trống.</p>
+        <p class="hint">Phải là tài khoản đã có hồ sơ đối tác <b>được duyệt</b>, không thì mọi
+          API của chủ sân trả <code>ACCOUNT_NOT_ACTIVE</code>.</p>
       </div>
-      <div class="grid2">
-        <div><label>Admin — email</label><input id="aEmail" value="admin@gmail.com"></div>
-        <div><label>Admin — mật khẩu</label><input id="aPwd" value="123456"></div>
+
+      <div class="acct">
+        <h3>Quản trị viên <span class="acct-role">xác nhận phí, đọc danh sách khách</span></h3>
+        <div class="grid2">
+          <div><label>Email</label><input id="aEmail" value="admin@gmail.com"></div>
+          <div><label>Mật khẩu</label><input id="aPwd" value="123456" type="password"></div>
+        </div>
+        <div class="row">
+          <button class="ghost" id="btnAdminLogin">Đăng nhập</button>
+        </div>
+        <p class="hint" id="adminStatus">Chưa đăng nhập. Không bắt buộc bấm — các bước cần
+          quyền quản trị sẽ tự đăng nhập bằng thông tin ở trên.</p>
       </div>
-      <p class="hint">Phải là provider đã có hồ sơ đối tác <b>được duyệt</b>, không thì mọi API
-        của provider trả <code>ACCOUNT_NOT_ACTIVE</code>. Chế độ tạo mới đã ngừng hoạt động vì
-        đăng ký đối tác nay đòi mã số thuế có thật và ba ảnh giấy tờ KYC.</p>
-      <div class="row">
-        <button class="ghost" id="btnProviderCafes">Đăng nhập &amp; nạp chi nhánh của provider này</button>
-      </div>
-      <p class="hint" id="provStatus">Chưa đăng nhập — ô chi nhánh ở mục 2 còn trống.
-        Chi nhánh của provider khác không hiện ra, vì chọn nhầm là tạo giải bị từ chối.</p>
     </div>
 
     <div class="panel">
-      <h2>2 · Vận động viên</h2>
-      <div class="grid2">
-        <div><label>Mật khẩu chung của vận động viên</label><input id="athPwd" value="123456"></div>
-        <div><label>&nbsp;</label>
-          <p class="hint" style="margin:0">Ai khác mật khẩu thì viết
-            <code>email:mật_khẩu</code> ở dòng của người đó.</p></div>
-      </div>
-      <label>Vận động viên</label>
-      <div class="row">
-        <button class="ghost" id="btnLoadCustomers">Chọn từ tài khoản có sẵn</button>
-        <button class="ghost" id="btnPickAll">Chọn hết đang hiện</button>
-        <button class="ghost" id="btnPickNone">Bỏ chọn</button>
-        <input id="pickN" type="number" min="1" value="16" style="width:74px">
-        <button class="ghost" id="btnPickRandom">Lấy ngẫu nhiên</button>
-      </div>
-      <input id="custSearch" placeholder="Lọc theo email hoặc tên…" style="margin-top:8px">
-      <div id="custList" class="picker">Bấm <b>Chọn từ tài khoản có sẵn</b> để nạp danh sách.</div>
-      <p class="hint" id="pickStatus">Chưa chọn ai.</p>
-      <label>Email vận động viên — mỗi dòng một người</label>
-      <textarea id="athletes">contest.customer1@gmail.com
-contest.customer2@gmail.com
-contest.customer3@gmail.com
-contest.customer4@gmail.com</textarea>
-      <p class="hint">Ô này vẫn là nguồn duy nhất công cụ đọc — chọn ở trên chỉ để điền nhanh vào đây,
-        gõ tay hay dán thêm đều được. Tài khoản chưa tồn tại thì công cụ <b>tự đăng ký</b> qua API.</p>
-    </div>
-
-    <div class="panel">
-      <h2>3 · Thông tin giải</h2>
+      <h2>2 · Thông tin giải</h2>
       <div class="grid2">
         <div><label>Tên giải</label><input id="cName" value="Giải thử nghiệm"></div>
         <div><label>Sức chứa</label><input id="cCap" type="number" value="16"></div>
       </div>
       <div class="grid3">
-        <div><label>Loại giải</label><select id="cType"></select></div>
-        <div><label>Thể thức</label><select id="cFormat"></select></div>
-        <div><label>Khuôn mẫu</label><select id="cTemplate"></select></div>
+        <div style="grid-column:span 2">
+          <label>Khuôn mẫu giải</label><select id="cTemplate"></select>
+        </div>
+        <div><label>&nbsp;</label>
+          <p class="hint" id="tplStatus" style="margin:0">Khuôn mẫu đã gắn sẵn loại giải và thể thức.</p>
+        </div>
       </div>
       <div class="grid3">
         <div><label>Chi nhánh</label><select id="cCafe"></select></div>
@@ -270,6 +316,34 @@ contest.customer4@gmail.com</textarea>
       <div class="row"><button class="ghost" id="btnLoad">Nạp lại danh mục</button></div>
       <p class="hint" id="catStatus">Đang nạp danh mục…</p>
       <p class="hint" id="trackStatus">Loại sân lấy theo chi nhánh đang chọn.</p>
+    </div>
+
+    <div class="panel">
+      <h2>3 · Vận động viên</h2>
+      <div class="grid2">
+        <div><label>Mật khẩu chung của vận động viên</label><input id="athPwd" value="123456"></div>
+        <div><label>&nbsp;</label>
+          <p class="hint" style="margin:0">Ai khác mật khẩu thì viết
+            <code>email:mật_khẩu</code> ở dòng của người đó.</p></div>
+      </div>
+      <label>Vận động viên</label>
+      <div class="row">
+        <button class="ghost" id="btnLoadCustomers">Chọn từ tài khoản có sẵn</button>
+        <button class="ghost" id="btnPickAll">Chọn hết đang hiện</button>
+        <button class="ghost" id="btnPickNone">Bỏ chọn</button>
+        <input id="pickN" type="number" min="1" value="16" style="width:74px">
+        <button class="ghost" id="btnPickRandom">Lấy ngẫu nhiên</button>
+      </div>
+      <input id="custSearch" placeholder="Lọc theo email hoặc tên…" style="margin-top:8px">
+      <div id="custList" class="picker">Bấm <b>Chọn từ tài khoản có sẵn</b> để nạp danh sách.</div>
+      <p class="hint" id="pickStatus">Chưa chọn ai.</p>
+      <label>Email vận động viên — mỗi dòng một người</label>
+      <textarea id="athletes">contest.customer1@gmail.com
+contest.customer2@gmail.com
+contest.customer3@gmail.com
+contest.customer4@gmail.com</textarea>
+      <p class="hint">Ô này vẫn là nguồn duy nhất công cụ đọc — chọn ở trên chỉ để điền nhanh vào đây,
+        gõ tay hay dán thêm đều được. Tài khoản chưa tồn tại thì công cụ <b>tự đăng ký</b> qua API.</p>
     </div>
 
     <div class="panel">
@@ -419,7 +493,11 @@ async function call(method, path, body, token) {
     const msg = (json && (json.message || json.error)) || ('HTTP ' + res.status);
     const code = json && json.code ? ' [' + json.code + ']' : '';
     log('err', '  ✗ ' + res.status + code + ' ' + msg);
-    throw new Error(msg);
+    // Gắn mã HTTP vào lỗi: chỗ gọi cần phân biệt 401 với mọi lỗi khác, và
+    // dò chuỗi thông báo thì đổi câu chữ một lần là hỏng.
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   log('ok', '  ✓ ' + res.status + '  ' + short(json && json.data !== undefined ? json.data : json));
   return json && json.data !== undefined ? json.data : json;
@@ -628,27 +706,10 @@ function fillSelect(id, rows, labelKey) {
 const STEPS = [
   {
     name: 'Chuẩn bị tài khoản provider và admin',
-    api: 'POST /auth/login · /auth/register-provider · /admin/providers/:id/approve',
+    api: 'POST /auth/login  (chủ sân và quản trị viên)',
     run: async () => {
       const a = await login($('aEmail').value, $('aPwd').value);
       ctx.adminToken = a.token;
-
-      if ($('pMode').value === 'new') {
-        // Chế độ này KHÔNG còn chạy được, và nó hỏng vì hai chốt chặn thật chứ
-        // không phải vì công cụ viết sai:
-        //
-        //  1. /auth/register-provider đối chiếu mã số thuế với dữ liệu Cục Thuế
-        //     qua VietQR. Mã sinh từ dấu thời gian không có thật, luôn ăn
-        //     TAX_CODE_NOT_FOUND.
-        //  2. Hồ sơ còn bắt buộc ba ảnh giấy tờ KYC gửi dạng multipart. Công cụ
-        //     gửi JSON nên kể cả qua được mã số thuế vẫn dừng ở MISSING_DOCUMENTS.
-        //
-        // Cả hai đều đúng — không nên nới ra chỉ để công cụ thử chạy được. Nên
-        // báo thẳng thay vì để người dùng nhận lỗi mã số thuế và tưởng mình gõ sai.
-        throw new Error('Chế độ "tạo mới qua API" không dùng được nữa: đăng ký đối tác ' +
-          'bắt buộc mã số thuế CÓ THẬT (đối chiếu Cục Thuế) và ba ảnh giấy tờ KYC. ' +
-          'Hãy chọn "Dùng tài khoản có sẵn" với một provider đã được duyệt.');
-      }
 
       const p = await login($('pEmail').value, $('pPwd').value);
       ctx.providerToken = p.token; ctx.providerId = p.user.id;
@@ -739,6 +800,8 @@ const STEPS = [
         ctx.cafeId = ctx.cafeId || $('cCafe').value;
         return 'dùng lại giải đang dở — ' + cur.status + ' ' + ctx.contestId.slice(0, 8) + '…';
       }
+      const tpl = selectedTemplate();
+      if (!tpl) throw new Error('Chưa chọn khuôn mẫu giải — bấm "Nạp lại danh mục" rồi chọn một cái.');
       const days = Number($('cDays').value);
       // Chạy lô và kịch bản lệch cần đổi vài tham số so với ô nhập trên form —
       // ví dụ sức chứa nhỏ hơn số người để kiểm chốt chặn. Ghi đè qua ctx thay
@@ -748,9 +811,11 @@ const STEPS = [
         name: $('cName').value +
           (ctx.nameSuffix ? ' — ' + ctx.nameSuffix : '') +
           ' ' + new Date().toLocaleTimeString('vi-VN'),
-        contest_type_id: $('cType').value,
-        contest_format_id: $('cFormat').value,
-        contest_template_id: $('cTemplate').value,
+        // Lấy từ chính khuôn mẫu, không đọc ô riêng: backend đối chiếu ba giá
+        // trị này với nhau và từ chối nếu lệch.
+        contest_type_id: tpl.contestTypeId || tpl.contest_type_id,
+        contest_format_id: tpl.contestFormatId || tpl.contest_format_id,
+        contest_template_id: tpl.id,
         track_type_id: $('cTrack').value,
         participating_cafe_ids: [$('cCafe').value],
         starts_at: isoIn(days, 9),
@@ -1361,6 +1426,11 @@ const SCENARIOS = {
       await runRange(STEP.CREATE, STEP.OPEN + 1);
       await runRange(STEP.REGISTER, STEP.REGISTER + 1);
 
+      // Xử phí cho những người đã vào được. Bỏ qua bước này thì họ nằm ở
+      // PENDING_PAYMENT và job dọn huỷ hết sau 30 phút — giải vừa dựng để xem
+      // chốt chặn sức chứa sẽ tự rỗng đi, và lần sau mở lên không còn gì.
+      await runRange(STEP.ENTRY_FEE, STEP.ENTRY_FEE + 1);
+
       const accepted = ctx.registrations.length;
       const rejected = ctx.capacityRejected.length;
       ctx.expectCapacity = false;
@@ -1395,11 +1465,50 @@ async function runScenario(key) {
 }
 
 // Chi nhánh KHÔNG nằm trong danh mục chung — xem chú thích ở loadMyCafes.
+/**
+ * Chỉ KHUÔN MẪU có ô để chọn.
+ *
+ * Mỗi khuôn mẫu ghim sẵn đúng một cặp loại giải + thể thức
+ * (contest_templates.contest_type_id và contest_format_id). Để ba ô rời
+ * nhau thì với 2 loại × 3 thể thức × 3 khuôn mẫu có 18 tổ hợp mà chỉ 3 hợp lệ
+ * — 15 tổ hợp còn lại bị backend từ chối bằng CONTEST_TEMPLATE_MISMATCH, và
+ * người dùng chọn xong mới biết mình sai.
+ *
+ * Loại giải và thể thức suy ra từ khuôn mẫu, hiện ra để đọc chứ không cho sửa.
+ */
 const CATALOG = [
-  { sel: 'cType', path: '/contest-catalog/types', label: 'loại giải' },
-  { sel: 'cFormat', path: '/contest-catalog/formats', label: 'thể thức' },
   { sel: 'cTemplate', path: '/contest-catalog/templates', label: 'khuôn mẫu' },
 ];
+
+/** Danh mục loại giải và thể thức — chỉ để tra TÊN cho khuôn mẫu đang chọn. */
+async function loadTemplateLookups() {
+  const flat = (x) => (Array.isArray(x) ? x : (x && x.data) || []);
+  const [types, formats] = await Promise.all([
+    call('GET', '/contest-catalog/types').then(flat).catch(() => []),
+    call('GET', '/contest-catalog/formats').then(flat).catch(() => []),
+  ]);
+  ctx.typeNames = {};
+  types.forEach((t) => { ctx.typeNames[t.id] = t.name; });
+  ctx.formatNames = {};
+  formats.forEach((f) => { ctx.formatNames[f.id] = f.name; });
+}
+
+/** Khuôn mẫu đang chọn, kèm hai id nó ghim sẵn. */
+function selectedTemplate() {
+  const id = $('cTemplate').value;
+  return (ctx.templates || []).find((t) => t.id === id) || null;
+}
+
+/** Hiện loại giải và thể thức suy ra, để người dùng thấy mình sắp tạo cái gì. */
+function showTemplateDerived() {
+  const st = $('tplStatus');
+  const tpl = selectedTemplate();
+  if (!tpl) { st.textContent = 'Chưa chọn khuôn mẫu.'; return; }
+  const typeId = tpl.contestTypeId || tpl.contest_type_id;
+  const formatId = tpl.contestFormatId || tpl.contest_format_id;
+  st.innerHTML = 'Loại giải <b>' + ((ctx.typeNames || {})[typeId] || '?') +
+    '</b> · thể thức <b>' + ((ctx.formatNames || {})[formatId] || '?') + '</b>';
+}
 
 /**
  * Ô chi nhánh chỉ liệt kê chi nhánh CỦA provider đang đăng nhập.
@@ -1421,14 +1530,21 @@ async function loadMyCafes() {
 
   let res;
   try {
-    res = await call('GET', '/cafes?limit=50', null, ctx.providerToken);
+    // Token khôi phục từ phiên trước có thể đã hết hạn — JWT sống 1 giờ. Mật
+    // khẩu vẫn nằm sẵn trong form nên tự đăng nhập lại, thay vì bắt người dùng
+    // bấm thêm một nút để làm đúng việc mà công cụ tự làm được.
+    res = await thuLaiKhiHetHan(
+      () => call('GET', '/cafes?limit=50', null, ctx.providerToken),
+      async () => {
+        const p = await login($('pEmail').value, $('pPwd').value);
+        ctx.providerToken = p.token;
+        ctx.providerId = p.user.id;
+      },
+    );
   } catch (e) {
-    // Token khôi phục từ phiên trước có thể đã hết hạn — JWT sống 1 giờ. Không
-    // dọn ở đây thì mọi bước sau ăn 401 và trông như hệ thống hỏng, chứ không
-    // như phiên đã hết hạn.
     ctx.providerToken = null; ctx.providerId = null;
     fillSelect('cCafe', [], 'name');
-    st.textContent = 'Phiên đăng nhập trước đã hết hạn — bấm nút trên để đăng nhập lại.';
+    st.textContent = 'Không đăng nhập lại được: ' + e.message;
     return [];
   }
   const rows = res.data || res;
@@ -1505,7 +1621,11 @@ async function callDev(path, token) {
   if (!res.ok) {
     const msg = (json && (json.message || json.error)) || ('HTTP ' + res.status);
     log('err', '  ✗ ' + res.status + ' ' + msg);
-    throw new Error(msg);
+    // Gắn mã HTTP vào lỗi: chỗ gọi cần phân biệt 401 với mọi lỗi khác, và
+    // dò chuỗi thông báo thì đổi câu chữ một lần là hỏng.
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   log('ok', '  ✓ ' + res.status + '  ' + short(json && json.data !== undefined ? json.data : json));
   return json && json.data !== undefined ? json.data : json;
@@ -1570,16 +1690,45 @@ function visibleCustomers() {
     (c.full_name || '').toLowerCase().indexOf(term) >= 0);
 }
 
+/**
+ * Chạy một lời gọi cần token, tự đăng nhập lại đúng MỘT lần khi token hết hạn.
+ *
+ * Token được lưu trong localStorage nên sống qua F5, nhưng JWT chỉ có hiệu lực
+ * một giờ. Không tự làm mới thì mọi nút bấm sau một tiếng đều trả 401, và câu
+ * "Token invalid or expired" không nói cho người dùng biết phải làm gì — trong
+ * khi mật khẩu vẫn đang nằm sẵn trong form ngay trên màn hình.
+ *
+ * Chỉ thử lại một lần: đăng nhập lại mà vẫn 401 thì lỗi nằm ở tài khoản, thử
+ * mãi chỉ tốn thêm lượt và có thể chạm bộ đếm chống dò mật khẩu.
+ */
+async function thuLaiKhiHetHan(goi, dangNhapLai) {
+  try {
+    return await goi();
+  } catch (e) {
+    if (e.status !== 401) throw e;
+    log('dim', '  (token hết hạn — đăng nhập lại)');
+    await dangNhapLai();
+    return goi();
+  }
+}
+
+/** Token admin còn hiệu lực, đăng nhập nếu chưa có. */
+async function layTokenAdmin() {
+  const a = await login($('aEmail').value, $('aPwd').value);
+  ctx.adminToken = a.token;
+  return a.token;
+}
+
 async function loadCustomers() {
   const box = $('custList');
   box.textContent = 'Đang nạp…';
   // Danh sách khách chỉ admin đọc được. Đăng nhập ngay tại đây thay vì bắt chạy
   // bước 1 trước — người dùng bấm nút này lúc còn đang điền form.
-  if (!ctx.adminToken) {
-    const a = await login($('aEmail').value, $('aPwd').value);
-    ctx.adminToken = a.token;
-  }
-  ctx.customers = await callDev('/dev-tools/customers?limit=500', ctx.adminToken);
+  if (!ctx.adminToken) await layTokenAdmin();
+  ctx.customers = await thuLaiKhiHetHan(
+    () => callDev('/dev-tools/customers?limit=500', ctx.adminToken),
+    layTokenAdmin,
+  );
   ctx.picked = ctx.picked || [];
   renderCustomers();
   log('ok', 'Đã nạp ' + ctx.customers.length + ' tài khoản khách.');
@@ -2123,6 +2272,7 @@ async function generateUsers() {
 
 async function loadCatalog() {
   const flat = (x) => (Array.isArray(x) ? x : (x && x.data) || []);
+  await loadTemplateLookups();
   const results = await Promise.allSettled(CATALOG.map((c) => call('GET', c.path)));
   const ok = [];
   const bad = [];
@@ -2130,6 +2280,7 @@ async function loadCatalog() {
     const c = CATALOG[i];
     if (r.status === 'fulfilled') {
       const rows = flat(r.value);
+      if (c.sel === 'cTemplate') ctx.templates = rows;
       fillSelect(c.sel, rows, 'name');
       ok.push(rows.length + ' ' + c.label);
     } else {
@@ -2141,6 +2292,7 @@ async function loadCatalog() {
   st.textContent = bad.length
     ? 'Nạp thiếu — hỏng: ' + bad.join('; ')
     : 'Đã nạp: ' + ok.join(' · ');
+  showTemplateDerived();
   // Chi nhánh phụ thuộc vào việc đã đăng nhập provider hay chưa, nên nạp riêng.
   await loadMyCafes();
   if (bad.length) throw new Error(bad.join('; '));
@@ -2176,6 +2328,21 @@ $('btnProviderCafes').onclick = async () => {
   }
 };
 
+$('btnAdminLogin').onclick = async () => {
+  const st = $('adminStatus');
+  st.textContent = 'Đang đăng nhập…';
+  try {
+    // Dùng lại đúng hàm mà các bước dùng, để trạng thái hiện ở đây không lệch
+    // với token các bước thật sự cầm.
+    await layTokenAdmin();
+    st.textContent = 'Đã đăng nhập quản trị viên.';
+  } catch (e) {
+    ctx.adminToken = null;
+    st.textContent = 'Không đăng nhập được: ' + e.message;
+    log('err', e.message);
+  }
+};
+
 $('btnBatch').onclick = () => runBatch();
 
 // ── Chuyển tab ───────────────────────────────────────────────────────────────
@@ -2188,6 +2355,7 @@ document.querySelectorAll('[data-tab]').forEach((b) => {
     $('tabLab').style.display = b.dataset.tab === 'lab' ? '' : 'none';
     $('tabUsers').style.display = b.dataset.tab === 'users' ? '' : 'none';
     $('tabCafes').style.display = b.dataset.tab === 'cafes' ? '' : 'none';
+    $('tabPurge').style.display = b.dataset.tab === 'purge' ? '' : 'none';
   };
 });
 
@@ -2202,6 +2370,216 @@ $('btnAdoptContest').onclick = async () => {
   try { await adoptContest($('pickContest').value); } catch (e) {
     $('adoptStatus').textContent = 'Không đi tiếp được: ' + e.message;
     log('err', e.message);
+  }
+};
+
+
+// ── Dọn dữ liệu thử ──────────────────────────────────────────────────────────
+//
+// Xem trước và thực hiện là hai endpoint riêng, và endpoint xoá còn đòi gõ lại
+// đúng mục tiêu. Bấm nhầm một nút không đủ để mất dữ liệu.
+
+/** Gọi endpoint dọn dữ liệu, tự đăng nhập lại nếu token admin hết hạn. */
+async function callPurge(path, body) {
+  if (!ctx.adminToken) await layTokenAdmin();
+  return thuLaiKhiHetHan(
+    () => callDevPost(path, body, ctx.adminToken),
+    layTokenAdmin,
+  );
+}
+
+async function callDevPost(path, body, token) {
+  log('req', 'POST ' + path + '  ' + short(body));
+  const res = await fetch(location.origin + devPath(path), {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' },
+      token ? { Authorization: 'Bearer ' + token } : {}),
+    body: JSON.stringify(body),
+  });
+  let json = null;
+  try { json = await res.json(); } catch (e) { json = null; }
+  if (!res.ok) {
+    const msg = (json && (json.message || json.error)) || ('HTTP ' + res.status);
+    log('err', '  ✗ ' + res.status + ' ' + msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  log('ok', '  ✓ ' + res.status + '  ' + short(json && json.data !== undefined ? json.data : json));
+  return json && json.data !== undefined ? json.data : json;
+}
+
+function renderCounts(boxId, counts, empty) {
+  const box = $(boxId);
+  if (!counts || !counts.length) { box.textContent = empty; return; }
+  box.className = 'built';
+  box.innerHTML = counts.map((c) =>
+    '<div><b>' + c.table + '</b> ' + c.count + '</div>').join('');
+}
+
+$('btnPgContestPreview').onclick = async () => {
+  const box = $('pgContestPreview');
+  box.textContent = 'Đang đếm…';
+  try {
+    const pv = await callPurge('/dev-tools/purge/contests/preview',
+      { provider: $('pgProvider').value.trim() });
+    if (!pv.counts.length) {
+      box.className = 'picker';
+      box.textContent = 'Chủ sân ' + pv.provider.email + ' không có giải nào.';
+      return;
+    }
+    renderCounts('pgContestPreview', pv.counts, '');
+    log('dim', 'Xác nhận bằng email: ' + pv.provider.email);
+  } catch (e) {
+    box.className = 'picker'; box.textContent = 'Không xem trước được: ' + e.message;
+  }
+};
+
+$('btnPgContestRun').onclick = async () => {
+  const box = $('pgContestPreview');
+  try {
+    const r = await callPurge('/dev-tools/purge/contests', {
+      provider: $('pgProvider').value.trim(),
+      confirm: $('pgContestConfirm').value.trim(),
+    });
+    box.className = 'picker';
+    box.textContent = 'Đã xoá ' + r.deleted + ' giải.';
+    $('pgContestConfirm').value = '';
+    log('ok', '── Đã xoá ' + r.deleted + ' giải ──');
+  } catch (e) {
+    box.className = 'picker'; box.textContent = 'Không xoá được: ' + e.message;
+  }
+};
+
+
+// ── Bảng chọn tài khoản để dọn ───────────────────────────────────────────────
+//
+// Giữ state RIÊNG với bảng chọn vận động viên. Dùng chung ctx.picked thì tick
+// một người để cho thi đấu lại vô tình đưa họ vào danh sách xoá — hai việc trái
+// ngược nhau dùng chung một ô nhớ là chuyện chỉ chờ ngày hỏng.
+
+function pgVisible() {
+  const term = $('pgSearch').value.trim().toLowerCase();
+  return (ctx.pgUsers || []).filter((c) =>
+    !term || c.email.toLowerCase().indexOf(term) >= 0 ||
+    (c.full_name || '').toLowerCase().indexOf(term) >= 0);
+}
+
+function renderPgList() {
+  const box = $('pgList');
+  const rows = pgVisible();
+  if (!rows.length) {
+    box.className = 'picker';
+    box.innerHTML = (ctx.pgUsers || []).length ? 'Không ai khớp bộ lọc.' : 'Chưa nạp danh sách.';
+    return;
+  }
+  const chon = new Set(ctx.pgPicked || []);
+  box.className = 'picker';
+  box.innerHTML = '';
+  rows.forEach((c) => {
+    const lb = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = chon.has(c.id);
+    cb.onchange = () => {
+      const set = new Set(ctx.pgPicked || []);
+      if (cb.checked) set.add(c.id); else set.delete(c.id);
+      ctx.pgPicked = Array.from(set);
+      showPgCount();
+    };
+    const em = document.createElement('span');
+    em.className = 'em'; em.textContent = c.email;
+    const nm = document.createElement('span');
+    nm.className = 'nm'; nm.textContent = c.full_name || '';
+    lb.appendChild(cb); lb.appendChild(em); lb.appendChild(nm);
+    box.appendChild(lb);
+  });
+}
+
+function showPgCount() {
+  const n = (ctx.pgPicked || []).length;
+  $('pgConfirmLabel').innerHTML = n
+    ? 'Gõ <code>xoa ' + n + '</code> để xác nhận'
+    : 'Gõ <code>xoa &lt;số lượng&gt;</code> để xác nhận';
+}
+
+$('btnPgLoadUsers').onclick = async () => {
+  const box = $('pgList');
+  box.textContent = 'Đang nạp…';
+  try {
+    if (!ctx.adminToken) await layTokenAdmin();
+    ctx.pgUsers = await thuLaiKhiHetHan(
+      () => callDev('/dev-tools/customers?limit=500', ctx.adminToken),
+      layTokenAdmin,
+    );
+    ctx.pgPicked = ctx.pgPicked || [];
+    renderPgList(); showPgCount();
+  } catch (e) {
+    box.textContent = 'Không nạp được: ' + e.message;
+  }
+};
+
+$('pgSearch').oninput = () => renderPgList();
+
+$('btnPgAll').onclick = () => {
+  const set = new Set(ctx.pgPicked || []);
+  pgVisible().forEach((c) => set.add(c.id));
+  ctx.pgPicked = Array.from(set);
+  renderPgList(); showPgCount();
+};
+
+$('btnPgNone').onclick = () => {
+  ctx.pgPicked = [];
+  renderPgList(); showPgCount();
+};
+
+$('btnPgUserPreview').onclick = async () => {
+  const box = $('pgUserPreview');
+  box.textContent = 'Đang đếm…';
+  try {
+    const pv = await callPurge('/dev-tools/purge/users/preview', { ids: ctx.pgPicked || [] });
+    if (!pv.users.length) {
+      box.className = 'picker'; box.textContent = 'Không tài khoản nào khớp.';
+      return;
+    }
+    box.className = 'built';
+    const canhBao = pv.nonCustomers.length
+      ? '<div class="sc-bad">Quét trúng ' + pv.nonCustomers.length +
+        ' tài khoản KHÔNG phải khách — thu hẹp mẫu lại.</div>'
+      : '';
+    box.innerHTML = canhBao +
+      '<div><b>' + pv.users.length + '</b> tài khoản khớp</div>' +
+      (pv.references.length
+        ? pv.references.map((r) => '<div>' + r.table + ' — ' + r.count + '</div>').join('')
+        : '<div class="sc-ok">Không bản ghi nào trỏ tới — xoá hẳn được.</div>');
+  } catch (e) {
+    box.className = 'picker'; box.textContent = 'Không xem trước được: ' + e.message;
+  }
+};
+
+$('btnPgUserRun').onclick = async () => {
+  const box = $('pgUserPreview');
+  try {
+    const r = await callPurge('/dev-tools/purge/users', {
+      ids: ctx.pgPicked || [],
+      hard: $('pgHard').checked,
+      cascade: $('pgCascade').checked,
+      confirm: $('pgUserConfirm').value.trim(),
+    });
+    box.className = 'picker';
+    box.textContent = r.mode === 'hard'
+      ? 'Đã xoá hẳn ' + r.affected + ' tài khoản.'
+      : r.mode === 'soft'
+        ? 'Đã khoá mềm ' + r.affected + ' tài khoản — không đăng nhập được, lịch sử vẫn còn.'
+        : 'Không có tài khoản nào để xử lý.';
+    $('pgUserConfirm').value = '';
+    // Xoá xong thì bỏ chọn: để nguyên là lần bấm sau nhắm vào những người
+    // không còn tồn tại, và thông báo lỗi sẽ khó hiểu.
+    ctx.pgPicked = []; ctx.pgUsers = [];
+    renderPgList(); showPgCount();
+    log('ok', '── Dọn tài khoản: ' + r.mode + ' ' + r.affected + ' ──');
+  } catch (e) {
+    box.className = 'picker'; box.textContent = 'Không thực hiện được: ' + e.message;
   }
 };
 
@@ -2278,6 +2656,7 @@ $('btnReset').onclick = () => {
 };
 
 $('cCafe').onchange = () => loadTrackTypesForCafe();
+$('cTemplate').onchange = () => showTemplateDerived();
 
 $('btnClear').onclick = () => { logBox.innerHTML = '<span class="l-dim">Đã xoá.</span>'; };
 $('btnCopy').onclick = () => navigator.clipboard.writeText(logBox.innerText);
@@ -2286,12 +2665,12 @@ $('btnCopy').onclick = () => navigator.clipboard.writeText(logBox.innerText);
 // Không có phần này thì mỗi lần tải lại trang là mất sạch: phải điền lại form và
 // tạo một giải mới, trong khi giải cũ vẫn nằm đó dang dở.
 const SAVE_KEY = 'rcfield-contest-lab';
-const FORM_IDS = ['pMode', 'pEmail', 'pPwd', 'aEmail', 'aPwd', 'athPwd', 'athletes',
-  'cName', 'cCap', 'cType', 'cFormat', 'cTemplate', 'cCafe', 'cTrack', 'cPolicy',
+const FORM_IDS = ['pEmail', 'pPwd', 'aEmail', 'aPwd', 'athPwd', 'athletes',
+  'cName', 'cCap', 'cTemplate', 'cCafe', 'cTrack', 'cPolicy',
   'cFee', 'cFeeMode', 'cDays', 'byocPhoto',
   'bDraft', 'bOpen', 'bApproved', 'bClosed', 'bRunning', 'bCompleted', 'bCancelled',
   'genCount', 'genDomain', 'genPwd',
-  'cfCount', 'cfCity', 'cfUnits'];
+  'cfCount', 'cfCity', 'cfUnits', 'pgProvider'];
 
 function saveState() {
   const form = {};
@@ -2371,7 +2750,7 @@ if (saved) {
 loadCatalog()
   .then(() => {
     if (saved && saved.form) {
-      ['cType', 'cFormat', 'cTemplate', 'cCafe', 'cPolicy', 'cFeeMode', 'cfCity'].forEach((id) => {
+      ['cTemplate', 'cCafe', 'cPolicy', 'cFeeMode', 'cfCity'].forEach((id) => {
         if (saved.form[id]) $(id).value = saved.form[id];
       });
       return loadTrackTypesForCafe().then(() => {
@@ -2379,6 +2758,6 @@ loadCatalog()
       });
     }
   })
-  .then(() => log('dim', 'Đã nạp danh mục. Sửa thông tin giải rồi bấm một nút ở mục 3.'))
+  .then(() => log('dim', 'Đã nạp danh mục. Sửa thông tin giải rồi bấm một nút ở mục 4.'))
   .catch((e) => log('err', 'Nạp danh mục thiếu: ' + e.message));
 `;

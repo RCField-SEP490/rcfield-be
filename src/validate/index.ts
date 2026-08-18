@@ -1912,6 +1912,24 @@ export const ListBankTransactionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/**
+ * Đối soát sao kê — chủ sân, gộp mọi chi nhánh.
+ *
+ * `from`/`to` nhận chuỗi ngày hoặc ISO đầy đủ; ép sang `Date` ngay tại đây để
+ * một chuỗi rác không đi tiếp xuống SQL rồi mới hỏng ở tầng driver với thông
+ * báo không ai đọc được.
+ */
+export const ProviderReconciliationQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  cafe_id: z.string().uuid().optional(),
+  channel: z.enum(['BANK', 'VNPAY']).optional(),
+  status: z.enum(['MATCHED', 'NEEDS_REVIEW', 'IGNORED']).optional(),
+  q: z.string().trim().max(120).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
 // ── admin payment ledger ──────────────────────────────────────────────────────
 export const AdminLedgerQuerySchema = z.object({
   source: z.enum(['SAAS', 'CONTEST_FEE']).optional(),

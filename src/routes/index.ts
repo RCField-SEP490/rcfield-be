@@ -16,7 +16,12 @@ import { staffRouter } from './staff.routes';
 import { adminSubscriptionPlanRouter } from './admin-subscription-plan.routes';
 import { adminAmenityRouter } from './admin-amenity.routes';
 import { cafeRouter } from './cafe.routes';
-import { bankTransactionRouter, banksRouter, cafeBankPaymentRouter } from './bank-payment.routes';
+import {
+  bankTransactionRouter,
+  banksRouter,
+  cafeBankPaymentRouter,
+  providerReconciliationRouter,
+} from './bank-payment.routes';
 import { cafeImagesRouter } from './cafe-images.routes';
 import { uploadRouter } from './upload.routes';
 import { vehicleCatalogRouter } from './vehicle-catalog.routes';
@@ -135,6 +140,8 @@ router.use('/notifications', notificationRouter);
 router.use('/provider/notifications', notificationRouter);
 // Mount before the general /provider router because this endpoint also allows ADMIN.
 router.use('/provider/reviews', providerReviewRouter);
+// Cũng phải mount trước `/provider` chung — xem chú thích ngay trên.
+router.use('/provider/reconciliation', providerReconciliationRouter);
 router.use('/provider', providerSubscriptionRouter);
 router.use('/staff', staffRouter);
 router.use('/system', systemRouter);

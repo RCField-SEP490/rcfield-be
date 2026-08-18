@@ -1,4 +1,5 @@
 import type { NextFunction, Response } from 'express';
+import * as reconciliationService from '../services/bank-reconciliation.service';
 import * as bankTransactionService from '../services/bank-transaction.service';
 import * as settingsService from '../services/cafe-payment-settings.service';
 import { resolvePaymentMethodsForCafe } from '../services/payment-method-resolver';
@@ -14,6 +15,7 @@ import {
   AssignBankTransactionSchema,
   IgnoreBankTransactionSchema,
   ListBankTransactionsQuerySchema,
+  ProviderReconciliationQuerySchema,
   UpdateCafePaymentSettingsSchema,
 } from '../validate';
 
@@ -167,6 +169,53 @@ export const bankPaymentController = {
       const body = IgnoreBankTransactionSchema.parse(req.body);
       const data = await bankTransactionService.markIgnored(req.params.id, user.userId, body);
       res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/reconciliation  [auth PROVIDER]
+  async listReconciliation(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = requireUser(req);
+      const q = ProviderReconciliationQuerySchema.parse(req.query);
+      const data = await reconciliationService.listProviderReconciliation(user.userId, {
+        from: q.from?.toISOString(),
+        to: q.to?.toISOString(),
+        cafeId: q.cafe_id,
+        channel: q.channel,
+        status: q.status as BankTransactionMatchStatus | undefined,
+        q: q.q,
+        page: q.page,
+        limit: q.limit,
+      });
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // GET /api/v1/provider/reconciliation/export  [auth PROVIDER]
+  async exportReconciliation(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const user = requireUser(req);
+      const q = ProviderReconciliationQuerySchema.parse(req.query);
+      const csv = await reconciliationService.exportProviderReconciliationCsv(user.userId, {
+        from: q.from?.toISOString(),
+        to: q.to?.toISOString(),
+        cafeId: q.cafe_id,
+        channel: q.channel,
+        status: q.status as BankTransactionMatchStatus | undefined,
+        q: q.q,
+      });
+      // Đặt tên tệp theo kỳ đang lọc: tải ba tháng về cùng một thư mục mà tệp
+      // nào cũng tên "doi-soat.csv" thì không còn biết tệp nào là tháng nào.
+      const ky = [q.from, q.to]
+        .map((d) => (d ? d.toISOString().slice(0, 10) : 'tat-ca'))
+        .join('_den_');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="doi-soat_${ky}.csv"`);
+      res.send(csv);
     } catch (err) {
       next(err);
     }
