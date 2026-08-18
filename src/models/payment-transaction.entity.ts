@@ -43,6 +43,19 @@ export class PaymentTransaction {
   @Column({ name: 'gateway', type: 'varchar', length: 20, default: 'VNPAY' })
   gateway: string;
 
+  /**
+   * Mã giao dịch do CỔNG sinh ra — `vnp_TransactionNo` với VNPay.
+   *
+   * Đây là thứ duy nhất dò được một dòng trên báo cáo đối soát của cổng về
+   * đúng bản ghi trong hệ thống. `txn_ref` là mã mình tự sinh, phía cổng không
+   * dùng nó làm khoá, nên khi hai bên lệch số thì không có gì để đối chiếu.
+   *
+   * Cột và index đã có sẵn trong schema từ đầu nhưng chưa từng được ghi — mã
+   * vẫn bị bóc ra ở `vnpay.service.ts` rồi bỏ đi.
+   */
+  @Column({ name: 'gateway_transaction_id', type: 'varchar', length: 255, nullable: true })
+  gatewayTransactionId: string | null;
+
   @Column({ name: 'txn_ref', type: 'varchar', length: 100, unique: true })
   txnRef: string;
 

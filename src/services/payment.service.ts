@@ -1098,6 +1098,9 @@ export async function processConfirmationResult(
     await txRepo.update(tx.id, {
       status: PaymentTransactionStatus.FAILED,
       rawResponse: result.raw as object,
+      // Giao dịch hỏng cũng có mặt trên báo cáo của cổng. Không lưu mã thì khi
+      // cổng báo một khoản mà mình không nhận ra, không tra ngược được.
+      gatewayTransactionId: result.transactionNo ?? null,
     });
 
     // Khách CỐ Ý huỷ ở cổng thanh toán thì nhả suất trong giải ngay.
@@ -1165,6 +1168,10 @@ export async function processConfirmationResult(
   await txRepo.update(tx.id, {
     status: PaymentTransactionStatus.SUCCESS,
     rawResponse: result.raw as object,
+    // Mã cổng trả về, lưu vào cột riêng chứ không chỉ nằm trong `raw_response`:
+    // đây là khoá đối soát với báo cáo của cổng, và một khoá đối soát phải tra
+    // được bằng index chứ không phải đào trong JSON từng dòng một.
+    gatewayTransactionId: result.transactionNo ?? null,
   });
 
   const paymentSource = tx.gateway ?? 'VNPAY';
