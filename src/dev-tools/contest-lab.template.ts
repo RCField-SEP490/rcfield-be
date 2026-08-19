@@ -795,13 +795,29 @@ const STEPS = [
       // Đã có giải dang dở thì dùng lại, đừng tạo cái mới. Người dùng bấm nút
       // trạng thái là muốn ĐẨY giải đó đi tiếp, không phải sinh thêm một giải
       // nữa mỗi lần chạy.
-      if (ctx.contestId) {
-        const cur = await call('GET', '/contests/' + ctx.contestId, null, ctx.providerToken);
-        ctx.cafeId = ctx.cafeId || $('cCafe').value;
-        return 'dùng lại giải đang dở — ' + cur.status + ' ' + ctx.contestId.slice(0, 8) + '…';
-      }
       const tpl = selectedTemplate();
       if (!tpl) throw new Error('Chưa chọn khuôn mẫu giải — bấm "Nạp lại danh mục" rồi chọn một cái.');
+
+      if (ctx.contestId) {
+        const cur = await call('GET', '/contests/' + ctx.contestId, null, ctx.providerToken);
+        // Phiên trước còn dở thì bước này dùng lại giải cũ. Nhưng nếu người dùng
+        // vừa đổi sang khuôn mẫu KHÁC, im lặng dùng lại là dối: họ chọn "Đấu
+        // loại trực tiếp", bấm chạy, rồi nhận về đúng cái giải tính giờ cũ mà
+        // không có gì nói vì sao. Trạng thái phiên nằm trong localStorage nên
+        // sống qua cả lần tải lại trang — không tự nhận ra được.
+        const cuId = cur.contest_template && cur.contest_template.id;
+        if (cuId && cuId !== tpl.id) {
+          const tenCu = (cur.contest_template && cur.contest_template.name) || 'khác';
+          throw new Error(
+            'Phiên đang dở là giải "' + tenCu + '", nhưng bạn đang chọn "' + tpl.name +
+            '". Bấm "Xoá trạng thái phiên" ở mục 1 rồi chạy lại để tạo giải mới.'
+          );
+        }
+        ctx.cafeId = ctx.cafeId || $('cCafe').value;
+        ctx.tplName = (cur.contest_template && cur.contest_template.name) || null;
+        showResume();
+        return 'dùng lại giải đang dở — ' + cur.status + ' ' + ctx.contestId.slice(0, 8) + '…';
+      }
       const days = Number($('cDays').value);
       // Chạy lô và kịch bản lệch cần đổi vài tham số so với ô nhập trên form —
       // ví dụ sức chứa nhỏ hơn số người để kiểm chốt chặn. Ghi đè qua ctx thay
@@ -832,6 +848,7 @@ const STEPS = [
       const c = await call('POST', '/contests', body, ctx.providerToken);
       ctx.contestId = c.id;
       ctx.cafeId = $('cCafe').value;
+      ctx.tplName = tpl.name;
       return 'contest ' + c.id.slice(0, 8) + '… trạng thái ' + c.status;
     },
   },
@@ -1181,7 +1198,7 @@ async function runRange(from, to) {
 
 /** Bỏ giải hiện tại khỏi phiên để lượt sau dựng một giải mới hoàn toàn. */
 function resetContest() {
-  ctx.contestId = null; ctx.registrations = []; ctx.matches = [];
+  ctx.contestId = null; ctx.tplName = null; ctx.registrations = []; ctx.matches = [];
   ctx.feeOrderId = null; ctx.feeSkipped = false;
   ctx.overrides = null; ctx.nameSuffix = ''; ctx.expectCapacity = false;
   ctx.capacityRejected = [];
@@ -1494,6 +1511,25 @@ async function loadTemplateLookups() {
 }
 
 /** Khuôn mẫu đang chọn, kèm hai id nó ghim sẵn. */
+/**
+ * Chọn sẵn "Đấu loại trực tiếp" thay vì để mục đầu danh sách.
+ *
+ * Danh mục sắp theo sortOrder, mà "Đua tính giờ" đang là 0 nên nó luôn đứng
+ * đầu — tức là mặc định của ô chọn. Nhưng giải loại trực tiếp mới là thứ hay
+ * dựng nhất khi thử: nó có sơ đồ nhánh, có trận để bấm, có người thắng đi tiếp.
+ * Đua tính giờ chỉ là một bảng thành tích.
+ *
+ * Chỉ đổi mặc định của CÔNG CỤ này, không đụng sortOrder trong cơ sở dữ liệu:
+ * cột đó còn quyết định thứ tự ở màn tạo giải thật của chủ sân.
+ *
+ * Chạy trước bước khôi phục trạng thái phiên, nên lựa chọn lần trước của người
+ * dùng vẫn thắng — đây chỉ là giá trị khởi đầu khi chưa chọn gì.
+ */
+function chonMacDinhKhuonMau(rows) {
+  const uu = (rows || []).find((t) => t.code === 'provider_standard_knockout');
+  if (uu) $('cTemplate').value = uu.id;
+}
+
 function selectedTemplate() {
   const id = $('cTemplate').value;
   return (ctx.templates || []).find((t) => t.id === id) || null;
@@ -2282,6 +2318,7 @@ async function loadCatalog() {
       const rows = flat(r.value);
       if (c.sel === 'cTemplate') ctx.templates = rows;
       fillSelect(c.sel, rows, 'name');
+      if (c.sel === 'cTemplate') chonMacDinhKhuonMau(rows);
       ok.push(rows.length + ' ' + c.label);
     } else {
       fillSelect(c.sel, [], 'name');
@@ -2688,7 +2725,7 @@ function showResume() {
   const box = $('resumePanel');
   if (!ctx.contestId) { box.style.display = 'none'; return; }
   box.style.display = '';
-  const bits = ['giải ' + ctx.contestId];
+  const bits = [(ctx.tplName ? ctx.tplName + ' — ' : '') + 'giải ' + ctx.contestId];
   if (ctx.registrations.length) bits.push(ctx.registrations.length + ' đăng ký');
   if (ctx.matches.length) bits.push(ctx.matches.length + ' trận');
   $('resumeInfo').textContent = bits.join('  ·  ');

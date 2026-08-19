@@ -147,3 +147,30 @@ describe('tab dọn dữ liệu', () => {
     expect(html).toContain('id="pgContestConfirm"');
   });
 });
+
+describe('mặc định khuôn mẫu giải', () => {
+  it('chọn sẵn đấu loại trực tiếp, không lấy mục đầu danh sách', () => {
+    // Danh mục sắp theo sortOrder và "Đua tính giờ" đang là 0, nên nếu không
+    // chỉ định thì ô chọn luôn mặc định vào đua tính giờ. Giải loại trực tiếp
+    // mới là thứ hay dựng nhất khi thử — có sơ đồ nhánh, có trận để bấm.
+    expect(CLIENT_SCRIPT).toContain("t.code === 'provider_standard_knockout'");
+    expect(CLIENT_SCRIPT).toContain('chonMacDinhKhuonMau(rows)');
+  });
+
+  it('mặc định chạy TRƯỚC bước khôi phục phiên, để lựa chọn cũ vẫn thắng', () => {
+    // Đặt sau thì mỗi lần tải lại trang đều giật lựa chọn của người dùng về
+    // loại trực tiếp — đúng cái khó chịu vừa sửa xong, chỉ đổi chiều.
+    const iMacDinh = CLIENT_SCRIPT.indexOf('chonMacDinhKhuonMau(rows)');
+    const iKhoiPhuc = CLIENT_SCRIPT.indexOf('if (saved.form[id]) $(id).value = saved.form[id]');
+    expect(iMacDinh).toBeGreaterThan(-1);
+    expect(iKhoiPhuc).toBeGreaterThan(iMacDinh);
+  });
+
+  it('chặn dùng lại giải cũ khi đã đổi sang khuôn mẫu khác', () => {
+    // Trạng thái phiên nằm trong localStorage nên sống qua cả lần tải lại
+    // trang. Im lặng dùng lại giải cũ là dối: người dùng chọn loại trực tiếp,
+    // bấm chạy, nhận về giải tính giờ cũ mà không có gì nói vì sao.
+    expect(CLIENT_SCRIPT).toContain('cuId && cuId !== tpl.id');
+    expect(CLIENT_SCRIPT).toContain('Xoá trạng thái phiên');
+  });
+});

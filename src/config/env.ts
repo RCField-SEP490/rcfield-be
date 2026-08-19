@@ -128,7 +128,18 @@ export const env = {
     googleApiKey: process.env.GOOGLE_API_KEY ?? '',
     embeddingModel: process.env.GOOGLE_EMBEDDING_MODEL ?? 'gemini-embedding-001',
     model: process.env.GOOGLE_MODEL ?? 'gemini-2.5-pro',
-    supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.0-flash',
+    /*
+      Model cho việc nhẹ: phân loại nhanh, gợi ý trả lời, diễn đạt lại câu đã có
+      trong cache.
+
+      Mặc định cũ là `gemini-2.0-flash` — Google đã gỡ, gọi vào trả 404. Suốt
+      thời gian qua không ai thấy vì `.env` che mất; ai deploy mà quên khai biến
+      này là chat hỏng ngay với một lỗi 404 chẳng liên quan gì tới cấu hình của
+      họ.
+
+      Đo thực tế trên cùng một câu hỏi: pro ~6.5s, flash ~3.7s tới chữ đầu.
+    */
+    supportModel: process.env.GOOGLE_SUPPORT_MODEL ?? 'gemini-2.5-flash',
   },
 
   frontendUrl: getSafeFrontendUrl(),

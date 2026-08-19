@@ -115,16 +115,18 @@ bankTransactionRouter.post(
 
 export const providerReconciliationRouter = Router();
 
-providerReconciliationRouter.get(
-  '/',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  bankPaymentController.listReconciliation,
-);
+// Ba lớp, không phải hai:
+//
+//  1. `authenticate` — có token hợp lệ.
+//  2. `authorize(PROVIDER)` — đúng vai chủ sân.
+//  3. `requireActiveProvider` — hồ sơ đối tác đang ACTIVE. Thiếu lớp này thì
+//     một tài khoản ĐÃ BỊ TẠM KHOÁ vẫn kéo được toàn bộ sổ tiền và xuất CSV,
+//     vì hai lớp trên chỉ xét vai trò chứ không xét trạng thái hồ sơ.
+//
+// Phạm vi dữ liệu nằm ở tầng truy vấn: mệnh đề `cafes.provider_id = $1` lấy từ
+// token, nên không có tham số nào người gọi truyền lên mở rộng được tầm nhìn.
+providerReconciliationRouter.use(authenticate, authorize(UserRole.PROVIDER), requireActiveProvider);
 
-providerReconciliationRouter.get(
-  '/export',
-  authenticate,
-  authorize(UserRole.PROVIDER),
-  bankPaymentController.exportReconciliation,
-);
+providerReconciliationRouter.get('/', bankPaymentController.listReconciliation);
+
+providerReconciliationRouter.get('/export', bankPaymentController.exportReconciliation);

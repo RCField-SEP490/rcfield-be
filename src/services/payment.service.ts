@@ -57,6 +57,26 @@ import {
 
 export type { BankTransferCheckout };
 
+/**
+ * Báo có đơn mới cho nhân viên chi nhánh và chủ sân.
+ *
+ * Hai tầng, phục vụ hai nhu cầu khác nhau — thiếu tầng nào cũng hỏng:
+ *
+ *  - **WebSocket** (`NEW_BOOKING`): hiện toast ngay cho người ĐANG mở app. Đây
+ *    là thứ khiến nhân viên ở quầy biết liền mà không phải bấm làm mới.
+ *  - **Bản ghi thông báo**: vào chuông, xem lại được. Trước đây chỉ có tầng
+ *    WebSocket, nên đơn đặt lúc nhân viên đóng tab, mất mạng vài giây, hay
+ *    đang giao ca là **biến mất khỏi mọi nơi** — không log, không chuông,
+ *    không cách nào biết là đã lỡ.
+ *
+ * Cùng khuôn với `notifyCafeStaffAboutFnbPrep`: món ăn cần chế biến thì đã
+ * được ghi bền từ trước, còn đơn đặt sân thì chưa — hai luồng quan trọng ngang
+ * nhau mà xử lý lệch hẳn.
+ *
+ * Gọi từ bốn nhánh xác nhận thanh toán, nhưng `processConfirmationResult` đã
+ * thoát sớm khi giao dịch đã SUCCESS, nên webhook ngân hàng gửi lại mười lần
+ * cũng chỉ báo một lần.
+ */
 async function pushBookingNew(booking: Booking): Promise<void> {
   try {
     const cafe = await AppDataSource.getRepository(Cafe).findOne({
@@ -73,7 +93,52 @@ async function pushBookingNew(booking: Booking): Promise<void> {
     if (cafe.providerId) {
       wsService.pushToUser(cafe.providerId, 'NEW_BOOKING', payload);
     }
+
+    const gioChoi = new Date(booking.slotStart).toLocaleString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: '2-digit',
+      month: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    const maDon = booking.id.substring(0, 8).toUpperCase();
+    const tieuDe = 'Có đơn đặt sân mới';
+
+    const nhanVien = await AppDataSource.query<{ id: string }[]>(
+      `SELECT u.id
+         FROM users u
+         JOIN staff_cafe_assignments assignment ON assignment.staff_id = u.id
+        WHERE assignment.cafe_id = $1
+          AND u.is_active = TRUE
+          AND u.deleted_at IS NULL`,
+      [booking.cafeId],
+    );
+
+    await Promise.all([
+      // Nhân viên đi thẳng vào đơn — họ cần chuẩn bị sân và xe cho đúng suất đó.
+      ...nhanVien.map((row) =>
+        createNotification(
+          row.id,
+          NotificationType.BOOKING_CREATED,
+          tieuDe,
+          `Đơn #${maDon} lúc ${gioChoi}.`,
+          { bookingId: booking.id, route: `/staff/bookings/${booking.id}` },
+        ),
+      ),
+      // Chủ sân về danh sách đơn: họ theo dõi cả chuỗi chi nhánh, nên tên chi
+      // nhánh quan trọng hơn chi tiết một đơn.
+      cafe.providerId
+        ? createNotification(
+            cafe.providerId,
+            NotificationType.BOOKING_CREATED,
+            tieuDe,
+            `Đơn #${maDon} tại ${cafe.name} lúc ${gioChoi}.`,
+            { bookingId: booking.id, route: '/provider/bookings' },
+          )
+        : Promise.resolve(),
+    ]);
   } catch (err) {
+    // Báo hỏng thì tuyệt đối không được kéo theo việc ghi nhận tiền.
     logger.error('PaymentService', 'pushBookingNew failed', err);
   }
 }
