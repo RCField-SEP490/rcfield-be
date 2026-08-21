@@ -325,6 +325,69 @@ export async function findContestLockConflictForBooking(params: {
   return null;
 }
 
+/** Một khoảng thời gian bị giải đấu giữ riêng tại một chi nhánh. */
+export interface ContestBlockedWindow {
+  contestId: string;
+  contestName: string;
+  startsAt: Date;
+  endsAt: Date;
+  /** `true` = khoá cả chi nhánh; `false` = chỉ khoá một số đường đua. */
+  blocksWholeBranch: boolean;
+  /** Đường đua bị khoá khi không phải khoá cả chi nhánh. */
+  lockedTrackConfigIds: string[];
+}
+
+/**
+ * Liệt kê các khoảng bị giải đấu giữ riêng trong một quãng thời gian.
+ *
+ * ── Vì sao cần hàm này ──────────────────────────────────────────────────────
+ *
+ * `assertBookingNotBlockedByContest` trả lời câu hỏi "khung giờ CỤ THỂ này có bị
+ * khoá không" và ném lỗi — đúng cho lúc tạo đơn, nhưng vô dụng cho việc LIỆT KÊ
+ * chỗ trống: gọi nó cho từng khung giờ trong ngày là 24 lượt truy vấn cho một
+ * câu hỏi.
+ *
+ * Trước khi có hàm này, công cụ tra chỗ trống của chatbot chỉ đếm `bookings` và
+ * hoàn toàn không biết tới giải đấu. Nó báo "còn slot", khách chốt đơn, rồi
+ * `createBooking` ném `CONTEST_SLOT_LOCKED` ở bước cuối. Hứa xong nuốt lời là
+ * kiểu hỏng tệ nhất — tệ hơn nhiều so với báo hết chỗ ngay từ đầu.
+ */
+export async function getContestBlockedWindows(params: {
+  cafeId: string;
+  rangeStart: Date;
+  rangeEnd: Date;
+}): Promise<ContestBlockedWindow[]> {
+  const contests = await AppDataSource.getRepository(Contest)
+    .createQueryBuilder('contest')
+    .innerJoin(ContestCafe, 'contestCafe', 'contestCafe.contest_id = contest.id')
+    .where('contestCafe.cafe_id = :cafeId', { cafeId: params.cafeId })
+    .andWhere('contest.status IN (:...statuses)', { statuses: ACTIVE_CONTEST_STATUSES })
+    .andWhere('contest.starts_at < :rangeEnd', { rangeEnd: params.rangeEnd })
+    .andWhere('contest.ends_at > :rangeStart', { rangeStart: params.rangeStart })
+    .getMany();
+
+  const windows: ContestBlockedWindow[] = [];
+  for (const contest of contests) {
+    const lock = getContestResourceLocks(contest.config).find(
+      (item) => item.cafe_id === params.cafeId,
+    );
+    // Giải có mặt tại chi nhánh nhưng không khai khoá tài nguyên nào thì không
+    // chiếm chỗ của khách — cùng cách hiểu với `contestLockBlocksTrack`.
+    if (!lock) continue;
+
+    windows.push({
+      contestId: contest.id,
+      contestName: contest.name,
+      startsAt: contest.startsAt,
+      endsAt: contest.endsAt,
+      blocksWholeBranch: lock.scope === ContestResourceScope.FULL_BRANCH,
+      lockedTrackConfigIds: lock.track_config_ids,
+    });
+  }
+
+  return windows;
+}
+
 export async function assertBookingNotBlockedByContest(params: {
   cafeId: string;
   slotStart: Date;

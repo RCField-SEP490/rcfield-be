@@ -60,10 +60,12 @@ export interface SandboxPayPageInput {
   bankName: string;
   accountNumber: string;
   accountName: string;
+  /** Mã tra cứu đơn. `null` với khoản không gắn phiếu đặt sân. */
+  bookingCode?: string | null;
 }
 
 export function renderPayPage(input: SandboxPayPageInput): string {
-  const { refCode, amount, bankName, accountNumber, accountName } = input;
+  const { refCode, amount, bankName, accountNumber, accountName, bookingCode } = input;
 
   return `<!doctype html>
 <html lang="vi"><head>
@@ -109,9 +111,17 @@ export function renderPayPage(input: SandboxPayPageInput): string {
       })
         .then(function (r) { return r.json(); })
         .then(function () {
+          // Mã đơn hiện NGAY tại đây. Với khách đặt qua Facebook, màn hình này
+          // là xác nhận chính thức — họ không đăng nhập được, và tin nhắn
+          // Messenger có thể không tới nơi.
           card.innerHTML =
             '<div class="ok"><div class="tick">✓</div>' +
             '<h2>Chuyển khoản thành công</h2>' +
+            ${JSON.stringify(
+              bookingCode
+                ? `<p>Mã đơn của bạn: <strong>${escapeHtml(bookingCode)}</strong><br>Đưa mã này cho nhân viên khi tới quán.</p>`
+                : '',
+            )} +
             '<p>Bạn có thể quay lại màn hình đặt lịch.<br>' +
             'Đơn hàng sẽ tự xác nhận trong giây lát.</p></div>';
         })

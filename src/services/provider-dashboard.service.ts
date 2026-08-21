@@ -580,10 +580,19 @@ export interface BookingChannelItem {
   bookingShare: number;
 }
 
+/**
+ * Nhãn tiếng Việt cho từng kênh đặt.
+ *
+ * ⚠️ Hàm bên dưới duyệt theo `Object.keys` của bảng này, KHÔNG duyệt theo enum.
+ * Nghĩa là thêm giá trị vào `BookingSource` mà quên khai ở đây thì kênh đó biến
+ * mất khỏi báo cáo — không báo lỗi, chỉ lặng lẽ thiếu, và doanh thu của nó
+ * không được tính vào đâu cả.
+ */
 const BOOKING_SOURCE_LABELS: Record<string, string> = {
   APP: 'Khách tự đặt qua app',
   STAFF_MANUAL: 'Nhân viên tạo (khách vãng lai)',
   CONTEST: 'Giải đấu',
+  FACEBOOK: 'Facebook Messenger',
 };
 
 /**

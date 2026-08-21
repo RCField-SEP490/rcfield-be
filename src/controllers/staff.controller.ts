@@ -12,6 +12,8 @@ import {
   UpdateDamageItemsSchema,
   StaffBookingsQuerySchema,
   AddSessionFnbOrderSchema,
+  RespondExtensionOnBehalfSchema,
+  ConfirmInspectionOnBehalfSchema,
 } from '../validate';
 import { AppError, AuthPayload, AuthRequest, UserRole } from '../types';
 import * as staffService from '../services/staff.service';
@@ -19,6 +21,41 @@ import { confirmRefund } from '../services/payment.service';
 import { env } from '../config/env';
 
 export const staffController = {
+  // POST /api/v1/staff/sessions/:sessionId/extension/respond-for-customer  [auth]
+  async respondExtensionForCustomer(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { approved, reason } = RespondExtensionOnBehalfSchema.parse(req.body);
+      const data = await staffService.respondExtensionOnBehalf(
+        req.params.sessionId,
+        req.user.userId,
+        approved,
+        reason,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/sessions/:sessionId/inspections/:inspectionId/confirm-for-customer  [auth]
+  async confirmInspectionForCustomer(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const { agreed, reason } = ConfirmInspectionOnBehalfSchema.parse(req.body);
+      const data = await staffService.confirmInspectionOnBehalf(
+        req.params.sessionId,
+        req.params.inspectionId,
+        req.user.userId,
+        agreed,
+        reason,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // POST /api/v1/provider/staff  [auth]
   async createStaff(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {

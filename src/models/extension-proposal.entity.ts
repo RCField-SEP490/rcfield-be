@@ -39,6 +39,14 @@ export class ExtensionProposal {
   @Column({ name: 'responded_at', type: 'timestamptz', nullable: true })
   respondedAt: Date | null;
 
+  /** Nhân viên duyệt hộ khách không đăng nhập được. `respondedBy` khi đó là nhân viên. */
+  @Column({ name: 'responded_on_behalf', type: 'boolean', default: false })
+  respondedOnBehalf: boolean;
+
+  /** Lý do duyệt hộ. */
+  @Column({ name: 'on_behalf_reason', type: 'text', nullable: true })
+  onBehalfReason: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

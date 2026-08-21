@@ -32,6 +32,7 @@ import {
 } from '../types';
 import { broadcastBookingUpdated, transition } from './booking.service';
 import { emailService } from './email.service';
+import { notifyFacebookBookingConfirmed } from './fb-booking-notify';
 import { activateCustomerPackage, deductSlots } from './customer-package.service';
 import { incrementPromoUsesCount } from './promotion.service';
 import { wsService } from './websocket.service';
@@ -607,14 +608,7 @@ export async function createCheckoutUrl(
 
   // Preserve creation-time fields so PaymentResultPage and invoice can still read them
   const preservedCreationFields: Record<string, unknown> = {};
-  for (const key of [
-    'pricing_rule_label',
-    'slot_fee_multiplier',
-    'promotion_applied',
-    'track_type_id',
-    'track_type_code',
-    'track_type_name',
-  ]) {
+  for (const key of PRESERVED_CREATION_SNAPSHOT_KEYS) {
     if (creationSnapshot?.[key] !== undefined) preservedCreationFields[key] = creationSnapshot[key];
   }
 
@@ -918,6 +912,32 @@ export async function createCheckoutUrl(
  * Khách tải lại trang hoặc mở lại link cũ vẫn phải ra đúng đơn của mình — mà
  * `txnRef` thì đổi mỗi lần thử thanh toán lại, còn `bookingId` thì không.
  */
+/**
+ * Các trường của `snapshot` lúc TẠO ĐƠN phải sống sót qua bước thanh toán.
+ *
+ * Cả `createCheckoutUrl` lẫn `processMockConfirmation` đều dựng lại `snapshot`
+ * từ đầu rồi ghi ĐÈ. Trường nào không có tên trong danh sách này thì biến mất
+ * ngay lúc khách bấm thanh toán.
+ *
+ * Danh sách trước đây được chép ra hai chỗ. Gộp lại vì kiểu lỗi ở đây là thêm
+ * trường vào một chỗ rồi quên chỗ kia — và nó chỉ lộ ra ở bước cuối cùng của
+ * luồng, sau khi mọi thứ khác đã chạy đúng.
+ */
+const PRESERVED_CREATION_SNAPSHOT_KEYS = [
+  'pricing_rule_label',
+  'slot_fee_multiplier',
+  'promotion_applied',
+  'track_type_id',
+  'track_type_code',
+  'track_type_name',
+  // Danh tính Facebook của người đặt — móc nối gửi tin xác nhận về Messenger
+  // đọc từ đây. Xem `fb-booking-notify.ts`.
+  'fb_psid',
+  'fb_page_id',
+  'contact_email',
+  'fb_qr_public_id',
+] as const;
+
 function buildBankTransferPageUrl(bookingId: string): string {
   return new URL(`/payment/bank-transfer/${bookingId}`, env.frontendUrl).toString();
 }
@@ -1426,6 +1446,9 @@ export async function processConfirmationResult(
     emailService.sendBookingConfirmation(confirmedBookingId),
     emailService.sendBookingInvoice(confirmedBookingId),
     pushBookingNew(booking),
+    // Đơn đặt qua Facebook: báo về đúng cuộc trò chuyện Messenger. Tự bỏ qua
+    // với mọi nguồn đơn khác. Hàm này không bao giờ ném lỗi ra ngoài.
+    notifyFacebookBookingConfirmed(booking),
   ]).catch((err) => {
     logger.error('PaymentService', 'post-payment email failed', err);
   });
@@ -1679,14 +1702,7 @@ export async function mockConfirmPayment(
   const totalCharged = Math.max(0, grossMockTotal - mockDiscountAmount) + contestEntryFee;
 
   const mockPreservedFields: Record<string, unknown> = {};
-  for (const key of [
-    'pricing_rule_label',
-    'slot_fee_multiplier',
-    'promotion_applied',
-    'track_type_id',
-    'track_type_code',
-    'track_type_name',
-  ]) {
+  for (const key of PRESERVED_CREATION_SNAPSHOT_KEYS) {
     if (mockCreationSnapshot?.[key] !== undefined)
       mockPreservedFields[key] = mockCreationSnapshot[key];
   }

@@ -22,6 +22,17 @@ export interface SandboxPaymentInfo {
   bankName: string;
   accountNumber: string;
   accountName: string;
+  /**
+   * Mã tra cứu đơn, hiện lên màn hình sau khi bấm thanh toán.
+   *
+   * Trang này là XÁC NHẬN CHÍNH THỨC cho khách đặt qua Facebook: họ không đăng
+   * nhập được, và tin nhắn Messenger có thể không gửi tới nơi (token hết hạn,
+   * chi nhánh vừa ngắt kết nối). Không hiện mã đơn ở đây thì khách trả tiền
+   * xong mà không cầm được gì để tra cứu.
+   *
+   * `null` với khoản không gắn phiếu đặt sân, ví dụ mua gói slot.
+   */
+  bookingCode: string | null;
 }
 
 /**
@@ -38,6 +49,7 @@ export async function findPendingPayment(refCode: string): Promise<SandboxPaymen
   const rows = await AppDataSource.query(
     `SELECT pt.payment_ref_code,
             pt.amount,
+            pt.booking_id,
             cps.bank_code,
             cps.account_number,
             cps.account_name
@@ -63,6 +75,7 @@ export async function findPendingPayment(refCode: string): Promise<SandboxPaymen
     bankName: row.bank_code ?? 'Ngân hàng',
     accountNumber: row.account_number,
     accountName: row.account_name,
+    bookingCode: row.booking_id ? `RCF-${String(row.booking_id).slice(0, 4).toUpperCase()}` : null,
   };
 }
 
