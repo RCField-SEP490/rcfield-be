@@ -62,7 +62,6 @@ export interface FbBookingDraft {
   vehicleIds?: string[];
 
   quotedTotal?: number;
-  quotedAt?: string;
 
   /**
    * Bật khi bước tra lại phát hiện giá đã đổi. Chừng nào cờ này còn bật thì lời
@@ -71,6 +70,14 @@ export interface FbBookingDraft {
    * mới cho khách.
    */
   priceChanged?: boolean;
+  /**
+   * Mức giá khách đã nhìn thấy trước khi giá đổi.
+   *
+   * Dùng để nói rõ "từ X thành Y" thay vì chỉ báo con số mới. Không giữ riêng
+   * thì câu thông báo phải dựa vào việc `quotedTotal` chưa bị ghi đè tại thời
+   * điểm dựng câu — một ràng buộc về THỨ TỰ mà không ai thấy khi đọc code, và
+   * đảo nhầm thì câu báo hiện cùng một giá hai lần.
+   */
   previousQuotedTotal?: number;
 
   /** Có giá trị nghĩa là đơn đã được tạo — mọi lời xác nhận sau đó là gõ trùng. */
@@ -154,19 +161,54 @@ export function matchesConfirmationKeyword(text: string): boolean {
   return CONFIRMATION_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
-/** Đơn nháp đã đủ mọi trường bắt buộc để tạo đơn chưa. */
-export function hasRequiredFields(draft: FbBookingDraft): boolean {
-  if (!draft.cafeId) return false;
-  if (!draft.fullName || !draft.phone) return false;
-  if (!draft.slotStart || !draft.slotEnd) return false;
-  if (!draft.playMode) return false;
-  if (!draft.trackConfigId) return false;
-  if (!draft.playerCount || draft.playerCount < 1) return false;
+/** Trường bắt buộc, theo đúng thứ tự cần hỏi khách. */
+export type RequiredField =
+  | 'slotStart'
+  | 'playMode'
+  | 'playerCount'
+  | 'trackConfigId'
+  | 'vehicleIds'
+  | 'fullName'
+  | 'phone';
+
+/**
+ * Trường bắt buộc đầu tiên còn thiếu, hoặc `null` khi đã đủ.
+ *
+ * ── Vì sao phải là MỘT hàm duy nhất ────────────────────────────────────────
+ *
+ * Trước đây có hai danh sách trường bắt buộc: một ở `hasRequiredFields` (quyết
+ * định có được tạo đơn không) và một ở `nextQuestion` của bộ điều phối (quyết
+ * định hỏi khách gì tiếp). Hai danh sách lệch nhau đúng một trường —
+ * `trackConfigId` — và hậu quả là một vòng lặp vô hạn không báo lỗi:
+ *
+ *     bot: [tóm tắt đơn] Bạn gõ "xác nhận" để mình giữ chỗ nhé!
+ *     khách: xác nhận
+ *     bot: [tóm tắt đơn] Bạn gõ "xác nhận" để mình giữ chỗ nhé!     ← mãi mãi
+ *
+ * `nextQuestion` tưởng đã đủ nên không hỏi gì thêm và đi tóm tắt;
+ * `hasRequiredFields` thấy thiếu nên từ chối tạo đơn. Không bên nào sai theo
+ * logic của riêng nó, và không có lỗi nào được ném ra.
+ *
+ * Gộp làm một hàm khiến kiểu lỗi đó không còn tồn tại được nữa: thêm trường bắt
+ * buộc mới thì cả hai phía cùng thấy.
+ */
+export function firstMissingField(draft: FbBookingDraft): RequiredField | null {
+  if (!draft.slotStart || !draft.slotEnd) return 'slotStart';
+  if (!draft.playMode) return 'playMode';
+  if (!draft.playerCount || draft.playerCount < 1) return 'playerCount';
+  if (!draft.trackConfigId) return 'trackConfigId';
   // Mang xe cá nhân thì không cần chọn xe của quán.
   if (draft.playMode === 'RENTAL' && (!draft.vehicleIds || draft.vehicleIds.length === 0)) {
-    return false;
+    return 'vehicleIds';
   }
-  return true;
+  if (!draft.fullName) return 'fullName';
+  if (!draft.phone) return 'phone';
+  return null;
+}
+
+/** Đơn nháp đã đủ mọi trường bắt buộc để tạo đơn chưa. */
+export function hasRequiredFields(draft: FbBookingDraft): boolean {
+  return Boolean(draft.cafeId) && firstMissingField(draft) === null;
 }
 
 /**

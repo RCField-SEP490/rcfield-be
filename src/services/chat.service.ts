@@ -84,22 +84,28 @@ export async function consumeProviderAIQuota(cafeId: string): Promise<void> {
 }
 
 // Classifies message intent and returns routing decision + confidence
-export async function route(message: string): Promise<{ route: ChatRoute; confidence: number }> {
+export async function route(
+  message: string,
+): Promise<{ route: ChatRoute; confidence: number; nluAvailable: boolean }> {
   const nlu = await classifyIntent(message);
   logger.info('Chat', 'intent classified', { intent: nlu.intent, confidence: nlu.confidence });
 
   if (nlu.intent === 'greeting' && !nlu.needs_llm_fallback && nlu.confidence >= 0.6) {
-    return { route: 'fast', confidence: nlu.confidence };
+    return { route: 'fast', confidence: nlu.confidence, nluAvailable: nlu.available };
   }
   if (nlu.intent === 'thanks' && !nlu.needs_llm_fallback && nlu.confidence >= 0.6) {
-    return { route: 'thanks', confidence: nlu.confidence };
+    return { route: 'thanks', confidence: nlu.confidence, nluAvailable: nlu.available };
   }
   if (nlu.intent === 'farewell' && !nlu.needs_llm_fallback && nlu.confidence >= 0.6) {
-    return { route: 'farewell', confidence: nlu.confidence };
+    return { route: 'farewell', confidence: nlu.confidence, nluAvailable: nlu.available };
   }
   // slot_check intent: handled by Gemini function calling in ragChat — fall through to rag
   // needs_llm_fallback=true means NLU is uncertain → force Pro model (confidence=0)
-  return { route: 'rag', confidence: nlu.needs_llm_fallback ? 0 : nlu.confidence };
+  return {
+    route: 'rag',
+    confidence: nlu.needs_llm_fallback ? 0 : nlu.confidence,
+    nluAvailable: nlu.available,
+  };
 }
 
 // Returns immediate greeting response from widget config without calling any external service
@@ -320,6 +326,7 @@ export async function ragChat(
   message: string,
   history: HistoryMessage[],
   nluConfidence = 0,
+  nluAvailable = true,
 ): Promise<ChatResponse> {
   const ds: DataSource = AppDataSource;
 
@@ -378,8 +385,17 @@ export async function ragChat(
   const chunks = await kbService.retrieveChunks(ds, cafeId, queryEmbedding);
   const systemPrompt = buildSystemPrompt(cafe, chunks, widgetConfig?.systemPrompt);
 
-  const selectedModel = nluConfidence >= 0.7 ? env.ai.model : env.ai.supportModel;
-  logger.info('Chat', `model selected: ${selectedModel}`, { cafeId, nluConfidence });
+  // NLU chết thì độ tin bằng 0 KHÔNG có nghĩa là "câu này dễ" — nó có nghĩa là
+  // không ai đọc câu này cả. Dùng model chính trong trường hợp đó: trả lời sai
+  // cho khách đắt hơn nhiều so với chênh lệch giá giữa hai model, và một dịch vụ
+  // phụ trợ chết không được phép âm thầm hạ chất lượng cả sản phẩm.
+  const selectedModel = !nluAvailable || nluConfidence >= 0.7 ? env.ai.model : env.ai.supportModel;
+  if (!nluAvailable) {
+    logger.warn('Chat', 'NLU không khả dụng — dùng model chính thay vì đoán theo độ tin', {
+      cafeId,
+    });
+  }
+  logger.info('Chat', `model selected: ${selectedModel}`, { cafeId, nluConfidence, nluAvailable });
 
   const baseContents: Content[] = [
     ...history.map((h) => ({ role: h.role, parts: [{ text: h.content }] })),

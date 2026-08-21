@@ -93,7 +93,7 @@ function isVietnamToday(value: Date): boolean {
  * buổi chơi nằm sau mốc đó là hứa một dịch vụ mà hệ thống biết chắc sẽ không
  * giữ được.
  */
-async function assertWithinSubscriptionCoverage(cafe: Cafe, slotEnd: Date): Promise<void> {
+export async function assertWithinSubscriptionCoverage(cafe: Cafe, slotEnd: Date): Promise<void> {
   const cutoff = await getBookingCutoff(cafe.providerId);
   if (!cutoff || slotEnd.getTime() <= cutoff.getTime()) return;
 
@@ -175,7 +175,7 @@ export function isWithinMaxAdvanceBookingDays(
   return slotStart.getTime() >= todayStart && slotEnd.getTime() <= firstUnbookableDay;
 }
 
-function assertMinimumBookingNotice(slotStart: Date, minBookingNoticeMinutes: number): void {
+export function assertMinimumBookingNotice(slotStart: Date, minBookingNoticeMinutes: number): void {
   if (meetsMinimumBookingNotice(slotStart, minBookingNoticeMinutes)) return;
 
   throw new AppError(
@@ -185,7 +185,7 @@ function assertMinimumBookingNotice(slotStart: Date, minBookingNoticeMinutes: nu
   );
 }
 
-function assertMaxAdvanceBookingDays(
+export function assertMaxAdvanceBookingDays(
   slotStart: Date,
   slotEnd: Date,
   maxAdvanceBookingDays: number,
@@ -267,7 +267,7 @@ function byocCounterKey(cafeId: string, slotStart: Date, trackConfigId?: string 
     : `slot:byoc:${cafeId}:${slotStart.getTime()}`;
 }
 
-async function countOccupiedByocParticipants(
+export async function countOccupiedByocParticipants(
   cafeId: string,
   slotStart: Date,
   slotEnd: Date,

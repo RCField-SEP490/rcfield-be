@@ -2,17 +2,29 @@ import { AppDataSource } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { Cafe } from '../models/cafe.entity';
-import { AppError, BookingMode, BookingSource } from '../types';
-import { createBooking } from './booking.service';
+import { AppError, BookingMode, BookingParticipantType, BookingSource } from '../types';
+import {
+  assertMaxAdvanceBookingDays,
+  assertMinimumBookingNotice,
+  assertSlotWithinOperatingHours,
+  assertWithinSubscriptionCoverage,
+  countOccupiedByocParticipants,
+  createBooking,
+} from './booking.service';
 import {
   acknowledgePriceChange,
+  firstMissingField,
   isConfirmationTurn,
   matchesConfirmationKeyword,
   loadDraft,
   saveDraft,
   type FbBookingDraft,
+  type RequiredField,
 } from './fb-booking-draft';
 import { extractBookingFields } from './fb-booking-extractor';
+import { handler as checkAvailabilityTool } from './chat-tools/check-availability';
+import { planTurn } from './fb-booking-triage';
+import { getEffectiveMultiplier } from './pricing.service';
 import { normalizePhone, resolveFacebookSoftUser } from './fb-soft-user';
 import { getVerifiedBankSettings } from './payment-method-resolver';
 import { createCheckoutUrl } from './payment.service';
@@ -56,6 +68,47 @@ export interface BookingTurnContext {
 
 /** Số slot mặc định khi khách không nói rõ chơi bao lâu. */
 const DEFAULT_SLOT_COUNT = 1;
+
+/**
+ * Bộ lọc thô, KHÔNG dùng mô hình.
+ *
+ * Chỉ để tránh trả phí mô hình cho những tin nhắn hiển nhiên không phải đặt lịch.
+ * Cố ý rộng tay: lọt một câu vào luồng đặt lịch rồi bị mô hình gạt ra chỉ tốn
+ * một lượt gọi, còn chặn nhầm một khách muốn đặt là mất khách.
+ */
+const BOOKING_INTENT_HINTS = [
+  'đặt',
+  'dat san',
+  'đặt sân',
+  'book',
+  'giữ chỗ',
+  'giu cho',
+  'thuê xe',
+  'thue xe',
+  'chơi',
+  'choi',
+  'slot',
+  'lịch',
+  'lich',
+  'mai',
+  'hôm nay',
+  'hom nay',
+  'tối',
+  'toi ',
+  'giờ',
+  'gio ',
+  'thứ',
+  'thu ',
+  'cuối tuần',
+  'cuoi tuan',
+  'còn chỗ',
+  'con cho',
+];
+
+function looksLikeBookingIntent(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return BOOKING_INTENT_HINTS.some((hint) => normalized.includes(hint));
+}
 
 function loginUrl(): string {
   return new URL('/login', env.frontendUrl).toString();
@@ -120,35 +173,430 @@ async function mergeExtracted(
   return next;
 }
 
-/** Bước tiếp theo cần hỏi gì. Trả `null` nghĩa là đã đủ trường. */
-function nextQuestion(
-  draft: FbBookingDraft,
-): { state: FbBookingDraft['state']; text: string } | null {
-  if (!draft.slotStart) {
-    return { state: 'AWAITING_SLOT', text: 'Bạn muốn chơi vào ngày giờ nào ạ?' };
-  }
-  if (!draft.playMode) {
-    return {
-      state: 'AWAITING_PLAY_MODE',
-      text: 'Bạn thuê xe của quán hay mang xe cá nhân tới ạ?',
-    };
-  }
-  if (!draft.playerCount) {
-    return { state: 'AWAITING_PLAY_MODE', text: 'Có mấy bạn cùng chơi ạ?' };
-  }
-  if (draft.playMode === BookingMode.RENTAL && (!draft.vehicleIds || !draft.vehicleIds.length)) {
-    return { state: 'AWAITING_VEHICLES', text: 'Bạn muốn thuê xe nào ạ?' };
-  }
-  if (!draft.fullName) {
-    return { state: 'AWAITING_NAME', text: 'Cho mình xin tên của bạn ạ?' };
-  }
-  if (!draft.phone) {
-    return { state: 'AWAITING_PHONE', text: 'Cho mình xin số điện thoại để giữ chỗ ạ?' };
-  }
-  return null;
+/**
+ * Tra danh sách đường đua đang hoạt động của chi nhánh.
+ *
+ * Chi nhánh chỉ có MỘT đường đua thì không hỏi — hỏi một câu chỉ có một đáp án
+ * là làm phiền khách mà không thu được thông tin gì.
+ */
+async function listTrackConfigs(cafeId: string): Promise<Array<{ id: string; name: string }>> {
+  return AppDataSource.query<Array<{ id: string; name: string }>>(
+    `SELECT ctc.id, tt.name
+       FROM cafe_track_configs ctc
+       JOIN track_types tt ON tt.id = ctc.track_type_id
+      WHERE ctc.cafe_id = $1 AND ctc.is_active = true AND ctc.deleted_at IS NULL
+      ORDER BY ctc.sort_order ASC`,
+    [cafeId],
+  );
 }
 
-function summarize(draft: FbBookingDraft, cafeName: string): string {
+/**
+ * Danh mục xe MỜI ĐƯỢC cho khách.
+ *
+ * ── Hai bộ lọc, cả hai đều bắt buộc ─────────────────────────────────────────
+ *
+ * 1. **Tương thích với sân đã chọn.** `createBooking` từ chối xe không nằm
+ *    trong `compatible_track_types` của sân, kèm mã `VEHICLE_TRACK_INCOMPATIBLE`.
+ *    RC Tân Bình có 2 sân mà mỗi danh mục xe chỉ chạy được 1 sân — nên mời
+ *    không lọc là chắc chắn có tổ hợp khách chọn xong bị từ chối ở bước cuối.
+ *    Danh sách rỗng nghĩa là "chạy được mọi sân", theo đúng cách `createBooking`
+ *    hiểu.
+ *
+ * 2. **Còn ít nhất một chiếc sẵn sàng.** Danh mục mà mọi chiếc đều đang bảo trì
+ *    thì mời cũng vô nghĩa.
+ */
+async function listVehicleCatalogs(
+  cafeId: string,
+  trackTypeId?: string | null,
+): Promise<Array<{ id: string; name: string }>> {
+  return AppDataSource.query<Array<{ id: string; name: string }>>(
+    `SELECT vc.id, vc.name
+       FROM vehicle_catalogs vc
+      WHERE vc.cafe_id = $1
+        AND vc.deleted_at IS NULL
+        AND ($2::uuid IS NULL
+             OR COALESCE(array_length(vc.compatible_track_types, 1), 0) = 0
+             OR $2::uuid = ANY(vc.compatible_track_types))
+        AND EXISTS (
+          SELECT 1 FROM vehicles v
+           WHERE v.catalog_id = vc.id
+             AND v.status = 'AVAILABLE'
+             AND v.deleted_at IS NULL
+        )
+      ORDER BY vc.name ASC`,
+    [cafeId, trackTypeId ?? null],
+  );
+}
+
+/** Loại sân của một cấu hình sân — cần để lọc xe tương thích. */
+async function trackTypeOf(trackConfigId: string): Promise<string | null> {
+  const [row] = await AppDataSource.query<Array<{ trackTypeId: string }>>(
+    `SELECT track_type_id AS "trackTypeId" FROM cafe_track_configs WHERE id = $1`,
+    [trackConfigId],
+  );
+  return row?.trackTypeId ?? null;
+}
+
+/** So khớp lỏng theo tên — khách gõ "xe A" phải khớp được với "Xe A - Traxxas". */
+function matchByName<T extends { name: string }>(items: T[], spoken: string): T | undefined {
+  const needle = spoken.trim().toLowerCase();
+  if (!needle) return undefined;
+  return (
+    items.find((item) => item.name.toLowerCase() === needle) ??
+    items.find((item) => item.name.toLowerCase().includes(needle)) ??
+    items.find((item) => needle.includes(item.name.toLowerCase()))
+  );
+}
+
+/**
+ * Điền `trackConfigId` và `vehicleIds` — hai trường bắt buộc mà bộ trích xuất
+ * không tự sinh ra được vì chúng là mã trong cơ sở dữ liệu, không phải thứ khách
+ * nói ra.
+ *
+ * Không có bước này thì đơn nháp KHÔNG BAO GIỜ đủ trường, và cuộc trò chuyện
+ * lặp vô hạn ở bước xác nhận.
+ */
+async function resolveIds(
+  draft: FbBookingDraft,
+  extracted: Awaited<ReturnType<typeof extractBookingFields>>,
+): Promise<FbBookingDraft> {
+  const next: FbBookingDraft = { ...draft };
+
+  if (!next.trackConfigId) {
+    const tracks = await listTrackConfigs(next.cafeId);
+    if (tracks.length === 1) {
+      next.trackConfigId = tracks[0].id;
+    } else if (extracted.trackName) {
+      // Số thứ tự trước, vì đó là đáp án luôn khớp được. Chỉ nhận khi câu trả
+      // lời NGẮN — "2" là chọn sân số 2, còn "2 người" thì không phải.
+      const spoken = extracted.trackName.trim();
+      const asIndex = /^\d{1,2}$/.test(spoken) ? Number(spoken) : NaN;
+      const picked =
+        Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= tracks.length
+          ? tracks[asIndex - 1]
+          : matchByName(tracks, spoken);
+      if (picked) next.trackConfigId = picked.id;
+    }
+  }
+
+  if (next.playMode === 'RENTAL' && extracted.vehicleNames?.length) {
+    // Chỉ đối chiếu trong những xe THẬT SỰ mời được cho sân đã chọn — nếu không,
+    // khách gõ đúng tên một chiếc không chạy được sân đó và bị từ chối ở bước cuối.
+    const trackTypeId = next.trackConfigId ? await trackTypeOf(next.trackConfigId) : null;
+    const catalogs = await listVehicleCatalogs(next.cafeId, trackTypeId);
+    const matched = extracted.vehicleNames
+      .map((spoken) => {
+        const asIndex = /^\d{1,2}$/.test(spoken.trim()) ? Number(spoken.trim()) : NaN;
+        if (Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= catalogs.length) {
+          return catalogs[asIndex - 1].id;
+        }
+        return matchByName(catalogs, spoken)?.id;
+      })
+      .filter((id): id is string => Boolean(id));
+    if (matched.length) next.vehicleIds = matched;
+  }
+
+  return next;
+}
+
+/** Tên và giá thuê của các xe khách đã chọn. */
+async function loadChosenVehicles(
+  cafeId: string,
+  vehicleIds: string[],
+): Promise<Array<{ name: string; hourlyRate: number }>> {
+  if (!vehicleIds.length) return [];
+  return AppDataSource.query<Array<{ name: string; hourlyRate: number }>>(
+    `SELECT name, hourly_rate::float AS "hourlyRate"
+       FROM vehicle_catalogs
+      WHERE cafe_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`,
+    [cafeId, vehicleIds],
+  );
+}
+
+/**
+ * Tính tổng tiền để TRÌNH cho khách trước khi họ xác nhận.
+ *
+ * ── Vì sao phải có ──────────────────────────────────────────────────────────
+ *
+ * FR-005 đòi bản tóm tắt nêu tổng số tiền phải trả — không ai xác nhận một đơn
+ * mà không biết mình sẽ trả bao nhiêu.
+ *
+ * Và nó còn giữ một chốt chặn khác: `finalizeBooking` so con số này với tổng
+ * tiền thật lúc tạo đơn để phát hiện giá đổi giữa chừng (FR-037). Không gán
+ * `quotedTotal` thì phép so đó luôn sai và chốt chặn thành code chết — đúng
+ * tình trạng trước lần sửa này.
+ *
+ * Con số ở đây chỉ để HIỂN THỊ. Số tiền thu thật vẫn do `createBooking` chốt và
+ * ghi vào ảnh chụp đơn, theo Nguyên tắc I của hiến chương.
+ */
+async function quoteDraft(draft: FbBookingDraft, cafe: Cafe): Promise<number | undefined> {
+  if (!draft.slotStart || !draft.slotEnd || !draft.playerCount) return undefined;
+
+  const start = new Date(draft.slotStart);
+  const minutes = (new Date(draft.slotEnd).getTime() - start.getTime()) / 60_000;
+  const slotCount = minutes / cafe.slotDurationMinutes;
+
+  const { multiplier } = await getEffectiveMultiplier(cafe.id, start);
+  const slotFee = Number(cafe.slotFeeRate) * multiplier * slotCount * draft.playerCount;
+
+  let rentalFee = 0;
+  if (draft.playMode === BookingMode.RENTAL && draft.vehicleIds?.length) {
+    const vehicles = await loadChosenVehicles(cafe.id, draft.vehicleIds);
+    rentalFee = vehicles.reduce((sum, v) => sum + v.hourlyRate * (minutes / 60), 0);
+  }
+
+  return Math.round(slotFee + rentalFee);
+}
+
+/** Kết quả tra chỗ trống cho khung giờ khách vừa chọn. */
+interface SlotCheck {
+  ok: boolean;
+  /** Câu trả lời khi khung giờ không dùng được. */
+  message?: string;
+}
+
+/**
+ * Kiểm khung giờ khách chọn có thật sự đặt được không — NGAY TRONG hội thoại.
+ *
+ * ── Vì sao gọi thẳng hàm, không để mô hình gọi ──────────────────────────────
+ *
+ * `check_availability` vốn là công cụ cấp cho Gemini. Nhưng ở đây backend đã
+ * biết chính xác cần tra ngày nào, nên đưa qua mô hình chỉ thêm ba cách hỏng mà
+ * không thêm được gì: mô hình có thể quên gọi, gọi sai ngày, hoặc đọc sai JSON
+ * trả về. Gọi thẳng thì không còn xác suất nào.
+ *
+ * ── Vì sao phải kiểm ở đây ──────────────────────────────────────────────────
+ *
+ * Trước bước này, bộ điều phối nhận khung giờ khách nói rồi đi thẳng tới
+ * `createBooking`. Khung giờ kín chỗ chỉ lộ ra ở bước cuối — sau khi khách đã
+ * khai tên, số điện thoại và chọn xe. Cùng kiểu hỏng với lỗi giải đấu: hứa xong
+ * nuốt lời.
+ */
+/**
+ * Sức chứa xe cá nhân của ĐÚNG sân khách chọn.
+ *
+ * ── Vì sao không dùng `check_availability` cho việc này ─────────────────────
+ *
+ * Công cụ đó đọc `cafes.byoc_capacity` — con số cấp QUÁN — và đếm gộp mọi
+ * booking xe cá nhân của cả chi nhánh vào một bộ đếm. `createBooking` thì dùng
+ * sức chứa của TỪNG SÂN. Hai con số khác nhau, và sai cả hai chiều:
+ *
+ *   RC Tân Bình: cấp quán = 3, nhưng Asphalt = 2 và Carpet = 10.
+ *     • chọn Asphalt, đã có 2 người → công cụ nói còn chỗ, tạo đơn thì bị từ chối
+ *     • chọn Carpet, đã có 3 người → công cụ nói hết chỗ, trong khi còn trống 7
+ *
+ * Chiều thứ hai tệ hơn: đuổi mất khách đang muốn trả tiền, mà không ai biết.
+ */
+async function checkTrackCapacity(draft: FbBookingDraft): Promise<SlotCheck> {
+  if (draft.playMode !== 'BYOC' || !draft.trackConfigId || !draft.slotStart || !draft.slotEnd) {
+    return { ok: true };
+  }
+
+  const [track] = await AppDataSource.query<
+    Array<{ byocCapacity: number; trackTypeId: string; name: string }>
+  >(
+    `SELECT ctc.byoc_capacity AS "byocCapacity", ctc.track_type_id AS "trackTypeId", tt.name
+       FROM cafe_track_configs ctc
+       JOIN track_types tt ON tt.id = ctc.track_type_id
+      WHERE ctc.id = $1`,
+    [draft.trackConfigId],
+  );
+  if (!track) return { ok: true };
+
+  const occupied = await countOccupiedByocParticipants(
+    draft.cafeId,
+    new Date(draft.slotStart),
+    new Date(draft.slotEnd),
+    draft.trackConfigId,
+    track.trackTypeId,
+  );
+  const free = track.byocCapacity - occupied;
+  const wanted = draft.playerCount ?? 1;
+
+  if (free >= wanted) return { ok: true };
+
+  return {
+    ok: false,
+    message:
+      free > 0
+        ? `Sân ${track.name} khung giờ này chỉ còn ${free} chỗ, mà bạn cần ${wanted} ạ. Bạn giảm số người hoặc đổi sân/khung giờ giúp mình nhé?`
+        : `Sân ${track.name} khung giờ này đã kín chỗ rồi ạ. Bạn đổi sân hoặc khung giờ khác giúp mình nhé?`,
+  };
+}
+
+/**
+ * Xe khách chọn có còn chiếc nào rảnh trong đúng khung giờ đó không.
+ *
+ * Tương thích với sân là điều kiện CẦN, chưa đủ: một danh mục có 4 chiếc mà cả
+ * 4 đã bị thuê trong khung giờ đó thì vẫn không đặt được. `createBooking` bắt
+ * được ở bước cuối; bắt sớm ở đây thì khách đổi xe được ngay thay vì phải khai
+ * lại từ đầu.
+ */
+async function checkRentalAvailability(draft: FbBookingDraft): Promise<SlotCheck> {
+  if (draft.playMode !== 'RENTAL' || !draft.vehicleIds?.length) return { ok: true };
+  if (!draft.slotStart || !draft.slotEnd) return { ok: true };
+
+  const rows = await AppDataSource.query<Array<{ name: string; free: number }>>(
+    `SELECT vc.name,
+            (SELECT COUNT(*)::int FROM vehicles v
+              WHERE v.catalog_id = vc.id
+                AND v.status = 'AVAILABLE'
+                AND v.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM booking_vehicles bv
+                    JOIN bookings b ON b.id = bv.booking_id
+                   WHERE bv.vehicle_id = v.id
+                     AND b.status IN ('PENDING', 'CONFIRMED')
+                     AND b.slot_start < $3::timestamptz
+                     AND b.slot_end   > $2::timestamptz
+                )) AS free
+       FROM vehicle_catalogs vc
+      WHERE vc.id = ANY($1::uuid[])`,
+    [draft.vehicleIds, draft.slotStart, draft.slotEnd],
+  );
+
+  const taken = rows.filter((row) => row.free < 1);
+  if (taken.length === 0) return { ok: true };
+
+  return {
+    ok: false,
+    message: `${taken.map((t) => t.name).join(', ')} đã có người thuê trong khung giờ này rồi ạ. Bạn chọn xe khác giúp mình nhé?`,
+  };
+}
+
+async function checkSlotStillOffered(draft: FbBookingDraft): Promise<SlotCheck> {
+  if (!draft.slotStart || !draft.playMode) return { ok: true };
+
+  const start = new Date(draft.slotStart);
+  const dateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(start);
+  const wantedTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(start);
+
+  let parsed: {
+    available?: boolean;
+    message?: string;
+    rental?: { availableTimes?: string[] };
+    byoc?: { availableTimes?: string[] };
+  };
+  try {
+    parsed = JSON.parse(await checkAvailabilityTool(draft.cafeId, { date: dateStr }));
+  } catch (err) {
+    // Tra hỏng thì KHÔNG chặn khách — `createBooking` vẫn còn chốt chặn cuối.
+    // Chặn ở đây khi chưa chắc chắn là từ chối một đơn có thể hợp lệ.
+    logger.warn('FbBooking', 'không tra được chỗ trống, bỏ qua bước kiểm sớm', err);
+    return { ok: true };
+  }
+
+  if (parsed.available === false) {
+    return { ok: false, message: parsed.message ?? 'Ngày này bên mình đã kín chỗ ạ.' };
+  }
+
+  const offered =
+    draft.playMode === 'BYOC'
+      ? (parsed.byoc?.availableTimes ?? [])
+      : (parsed.rental?.availableTimes ?? []);
+
+  if (offered.includes(wantedTime)) return { ok: true };
+
+  const suggestions = offered.slice(0, 5).join(', ');
+  return {
+    ok: false,
+    message: suggestions
+      ? `Khung ${wantedTime} ngày ${dateStr} đã kín chỗ rồi ạ. Bên mình còn: ${suggestions}. Bạn chọn giúp mình khung khác nhé?`
+      : `Khung ${wantedTime} ngày ${dateStr} đã kín chỗ, và ngày đó cũng không còn khung nào phù hợp ạ. Bạn chọn ngày khác giúp mình nhé?`,
+  };
+}
+
+/**
+ * Câu hỏi cho trường còn thiếu.
+ *
+ * Danh sách trường bắt buộc do `firstMissingField` giữ — hàm này chỉ dịch sang
+ * câu chữ. Tách như vậy để không bao giờ tái diễn tình trạng hai nơi có hai
+ * danh sách lệch nhau; xem chú thích ở `firstMissingField`.
+ */
+async function nextQuestion(
+  draft: FbBookingDraft,
+): Promise<{ state: FbBookingDraft['state']; text: string } | null> {
+  const missing: RequiredField | null = firstMissingField(draft);
+  if (!missing) return null;
+
+  switch (missing) {
+    case 'slotStart':
+      return { state: 'AWAITING_SLOT', text: 'Bạn muốn chơi vào ngày giờ nào ạ?' };
+    case 'playMode':
+      return {
+        state: 'AWAITING_PLAY_MODE',
+        text: 'Bạn thuê xe của quán hay mang xe cá nhân tới ạ?',
+      };
+    case 'playerCount':
+      return { state: 'AWAITING_PLAY_MODE', text: 'Có mấy bạn cùng chơi ạ?' };
+    case 'trackConfigId': {
+      const tracks = await listTrackConfigs(draft.cafeId);
+      if (tracks.length === 0) {
+        // Chi nhánh chưa cấu hình đường đua nào thì không nhận đặt lịch được.
+        // Báo thẳng thay vì hỏi một câu không có đáp án.
+        return {
+          state: 'AWAITING_SLOT',
+          text: 'Hiện chi nhánh chưa mở đường đua nào ạ. Bạn liên hệ trực tiếp quán giúp mình nhé!',
+        };
+      }
+      // Đánh số để khách luôn có một đáp án CHẮC CHẮN khớp.
+      //
+      // Khớp theo tên là so chuỗi lỏng: sân "Đường nhựa (Asphalt)" thì "đường
+      // nhựa" khớp được, nhưng "sân nhựa" hay "cái đầu tiên" thì không — và khi
+      // không khớp, câu hỏi này lặp lại y nguyên, không có lối ra.
+      return {
+        state: 'AWAITING_SLOT',
+        text: [
+          'Bạn muốn chơi ở sân nào ạ?',
+          ...tracks.map((t, i) => `${i + 1}. ${t.name}`),
+          '',
+          'Bạn gõ số hoặc tên sân giúp mình nhé.',
+        ].join('\n'),
+      };
+    }
+    case 'vehicleIds': {
+      const trackTypeId = draft.trackConfigId ? await trackTypeOf(draft.trackConfigId) : null;
+      const catalogs = await listVehicleCatalogs(draft.cafeId, trackTypeId);
+      if (catalogs.length === 0) {
+        return {
+          state: 'AWAITING_SLOT',
+          text: 'Sân bạn chọn hiện chưa có xe nào của quán chạy được ạ. Bạn đổi sân, hoặc mang xe cá nhân tới nhé?',
+        };
+      }
+      return {
+        state: 'AWAITING_VEHICLES',
+        text: [
+          'Bạn muốn thuê xe nào ạ?',
+          ...catalogs.slice(0, 8).map((c, i) => `${i + 1}. ${c.name}`),
+          '',
+          'Bạn gõ số hoặc tên xe giúp mình nhé.',
+        ].join('\n'),
+      };
+    }
+    case 'fullName':
+      return { state: 'AWAITING_NAME', text: 'Cho mình xin tên của bạn ạ?' };
+    case 'phone':
+      return { state: 'AWAITING_PHONE', text: 'Cho mình xin số điện thoại để giữ chỗ ạ?' };
+  }
+}
+
+/**
+ * Bản tóm tắt khách nhìn thấy trước khi gõ xác nhận.
+ *
+ * Phải nêu ĐỦ mọi thứ khách đã khai, kể cả tên và số điện thoại. Đây là cơ hội
+ * duy nhất họ phát hiện mình đọc nhầm số hay bot nghe nhầm tên — sau khi xác
+ * nhận thì đơn đã giữ chỗ và số điện thoại sai nghĩa là staff gọi nhầm người.
+ */
+async function summarize(draft: FbBookingDraft, cafe: Cafe, cafeName: string): Promise<string> {
   const fmt = (iso?: string) =>
     iso
       ? new Intl.DateTimeFormat('vi-VN', {
@@ -160,15 +608,71 @@ function summarize(draft: FbBookingDraft, cafeName: string): string {
         }).format(new Date(iso))
       : '';
 
-  return [
+  const lines = [
     'Mình tóm tắt đơn nhé:',
     ``,
     `Chi nhánh: ${cafeName}`,
     `Thời gian: ${fmt(draft.slotStart)} — ${fmt(draft.slotEnd)}`,
     `Số người: ${draft.playerCount}`,
     `Hình thức: ${draft.playMode === BookingMode.RENTAL ? 'Thuê xe của quán' : 'Mang xe cá nhân'}`,
-    ``,
-    'Bạn gõ "xác nhận" để mình giữ chỗ nhé!',
+  ];
+
+  if (draft.playMode === BookingMode.RENTAL && draft.vehicleIds?.length) {
+    const vehicles = await loadChosenVehicles(cafe.id, draft.vehicleIds);
+    if (vehicles.length) lines.push(`Xe: ${vehicles.map((v) => v.name).join(', ')}`);
+  }
+
+  lines.push(``, `Người đặt: ${draft.fullName ?? '(chưa có)'}`);
+  lines.push(`Điện thoại: ${draft.phone ?? '(chưa có)'}`);
+  if (draft.email) lines.push(`Email: ${draft.email}`);
+
+  if (draft.quotedTotal !== undefined) {
+    lines.push(``, `Tổng tiền: ${draft.quotedTotal.toLocaleString('vi-VN')}đ`);
+  }
+
+  lines.push(``, 'Thông tin đúng chưa ạ? Bạn gõ "xác nhận" để mình giữ chỗ nhé!');
+  return lines.join('\n');
+}
+
+/**
+ * Mô tả ngắn gọn những gì khách đã khai, để ghép vào ngữ cảnh của đường hỏi–đáp.
+ *
+ * ── Vì sao cần ──────────────────────────────────────────────────────────────
+ *
+ * Lịch sử chữ chỉ giữ 10 tin gần nhất. Một cuộc đặt lịch dài hơn thế, nên tới
+ * lúc khách hỏi "tên tôi là gì" thì lượt họ khai tên đã trôi ra khỏi cửa sổ —
+ * và bot trả lời là không biết, dù nó đang giữ cái tên đó trong đơn nháp.
+ *
+ * Ghép bản mô tả này vào đầu lịch sử vừa gọn hơn nhiều so với nới cửa sổ (đưa
+ * dữ liệu có cấu trúc thay vì chữ thô), vừa không mất khi cuộc trò chuyện kéo
+ * dài thêm.
+ */
+export async function describeDraftForContext(
+  pageId: string,
+  psid: string,
+): Promise<string | null> {
+  const draft = await loadDraft(pageId, psid);
+  if (!draft) return null;
+
+  const known: string[] = [];
+  if (draft.fullName) known.push(`tên khách: ${draft.fullName}`);
+  if (draft.phone) known.push(`số điện thoại: ${draft.phone}`);
+  if (draft.email) known.push(`email: ${draft.email}`);
+  if (draft.slotStart) known.push(`khung giờ đang chọn: ${draft.slotStart}`);
+  if (draft.playerCount) known.push(`số người: ${draft.playerCount}`);
+  if (draft.playMode) {
+    known.push(
+      `hình thức: ${draft.playMode === 'RENTAL' ? 'thuê xe của quán' : 'mang xe cá nhân'}`,
+    );
+  }
+  if (draft.quotedTotal !== undefined) known.push(`tổng tiền tạm tính: ${draft.quotedTotal}đ`);
+
+  if (!known.length) return null;
+
+  return [
+    '[Ngữ cảnh nội bộ — khách đang trong quá trình đặt lịch, đã cung cấp:]',
+    known.map((item) => `- ${item}`).join('\n'),
+    'Dùng thông tin này khi khách hỏi lại. KHÔNG đọc nguyên văn dòng ngữ cảnh này cho khách.',
   ].join('\n');
 }
 
@@ -187,11 +691,25 @@ export async function tryHandleBookingTurn(
   // điện thoại đó, nhưng AI vẫn trả lời hỏi–đáp bình thường.
   if (existing?.state === 'BLOCKED_REAL_ACCOUNT') return null;
 
-  const extracted = await extractBookingFields(ctx.text, existing);
+  // Chưa có đơn nháp thì phải thấy dấu hiệu muốn đặt mới xét tiếp — lọc thô,
+  // không tốn gì.
+  if (!existing && !looksLikeBookingIntent(ctx.text)) return null;
 
-  // Chưa có đơn nháp và khách cũng không tỏ ý muốn đặt → không phải việc của
-  // luồng này.
-  if (!existing && !extracted.wantsToBook) return null;
+  // Quyết định lượt này cần gì TRƯỚC khi gọi bất cứ mô hình nào. Phần lớn lượt
+  // trong một cuộc đặt lịch giải mã được bằng luật; xem `fb-booking-triage.ts`.
+  const plan = planTurn(existing, ctx.text);
+
+  // Khách hỏi giữa chừng — trả về đường hỏi–đáp, nơi có đủ công cụ tra cứu và
+  // cơ chế chọn mô hình theo độ chắc chắn. Đơn nháp vẫn nằm nguyên trong Redis
+  // nên hỏi xong quay lại là đặt tiếp được.
+  if (plan.kind === 'QUESTION') return null;
+
+  const extracted =
+    plan.kind === 'DETERMINISTIC' ? plan.fields : await extractBookingFields(ctx.text, existing);
+
+  // Mô hình vẫn có quyền nói "câu này không phải đặt lịch" — nó đọc được ngữ
+  // cảnh mà bộ lọc từ khoá không đọc được.
+  if (!existing && plan.kind === 'EXTRACT' && !extracted.wantsToBook) return null;
 
   const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: ctx.cafeId } });
   if (!cafe) return null;
@@ -204,7 +722,72 @@ export async function tryHandleBookingTurn(
   }
 
   const draft: FbBookingDraft = existing ?? { state: 'AWAITING_SLOT', cafeId: ctx.cafeId };
-  const next = await mergeExtracted(draft, extracted, cafe);
+  let next = await mergeExtracted(draft, extracted, cafe);
+  // Điền mã đường đua và mã xe TRƯỚC khi hỏi tiếp — nếu không, đơn nháp không
+  // bao giờ đủ trường và cuộc trò chuyện lặp vô hạn ở bước xác nhận.
+  next = await resolveIds(next, extracted);
+
+  // Bốn luật đặt lịch của `createBooking`, kiểm NGAY khi biết khung giờ.
+  //
+  // Gọi lại đúng những hàm đó chứ không chép luật sang đây — chép là hai bản sẽ
+  // lệch nhau, đúng kiểu lỗi đã gây ra vòng lặp vô hạn ở bước xác nhận.
+  //
+  // Không có bước này thì khách nói "3 giờ sáng mai" và bot vẫn nhận, đi hết
+  // hội thoại rồi mới vỡ ở bước cuối.
+  if (next.slotStart && next.slotEnd) {
+    const slotStart = new Date(next.slotStart);
+    const slotEnd = new Date(next.slotEnd);
+    try {
+      assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
+      assertMinimumBookingNotice(slotStart, cafe.minBookingNoticeMinutes);
+      assertMaxAdvanceBookingDays(slotStart, slotEnd, cafe.maxAdvanceBookingDays);
+      await assertWithinSubscriptionCoverage(cafe, slotEnd);
+    } catch (err) {
+      if (err instanceof AppError) {
+        const retry: FbBookingDraft = {
+          ...next,
+          slotStart: undefined,
+          slotEnd: undefined,
+          vehicleIds: undefined,
+          state: 'AWAITING_SLOT',
+        };
+        await saveDraft(ctx.pageId, ctx.psid, retry);
+        return { text: `${err.message}. Bạn chọn khung giờ khác giúp mình nhé?` };
+      }
+      throw err;
+    }
+  }
+
+  // Khung giờ vừa có đủ thông tin để tra thì tra ngay, đừng để tới bước cuối.
+  //
+  // Hai lớp: `checkSlotStillOffered` tra ở mức chi nhánh khi chưa biết sân;
+  // `checkTrackCapacity` tra đúng sân khách đã chọn, dùng cùng con số mà
+  // `createBooking` sẽ dùng.
+  if (next.slotStart && next.playMode) {
+    // Biết sân rồi thì con số của SÂN là con số đúng — `createBooking` cũng dùng
+    // đúng nó. Chưa biết sân thì tra ở mức chi nhánh, chấp nhận thô hơn.
+    // Ba lớp, từ hẹp tới rộng. Lớp nào bắt được lỗi trước thì dừng ở đó —
+    // câu trả lời càng cụ thể càng dễ cho khách sửa.
+    const trackCheck = await checkTrackCapacity(next);
+    const rentalCheck = trackCheck.ok ? await checkRentalAvailability(next) : trackCheck;
+    const slotCheck = rentalCheck.ok ? await checkSlotStillOffered(next) : rentalCheck;
+    if (!slotCheck.ok) {
+      // Xe bị thuê mất thì chỉ hỏi lại XE — khung giờ vẫn còn dùng được, xoá đi
+      // là bắt khách chọn lại thứ không hề hỏng (FR-036).
+      const onlyVehicleGone = !rentalCheck.ok && trackCheck.ok;
+      const retry: FbBookingDraft = onlyVehicleGone
+        ? { ...next, vehicleIds: undefined, state: 'AWAITING_VEHICLES' }
+        : {
+            ...next,
+            slotStart: undefined,
+            slotEnd: undefined,
+            vehicleIds: undefined,
+            state: 'AWAITING_SLOT',
+          };
+      await saveDraft(ctx.pageId, ctx.psid, retry);
+      return { text: slotCheck.message ?? 'Khung giờ này đã kín chỗ ạ.' };
+    }
+  }
 
   // ── Khách đồng ý mức giá mới sau khi giá đổi ──────────────────────────────
   //
@@ -225,30 +808,38 @@ export async function tryHandleBookingTurn(
   if (next.priceChanged) {
     await saveDraft(ctx.pageId, ctx.psid, next);
     return {
-      text: `Bạn gõ "xác nhận" nếu đồng ý mức giá ${next.quotedTotal?.toLocaleString('vi-VN')}đ nhé, hoặc cho mình biết bạn muốn đổi gì ạ.`,
+      text:
+        next.previousQuotedTotal !== undefined
+          ? `Giá đã đổi từ ${next.previousQuotedTotal.toLocaleString('vi-VN')}đ thành ${next.quotedTotal?.toLocaleString('vi-VN')}đ ạ. Bạn gõ "xác nhận" nếu đồng ý, hoặc cho mình biết bạn muốn đổi gì.`
+          : `Bạn gõ "xác nhận" nếu đồng ý mức giá ${next.quotedTotal?.toLocaleString('vi-VN')}đ nhé, hoặc cho mình biết bạn muốn đổi gì ạ.`,
     };
   }
 
   // ── Chưa đủ trường: hỏi tiếp ──────────────────────────────────────────────
-  const question = nextQuestion(next);
+  const question = await nextQuestion(next);
   if (question) {
     next.state = question.state;
     await saveDraft(ctx.pageId, ctx.psid, next);
     return { text: question.text };
   }
 
-  // ── Đủ trường: hỏi email tuỳ chọn một lần, rồi tóm tắt ─────────────────────
-  if (!next.email && !extracted.declinedEmail && next.state !== 'AWAITING_CONFIRMATION') {
-    next.state = 'AWAITING_CONFIRMATION';
-    await saveDraft(ctx.pageId, ctx.psid, next);
-    return {
-      text: `${summarize(next, cafe.name)}\n\n(Bạn muốn nhận email xác nhận thì cho mình xin địa chỉ, không thì bỏ qua cũng được ạ.)`,
-    };
-  }
+  // ── Đủ trường: báo giá rồi tóm tắt ────────────────────────────────────────
+  //
+  // Tính giá TRƯỚC khi tóm tắt: bản tóm tắt phải nêu tổng tiền (FR-005), và
+  // `quotedTotal` còn là mốc để phát hiện giá đổi ở bước tạo đơn (FR-037).
+  next.quotedTotal = await quoteDraft(next, cafe);
 
+  const askEmail =
+    !next.email && !extracted.declinedEmail && next.state !== 'AWAITING_CONFIRMATION';
   next.state = 'AWAITING_CONFIRMATION';
   await saveDraft(ctx.pageId, ctx.psid, next);
-  return { text: summarize(next, cafe.name) };
+
+  const summary = await summarize(next, cafe, cafe.name);
+  return {
+    text: askEmail
+      ? `${summary}\n\n(Bạn muốn nhận email xác nhận thì cho mình xin địa chỉ, không thì bỏ qua cũng được ạ.)`
+      : summary,
+  };
 }
 
 /**
@@ -361,7 +952,23 @@ async function finalizeBooking(
       slot_start: draft.slotStart!,
       slot_end: draft.slotEnd!,
       vehicle_ids: draft.vehicleIds ?? [],
-      participants: [],
+      /*
+        Người đi cùng, KHÔNG kể người đặt.
+
+        `createBooking` tính `playerCount = 1 + participants.length` — người đặt
+        được cộng sẵn. Truyền mảng rỗng như trước nghĩa là mọi đơn đều tính đúng
+        MỘT người, bất kể khách đặt cho mấy người:
+
+          • thu thiếu tiền sân — phí sân nhân theo đầu người
+          • sức chứa xe cá nhân bị trừ 1 thay vì n, nên sân nhận quá tải
+
+        Không có tên và số của từng người đi cùng vì hội thoại chỉ hỏi TỔNG số
+        người — đủ để tính tiền và giữ chỗ, còn danh tính từng người thì staff
+        ghi tại quầy lúc nhận xe.
+      */
+      participants: Array.from({ length: Math.max(0, (draft.playerCount ?? 1) - 1) }, () => ({
+        participant_type: BookingParticipantType.WALK_IN_GUEST,
+      })),
       fnb_items: [],
       track_config_id: draft.trackConfigId,
       source: BookingSource.FACEBOOK,
@@ -413,11 +1020,13 @@ async function finalizeBooking(
         actual: created.total_amount,
       });
 
+      // Đọc từ hai trường tách bạch, không dựa vào thứ tự ghi đè.
+      const previous = draft.quotedTotal;
       return {
         text: [
           `Giá khung giờ này vừa thay đổi ạ.`,
           ``,
-          `Giá báo lúc nãy: ${draft.quotedTotal.toLocaleString('vi-VN')}đ`,
+          `Giá báo lúc nãy: ${previous.toLocaleString('vi-VN')}đ`,
           `Giá hiện tại: ${created.total_amount.toLocaleString('vi-VN')}đ`,
           ``,
           `Bạn gõ "xác nhận" lần nữa nếu đồng ý mức giá mới nhé.`,

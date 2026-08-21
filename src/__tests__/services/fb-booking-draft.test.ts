@@ -4,6 +4,8 @@ import {
   applyRevalidationOutcome,
   clearDraft,
   draftKey,
+  firstMissingField,
+  hasRequiredFields,
   isConfirmationTurn,
   loadDraft,
   saveDraft,
@@ -42,7 +44,6 @@ describe('fb-booking-draft: máy trạng thái đơn nháp', () => {
       slotEnd: '2026-08-22T21:00:00+07:00',
       vehicleIds: ['33333333-3333-3333-3333-333333333333'],
       quotedTotal: 560_000,
-      quotedAt: '2026-08-22T18:40:00+07:00',
       ...overrides,
     };
   }
@@ -215,5 +216,65 @@ describe('fb-booking-draft: máy trạng thái đơn nháp', () => {
   it('trạng thái chặn tài khoản thật không bao giờ nhận xác nhận', () => {
     const blocked = completeDraft({ state: 'BLOCKED_REAL_ACCOUNT' });
     expect(isConfirmationTurn(blocked, 'xác nhận')).toBe(false);
+  });
+});
+
+/**
+ * Vòng lặp vô hạn ở bước xác nhận.
+ *
+ * Người dùng phát hiện khi chạy thử thật: gõ "xác nhận" thì bot tóm tắt lại đơn,
+ * gõ tiếp thì lại tóm tắt, mãi mãi không tạo được đơn.
+ *
+ * Nguyên nhân: `hasRequiredFields` đòi `trackConfigId` còn `nextQuestion` của bộ
+ * điều phối thì không hỏi tới nó. Không bên nào ném lỗi, nên hỏng lặng lẽ.
+ *
+ * Test này khoá lại chính cái bất biến bị vi phạm: hai phía phải dùng CHUNG một
+ * định nghĩa "đủ trường".
+ */
+describe('fb-booking-draft: không được lặp vô hạn ở bước xác nhận', () => {
+  const base = {
+    state: 'AWAITING_CONFIRMATION' as const,
+    cafeId: '11111111-1111-1111-1111-111111111111',
+    fullName: 'Nam',
+    phone: '0901234567',
+    playerCount: 1,
+    playMode: 'BYOC' as const,
+    slotStart: '2026-08-22T12:00:00+07:00',
+    slotEnd: '2026-08-22T13:00:00+07:00',
+  };
+
+  it('thiếu trackConfigId thì PHẢI báo là thiếu, không được im lặng coi như đủ', () => {
+    const draft = { ...base };
+    expect(firstMissingField(draft)).toBe('trackConfigId');
+    expect(hasRequiredFields(draft)).toBe(false);
+    expect(isConfirmationTurn(draft, 'xác nhận')).toBe(false);
+  });
+
+  it('có đủ trackConfigId thì nhận xác nhận và tạo được đơn', () => {
+    const draft = { ...base, trackConfigId: '22222222-2222-2222-2222-222222222222' };
+    expect(firstMissingField(draft)).toBeNull();
+    expect(hasRequiredFields(draft)).toBe(true);
+    expect(isConfirmationTurn(draft, 'xác nhận')).toBe(true);
+  });
+
+  it('RENTAL thiếu xe thì báo thiếu đúng trường vehicleIds', () => {
+    const draft = {
+      ...base,
+      playMode: 'RENTAL' as const,
+      trackConfigId: '22222222-2222-2222-2222-222222222222',
+    };
+    expect(firstMissingField(draft)).toBe('vehicleIds');
+    expect(isConfirmationTurn(draft, 'xác nhận')).toBe(false);
+  });
+
+  it('mọi trường mà hasRequiredFields đòi đều phải có tên trong firstMissingField', () => {
+    // Bất biến cấu trúc: đủ trường ⟺ không thiếu trường nào. Hai vế lệch nhau là
+    // vòng lặp quay lại.
+    const complete = { ...base, trackConfigId: '22222222-2222-2222-2222-222222222222' };
+    for (const key of ['slotStart', 'playMode', 'playerCount', 'trackConfigId'] as const) {
+      const broken = { ...complete, [key]: undefined };
+      expect(hasRequiredFields(broken)).toBe(false);
+      expect(firstMissingField(broken)).not.toBeNull();
+    }
   });
 });

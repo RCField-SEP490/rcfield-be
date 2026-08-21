@@ -29,7 +29,7 @@ import {
   markSeen,
   typingOn,
 } from '../services/fb-messenger.service';
-import { tryHandleBookingTurn } from '../services/fb-booking-orchestrator';
+import { describeDraftForContext, tryHandleBookingTurn } from '../services/fb-booking-orchestrator';
 import { appendTurn, clearHistory, loadHistory } from '../services/fb-conversation-memory';
 import { getFbChatQueue } from '../queues/fb-chat.queue';
 
@@ -143,18 +143,27 @@ export async function processEvent(event: FbMessagingEvent, pageId: string): Pro
       return;
     }
 
-    const { route: chatRoute, confidence } = await route(text);
+    const { route: chatRoute, confidence, nluAvailable } = await route(text);
 
     // Lịch sử của CHÍNH cuộc trò chuyện này. Widget web được trình duyệt gửi
     // kèm lịch sử mỗi lượt; Facebook thì không có ai làm hộ, nên máy chủ tự
     // giữ — xem `fb-conversation-memory.ts`.
     const history = await loadHistory(pageId, psid);
 
+    // Khách đang đặt lịch dở mà hỏi một câu giữa chừng: ghép những gì họ đã khai
+    // vào đầu ngữ cảnh. Không có bước này thì bot trả lời "không biết tên bạn"
+    // trong khi nó đang giữ cái tên đó trong đơn nháp — lịch sử chữ chỉ còn 5
+    // lượt gần nhất nên lượt khai tên đã trôi mất.
+    const draftContext = await describeDraftForContext(pageId, psid);
+    const contextualHistory = draftContext
+      ? [{ role: 'model' as const, content: draftContext }, ...history]
+      : history;
+
     let response;
     if (chatRoute === 'fast') response = await fastAnswer(cafeId);
     else if (chatRoute === 'thanks') response = thanksAnswer();
     else if (chatRoute === 'farewell') response = farewellAnswer();
-    else response = await ragChat(cafeId, text, history, confidence);
+    else response = await ragChat(cafeId, text, contextualHistory, confidence, nluAvailable);
 
     const formatted = FbMessengerFormatter.format(response);
 
