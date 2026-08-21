@@ -17,6 +17,7 @@ import {
 } from '../services/chat.service';
 import { FbMessengerFormatter } from '../services/fb-messenger.formatter';
 import { sendMessage, sendText, markSeen, typingOn } from '../services/fb-messenger.service';
+import { appendTurn, clearHistory, loadHistory } from '../services/fb-conversation-memory';
 import { getFbChatQueue } from '../queues/fb-chat.queue';
 
 interface FbWebhookPayload {
@@ -66,11 +67,17 @@ export async function processEvent(event: FbMessagingEvent, pageId: string): Pro
     if (providerId && providerRole !== 'ADMIN') await incrementAIQuota(providerId);
 
     const { route: chatRoute, confidence } = await route(text);
+
+    // Lịch sử của CHÍNH cuộc trò chuyện này. Widget web được trình duyệt gửi
+    // kèm lịch sử mỗi lượt; Facebook thì không có ai làm hộ, nên máy chủ tự
+    // giữ — xem `fb-conversation-memory.ts`.
+    const history = await loadHistory(pageId, psid);
+
     let response;
     if (chatRoute === 'fast') response = await fastAnswer(cafeId);
     else if (chatRoute === 'thanks') response = thanksAnswer();
     else if (chatRoute === 'farewell') response = farewellAnswer();
-    else response = await ragChat(cafeId, text, [], confidence);
+    else response = await ragChat(cafeId, text, history, confidence);
 
     const formatted = FbMessengerFormatter.format(response);
 
@@ -79,6 +86,17 @@ export async function processEvent(event: FbMessagingEvent, pageId: string): Pro
 
     await sendMessage(psid, formatted, pageToken);
     logger.info('Facebook Webhook', 'replied', { cafeId, pageId, psid });
+
+    // Ghi SAU khi đã gửi: khách không phải chờ Redis, và lượt nào gửi hỏng thì
+    // cũng không lọt vào lịch sử.
+    //
+    // Chào tạm biệt thì dọn luôn — lần sau quay lại là chuyện khác, nối tiếp
+    // ngữ cảnh cũ chỉ làm bot đoán sai.
+    if (chatRoute === 'farewell') {
+      await clearHistory(pageId, psid);
+    } else {
+      await appendTurn(pageId, psid, text, response.answer);
+    }
   } catch (err) {
     if (
       err instanceof AppError &&
