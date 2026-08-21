@@ -84,17 +84,18 @@ describe('fb-booking-draft: máy trạng thái đơn nháp', () => {
     await redis.del(draftKey(otherPage, psid));
   });
 
-  it('đặt hạn sống 15 phút, ngắn hơn hạn 30 phút của lịch sử chữ', async () => {
-    // Chênh lệch này là CÓ CHỦ Ý (research.md D2): khách quay lại sau 20 phút thì
-    // bot vẫn nhớ ngữ cảnh trò chuyện, nhưng giá và tình trạng chỗ phải hỏi lại.
-    expect(DRAFT_TTL_SECONDS).toBe(900);
+  it('hạn sống BẰNG hạn của lịch sử chữ — không được để đơn nháp chết trước', async () => {
+    // Đơn nháp chết trước lịch sử tạo ra trạng thái xác sống: mô hình đọc lại
+    // bản tóm tắt cũ trong lịch sử và trả lời như thể vẫn đang nhận đơn, trong
+    // khi không còn gì để tạo đơn.
+    expect(DRAFT_TTL_SECONDS).toBe(30 * 60);
 
     const psid = freshPsid();
     await saveDraft(pageId, psid, completeDraft());
 
     const ttl = await redis.ttl(draftKey(pageId, psid));
     expect(ttl).toBeGreaterThan(0);
-    expect(ttl).toBeLessThanOrEqual(900);
+    expect(ttl).toBeLessThanOrEqual(30 * 60);
   });
 
   it('xoá đơn nháp sau khi tạo đơn xong', async () => {

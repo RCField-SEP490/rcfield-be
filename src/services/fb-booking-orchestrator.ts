@@ -693,7 +693,27 @@ export async function tryHandleBookingTurn(
 
   // Chưa có đơn nháp thì phải thấy dấu hiệu muốn đặt mới xét tiếp — lọc thô,
   // không tốn gì.
-  if (!existing && !looksLikeBookingIntent(ctx.text)) return null;
+  // Khách gõ xác nhận mà không còn đơn nháp: phiên đã hết hạn hoặc đã mất.
+  //
+  // KHÔNG được để rơi xuống đường hỏi–đáp — mô hình sẽ đọc bản tóm tắt cũ trong
+  // lịch sử rồi trả lời như thể vẫn đang nhận đơn, và khách tưởng mình đã đặt
+  // xong trong khi không có đơn nào. Nói thẳng là hơn.
+  if (!existing && matchesConfirmationKeyword(ctx.text)) {
+    logger.info('FbBooking', 'xác nhận nhưng không còn đơn nháp — phiên đã hết hạn', {
+      psid: ctx.psid,
+    });
+    return {
+      text: 'Xin lỗi bạn, thông tin đặt lịch vừa rồi đã hết hạn nên mình chưa giữ chỗ được ạ. Bạn cho mình biết lại ngày giờ muốn chơi nhé?',
+    };
+  }
+
+  if (!existing && !looksLikeBookingIntent(ctx.text)) {
+    logger.info('FbBooking', 'bỏ qua: chưa có đơn nháp và câu này không có dấu hiệu đặt lịch', {
+      psid: ctx.psid,
+      text: ctx.text.slice(0, 60),
+    });
+    return null;
+  }
 
   // Quyết định lượt này cần gì TRƯỚC khi gọi bất cứ mô hình nào. Phần lớn lượt
   // trong một cuộc đặt lịch giải mã được bằng luật; xem `fb-booking-triage.ts`.
@@ -702,17 +722,36 @@ export async function tryHandleBookingTurn(
   // Khách hỏi giữa chừng — trả về đường hỏi–đáp, nơi có đủ công cụ tra cứu và
   // cơ chế chọn mô hình theo độ chắc chắn. Đơn nháp vẫn nằm nguyên trong Redis
   // nên hỏi xong quay lại là đặt tiếp được.
-  if (plan.kind === 'QUESTION') return null;
+  if (plan.kind === 'QUESTION') {
+    logger.info('FbBooking', 'chuyển sang hỏi–đáp: khách hỏi giữa chừng', { psid: ctx.psid });
+    return null;
+  }
 
   const extracted =
     plan.kind === 'DETERMINISTIC' ? plan.fields : await extractBookingFields(ctx.text, existing);
 
   // Mô hình vẫn có quyền nói "câu này không phải đặt lịch" — nó đọc được ngữ
   // cảnh mà bộ lọc từ khoá không đọc được.
-  if (!existing && plan.kind === 'EXTRACT' && !extracted.wantsToBook) return null;
+  if (!existing && plan.kind === 'EXTRACT' && !extracted.wantsToBook) {
+    logger.info('FbBooking', 'bỏ qua: mô hình xác định câu này không phải ý định đặt lịch', {
+      psid: ctx.psid,
+      text: ctx.text.slice(0, 60),
+    });
+    return null;
+  }
 
   const cafe = await AppDataSource.getRepository(Cafe).findOne({ where: { id: ctx.cafeId } });
-  if (!cafe) return null;
+  if (!cafe) {
+    logger.warn('FbBooking', 'bỏ qua: không tìm thấy chi nhánh', { cafeId: ctx.cafeId });
+    return null;
+  }
+
+  logger.info('FbBooking', 'ĐANG XỬ LÝ lượt đặt lịch', {
+    psid: ctx.psid,
+    plan: plan.kind,
+    coDonNhap: Boolean(existing),
+    trangThai: existing?.state,
+  });
 
   if (!(await cafeCanAcceptBookings(ctx.cafeId))) {
     logger.warn('FbBooking', 'chi nhánh chưa cấu hình tài khoản nhận tiền', { cafeId: ctx.cafeId });
