@@ -15,16 +15,23 @@ import { logger } from '../config/logger';
  * là có cấu trúc, do máy chủ tự ghi, chứ không phải chuỗi chữ do model sinh ra
  * rồi đọc lại.
  *
- * ── Vì sao hạn sống 15 phút, ngắn hơn 30 phút của lịch sử chữ ───────────────
+ * ── Vì sao hạn sống BẰNG hạn của lịch sử chữ ────────────────────────────────
  *
- * Chênh lệch là CÓ CHỦ Ý. Khách bỏ dở 20 phút rồi quay lại: bot vẫn nhớ đã nói
- * chuyện gì (trả lời tự nhiên hơn), nhưng đơn nháp đã hết hạn nên giá và tình
- * trạng chỗ được hỏi lại từ đầu. Để hai hạn bằng nhau thì đơn nháp sống thêm 15
- * phút với mức giá đã cũ.
+ * Trước đây đơn nháp sống 15 phút còn lịch sử chữ 30 phút, với lập luận rằng
+ * đơn nháp hết hạn sớm thì giá cũ không bị dùng lại.
+ *
+ * Thực tế khoảng chênh đó tạo ra một trạng thái XÁC SỐNG: đơn nháp đã mất nhưng
+ * lịch sử vẫn còn, nên mô hình đọc lại bản tóm tắt cũ trong lịch sử và trả lời
+ * như thể vẫn đang nhận đơn — trong khi không còn gì để tạo đơn cả. Khách gõ
+ * "xác nhận" và được mời... đi đặt lại trên web.
+ *
+ * Nỗi lo giá cũ đã có chỗ khác lo: `finalizeBooking` so `quotedTotal` với tổng
+ * tiền thật lúc tạo đơn và bắt xác nhận lại nếu lệch (FR-037). Chốt đó nay chạy
+ * thật, nên không cần dựa vào việc hết hạn sớm nữa.
  */
 
-/** 15 phút. Xem chú thích ở đầu tệp về việc vì sao khác 30 phút của lịch sử chữ. */
-export const DRAFT_TTL_SECONDS = 900;
+/** 30 phút — BẰNG hạn của lịch sử chữ. Xem chú thích đầu tệp. */
+export const DRAFT_TTL_SECONDS = 30 * 60;
 
 export type DraftState =
   | 'AWAITING_NAME'
