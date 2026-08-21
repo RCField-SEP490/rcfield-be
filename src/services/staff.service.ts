@@ -3066,6 +3066,44 @@ export async function customerConfirmInspection(
   agreed: boolean,
   disagreementNote?: string,
 ): Promise<any> {
+  return confirmInspectionAs(sessionId, inspectionId, agreed, disagreementNote, {
+    actorId: customerId,
+    onBehalfOfCustomerId: null,
+    reason: null,
+  });
+}
+
+/**
+ * Nhân viên xác nhận biên bản trả xe hộ khách dùng tài khoản mềm (FR-023).
+ *
+ * ⚠️ Hàm này KHÔNG nới lỏng bất kỳ yêu cầu nào của Nguyên tắc III: vẫn phải đủ
+ * ảnh và danh mục kiểm tra như biên bản do khách tự ký. Nó chỉ đổi AI BẤM NÚT,
+ * không đổi CẦN GÌ MỚI BẤM ĐƯỢC. `reason` bắt buộc chính là bằng chứng thay cho
+ * thao tác của khách — đó là lý do nó không được để trống.
+ */
+export async function confirmInspectionOnBehalf(
+  sessionId: string,
+  inspectionId: string,
+  staffId: string,
+  agreed: boolean,
+  reason: string,
+): Promise<any> {
+  const customerId = await assertActingOnBehalfAllowed(sessionId);
+  return confirmInspectionAs(sessionId, inspectionId, agreed, undefined, {
+    actorId: staffId,
+    onBehalfOfCustomerId: customerId,
+    reason,
+  });
+}
+
+async function confirmInspectionAs(
+  sessionId: string,
+  inspectionId: string,
+  agreed: boolean,
+  disagreementNote: string | undefined,
+  actor: SessionActor,
+): Promise<any> {
+  const customerId = actor.onBehalfOfCustomerId ?? actor.actorId;
   const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
   if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
 
@@ -3102,6 +3140,23 @@ export async function customerConfirmInspection(
   // Reject duplicate confirmations.
   if (inspection.customerConfirmed) {
     throw new AppError('Biên bản đã được xác nhận', 400, 'ALREADY_CONFIRMED');
+  }
+
+  // FR-024: biên bản phải ghi ai thực sự ký. Ghi TRƯỚC khi chốt phiên để dù
+  // bước sau có hỏng thì dấu vết vẫn còn.
+  inspection.confirmedBy = actor.actorId;
+  inspection.confirmedOnBehalf = actor.onBehalfOfCustomerId !== null;
+  inspection.onBehalfReason = actor.reason;
+  await inspRepo.save(inspection);
+
+  if (actor.onBehalfOfCustomerId) {
+    logger.info('Staff', 'ký biên bản trả xe hộ khách', {
+      sessionId,
+      inspectionId,
+      staffId: actor.actorId,
+      onBehalfOfCustomerId: actor.onBehalfOfCustomerId,
+      agreed,
+    });
   }
 
   if (agreed) {
@@ -3197,11 +3252,81 @@ export async function customerConfirmInspection(
   return { success: true, agreed, sessionStatus: session.status };
 }
 
+/**
+ * Ai đang thao tác trên phiên chơi.
+ *
+ * `actorId` là người THỰC SỰ bấm; `onBehalfOfCustomerId` chỉ khác `null` khi
+ * nhân viên làm hộ một khách không đăng nhập được.
+ *
+ * Không gộp hai thứ này làm một: truyền `customerId` của khách để nhân viên đi
+ * qua kiểm tra quyền sẽ khiến nhật ký ghi như thể khách tự thao tác — đúng thứ
+ * FR-024 cấm, và làm hỏng giá trị chống tranh chấp của biên bản.
+ */
+export interface SessionActor {
+  actorId: string;
+  onBehalfOfCustomerId: string | null;
+  reason: string | null;
+}
+
 export async function customerRespondExtension(
   sessionId: string,
   customerId: string,
   approved: boolean,
 ): Promise<any> {
+  return respondExtensionAs(sessionId, approved, {
+    actorId: customerId,
+    onBehalfOfCustomerId: null,
+    reason: null,
+  });
+}
+
+/** Nhân viên duyệt gia hạn hộ khách dùng tài khoản mềm (FR-023). */
+export async function respondExtensionOnBehalf(
+  sessionId: string,
+  staffId: string,
+  approved: boolean,
+  reason: string,
+): Promise<any> {
+  const customerId = await assertActingOnBehalfAllowed(sessionId);
+  return respondExtensionAs(sessionId, approved, {
+    actorId: staffId,
+    onBehalfOfCustomerId: customerId,
+    reason,
+  });
+}
+
+/**
+ * Chỉ cho phép thao tác hộ khi chủ đơn KHÔNG tự đăng nhập được (FR-025).
+ *
+ * Khách có mật khẩu thì phải tự xác nhận — đó là chữ ký của họ, không ai ký thay
+ * được.
+ */
+async function assertActingOnBehalfAllowed(sessionId: string): Promise<string> {
+  const rows = await AppDataSource.query<{ customer_id: string; password_hash: string | null }[]>(
+    `SELECT b.customer_id, u.password_hash
+       FROM sessions s
+       JOIN bookings b ON b.id = s.booking_id
+       JOIN users u    ON u.id = b.customer_id
+      WHERE s.id = $1`,
+    [sessionId],
+  );
+  if (!rows.length) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
+  if (rows[0].password_hash !== null) {
+    throw new AppError(
+      'Khách hàng này có tài khoản riêng và phải tự xác nhận.',
+      403,
+      'CUSTOMER_CAN_SELF_SERVE',
+    );
+  }
+  return rows[0].customer_id;
+}
+
+async function respondExtensionAs(
+  sessionId: string,
+  approved: boolean,
+  actor: SessionActor,
+): Promise<any> {
+  const customerId = actor.onBehalfOfCustomerId ?? actor.actorId;
   const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
   if (!session) throw new AppError('Phiên chạy không tồn tại', 404, 'SESSION_NOT_FOUND');
 
@@ -3224,7 +3349,7 @@ export async function customerRespondExtension(
   // session back to ACTIVE from a delayed extension response.
   if (session.status !== SessionStatus.EXTENDING) {
     latestProposal.status = ExtensionProposalStatus.EXPIRED;
-    latestProposal.respondedBy = customerId;
+    latestProposal.respondedBy = actor.actorId;
     latestProposal.respondedAt = new Date();
     await propRepo.save(latestProposal);
     throw new AppError(
@@ -3238,7 +3363,7 @@ export async function customerRespondExtension(
   const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
   if (expiresAt.getTime() <= Date.now() || !timing.canExtend) {
     latestProposal.status = ExtensionProposalStatus.EXPIRED;
-    latestProposal.respondedBy = customerId;
+    latestProposal.respondedBy = actor.actorId;
     latestProposal.respondedAt = new Date();
     await propRepo.save(latestProposal);
 
@@ -3267,9 +3392,22 @@ export async function customerRespondExtension(
   latestProposal.status = approved
     ? ExtensionProposalStatus.APPROVED
     : ExtensionProposalStatus.REJECTED;
-  latestProposal.respondedBy = customerId;
+  latestProposal.respondedBy = actor.actorId;
   latestProposal.respondedAt = new Date();
+  // FR-024: bản ghi phải nói rõ nhân viên làm hộ ai, không được đọc lên như thể
+  // khách tự thao tác.
+  latestProposal.respondedOnBehalf = actor.onBehalfOfCustomerId !== null;
+  latestProposal.onBehalfReason = actor.reason;
   await propRepo.save(latestProposal);
+
+  if (actor.onBehalfOfCustomerId) {
+    logger.info('Staff', 'duyệt gia hạn hộ khách', {
+      sessionId,
+      staffId: actor.actorId,
+      onBehalfOfCustomerId: actor.onBehalfOfCustomerId,
+      approved,
+    });
+  }
 
   session.status = SessionStatus.ACTIVE;
   if (approved) {

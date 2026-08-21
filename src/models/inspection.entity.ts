@@ -58,6 +58,26 @@ export class Inspection {
   @Column({ name: 'customer_confirmed_at', type: 'timestamptz', nullable: true })
   customerConfirmedAt: Date | null;
 
+  /**
+   * Ai thực sự bấm xác nhận. Bằng khách thì là khách tự ký; bằng nhân viên thì
+   * `confirmedOnBehalf` phải bằng `true`.
+   */
+  @Column({ name: 'confirmed_by', type: 'uuid', nullable: true })
+  confirmedBy: string | null;
+
+  /**
+   * Nhân viên ký hộ khách không đăng nhập được.
+   *
+   * Không được để `false` khi thực tế là nhân viên bấm — bản ghi khi đó đọc lên
+   * như thể khách tự ký, và làm hỏng chính giá trị chống tranh chấp của biên bản.
+   */
+  @Column({ name: 'confirmed_on_behalf', type: 'boolean', default: false })
+  confirmedOnBehalf: boolean;
+
+  /** Lý do ký hộ — bằng chứng thay cho thao tác của khách. */
+  @Column({ name: 'on_behalf_reason', type: 'text', nullable: true })
+  onBehalfReason: string | null;
+
   @OneToMany(() => DamageLineItem, (item) => item.inspection)
   damageLineItems: DamageLineItem[];
 

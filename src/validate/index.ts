@@ -1959,3 +1959,24 @@ export const AdminUserQuerySchema = z.object({
 export const ModerateUserSchema = z.object({
   reason: z.string().trim().min(10, 'Nêu lý do cụ thể, ít nhất 10 ký tự').max(1000),
 });
+
+// ── staff acting on behalf of soft-user customers ─────────────────────────────
+
+/**
+ * `reason` bắt buộc và tối thiểu 10 ký tự.
+ *
+ * Đây KHÔNG phải thủ tục giấy tờ. Khách dùng tài khoản mềm không tự bấm được,
+ * nên thao tác của nhân viên là thứ duy nhất còn lại trong hồ sơ — `reason`
+ * chính là bằng chứng thay cho chữ ký của khách. Cho phép để trống thì bản ghi
+ * mất phần giải thích, và Nguyên tắc III của hiến chương mất hiệu lực đúng ở
+ * chỗ nó cần nhất.
+ */
+export const RespondExtensionOnBehalfSchema = z.object({
+  approved: z.boolean(),
+  reason: z.string().trim().min(10, 'Cần nêu lý do thao tác hộ, tối thiểu 10 ký tự'),
+});
+
+export const ConfirmInspectionOnBehalfSchema = z.object({
+  agreed: z.boolean(),
+  reason: z.string().trim().min(10, 'Cần nêu lý do thao tác hộ, tối thiểu 10 ký tự'),
+});

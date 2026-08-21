@@ -457,7 +457,7 @@ export async function ragChatStream(
   cafeId: string,
   message: string,
   history: HistoryMessage[],
-  _nluConfidence = 0,
+  nluConfidence = 0,
 ): Promise<{
   stream: AsyncGenerator<string>;
   sources: string[];
@@ -475,10 +475,21 @@ export async function ragChatStream(
   if (cached) {
     const hit = cached;
     async function* cachedStream(): AsyncGenerator<string> {
-      logger.info('RAG', `cache rephrase stream via ${env.ai.model}`, { cafeId });
+      /*
+        Viết lại câu đã có sẵn thì dùng Flash, không dùng Pro.
+
+        Đây đáng lẽ là đường NHANH NHẤT của cả luồng — câu trả lời đã nằm trong
+        cache, không phải truy hồi, không phải suy luận. Vậy mà nó lại gọi Pro
+        chỉ để diễn đạt lại một câu đã đúng sẵn, nên cache trúng có khi còn chậm
+        hơn cả cache trượt ở phần sinh chữ.
+
+        Diễn đạt lại là việc dễ nhất trong mọi việc ở đây: nội dung đã chốt, chỉ
+        đổi cách nói. Pro không làm việc đó tốt hơn Flash đủ để đáng chờ thêm.
+      */
+      logger.info('RAG', `cache rephrase stream via ${env.ai.supportModel}`, { cafeId });
       try {
         const stream = await ai.models.generateContentStream({
-          model: env.ai.model,
+          model: env.ai.supportModel,
           contents: `Câu trả lời gốc: "${hit.answer}"
 Viết lại câu này với cách diễn đạt khác nhưng giữ nguyên đầy đủ thông tin. Ngắn gọn, tự nhiên, bằng tiếng Việt.
 Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`,
@@ -542,7 +553,20 @@ Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`
   logger.info('RAG', `Retrieved ${chunks.length} chunk(s)  ${t()}`, { cafeId, sources });
 
   const systemPrompt = buildSystemPrompt(cafe, chunks, widgetConfig?.systemPrompt);
-  const selectedModel = env.ai.model;
+  /*
+    Chọn model theo độ chắc chắn của NLU — cùng quy tắc với `ragChat` không
+    stream (xem chỗ đặt `selectedModel` ở hàm đó).
+
+    Luồng này trước đây ghim cứng `env.ai.model`, tức là MỌI câu hỏi đều chạy
+    Pro. Tham số độ chắc chắn vẫn được controller truyền xuống đầy đủ, chỉ là
+    tên nó có gạch dưới ở đầu nên bị bỏ không dùng — logic đã viết xong mà không
+    ai cắm vào. Mà đây mới là luồng người dùng thật sự chạm tới khi chat.
+
+    Câu hỏi NLU đọc ra rõ ràng ("mấy giờ mở cửa", "giá bao nhiêu") thì Flash trả
+    lời thừa sức và nhanh hơn hẳn; chỉ câu mơ hồ mới cần Pro.
+  */
+  const selectedModel = nluConfidence >= 0.7 ? env.ai.model : env.ai.supportModel;
+  logger.info('RAG', `model selected: ${selectedModel}`, { cafeId, nluConfidence });
   const quickRepliesPromise = generateQuickReplies(message, cafe.name);
 
   const baseContents: Content[] = [

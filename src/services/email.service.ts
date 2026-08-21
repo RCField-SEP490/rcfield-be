@@ -1,6 +1,6 @@
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { AppError, FnbOrderType } from '../types';
+import { AppError, FnbOrderType, isSyntheticGuestEmail } from '../types';
 import { AppDataSource } from '../config/database';
 import { FnbOrder } from '../models/fnb-order.entity';
 import { generateInvoicePdf } from './invoice-pdf.service';
@@ -99,7 +99,36 @@ function formatContestTimeParts(value: Date): { time: string; date: string } {
 }
 
 class EmailService {
+  /**
+   * Chặn cuối: không bao giờ gửi thư vào địa chỉ tổng hợp nội bộ.
+   *
+   * Tài khoản mềm (khách vãng lai, khách đặt qua Facebook) mang địa chỉ dạng
+   * `{số điện thoại}@guest.rcfield.local` — chuỗi này chỉ tồn tại để thoả ràng
+   * buộc duy nhất của `users.email`, KHÔNG có hòm thư nào phía sau.
+   *
+   * Trước khi có chốt này, mọi đơn của khách vãng lai đều kéo theo hai lá thư
+   * xác nhận và hoá đơn gửi vào hư không. Thư bị trả về không ai thấy, và tỉ lệ
+   * trả về cao làm giảm uy tín tên miền gửi — tức là thư gửi cho KHÁCH THẬT
+   * cũng dễ rơi vào hộp rác theo.
+   *
+   * Đặt ở đây chứ không ở từng nơi gọi: đây là điểm nghẽn duy nhất mọi lá thư
+   * đều đi qua, và bất biến "không gửi vào địa chỉ tổng hợp" thuộc về chính
+   * việc gửi thư, không thuộc về từng luồng nghiệp vụ.
+   */
+  private hasOnlySyntheticRecipients(payload: object): boolean {
+    const to = (payload as { to?: Array<{ email?: string }> }).to;
+    if (!Array.isArray(to) || to.length === 0) return false;
+    return to.every((recipient) => isSyntheticGuestEmail(recipient?.email));
+  }
+
   private async brevoSend(payload: object): Promise<void> {
+    if (this.hasOnlySyntheticRecipients(payload)) {
+      // Mức `info`, không phải `warn`: đây là đường đi bình thường của mọi khách
+      // chưa đăng ký, không phải chuyện bất thường cần ai xử lý.
+      logger.info('Email', 'bỏ qua gửi thư — địa chỉ tổng hợp nội bộ');
+      return;
+    }
+
     if (env.email.provider !== 'Brevo') {
       throw new AppError('Email provider chưa được hỗ trợ', 500, 'EMAIL_PROVIDER_UNSUPPORTED');
     }
@@ -160,6 +189,14 @@ class EmailService {
 
     if (!rows.length) return;
     const r = rows[0];
+
+    // Thoát SỚM, trước khi sinh mã QR và tải lên kho ảnh. Chốt cuối ở
+    // `brevoSend` cũng chặn được, nhưng lúc đó đã tốn một lượt tải ảnh lên cho
+    // một lá thư không bao giờ gửi.
+    if (isSyntheticGuestEmail(r.customer_email)) {
+      logger.info('Email', 'bỏ qua thư xác nhận — khách chưa cho email thật', { bookingId });
+      return;
+    }
 
     const shortRef = bookingId.substring(0, 8).toUpperCase();
     const slotStart = new Date(r.slot_start);
@@ -283,6 +320,13 @@ class EmailService {
 
     if (!rows.length) return;
     const r = rows[0];
+
+    // Thoát sớm, trước khi dựng PDF hoá đơn — xem chú thích cùng loại ở
+    // `sendBookingConfirmation`.
+    if (isSyntheticGuestEmail(r.customer_email)) {
+      logger.info('Email', 'bỏ qua hoá đơn — khách chưa cho email thật', { bookingId });
+      return;
+    }
 
     const snapshot = r.snapshot as (BookingSnapshot & Record<string, unknown>) | null;
     if (!snapshot) return;

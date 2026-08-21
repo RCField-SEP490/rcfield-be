@@ -421,6 +421,8 @@ export interface MyPackageResponse {
   package_id: string;
   cafe_id: string;
   cafe_name: string;
+  /** Dùng để dựng đường dẫn về trang chi nhánh — route công khai đi theo slug. */
+  cafe_slug: string;
   package_name: string;
   applicable_play_modes: string[];
   slots_total: number;
@@ -460,6 +462,7 @@ export async function listMyPackages(
       'cp.package_id AS package_id',
       'cp.cafe_id AS cafe_id',
       'c.name AS cafe_name',
+      'c.slug AS cafe_slug',
       'cp.package_name_snapshot AS package_name',
       "COALESCE(pkg.applicable_play_modes, '{}') AS applicable_play_modes",
       'cp.slots_total AS slots_total',

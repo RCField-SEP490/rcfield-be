@@ -71,6 +71,26 @@ export enum BookingSource {
   APP = 'APP',
   STAFF_MANUAL = 'STAFF_MANUAL',
   CONTEST = 'CONTEST',
+  FACEBOOK = 'FACEBOOK',
+}
+
+/**
+ * Hậu tố email tổng hợp cho tài khoản mềm (khách vãng lai, khách đặt qua
+ * Facebook). Địa chỉ dạng `{số điện thoại}@guest.rcfield.local` chỉ tồn tại để
+ * thoả ràng buộc duy nhất của `users.email` — nó KHÔNG phải hòm thư gửi tới
+ * được.
+ *
+ * Ba nơi phải dùng chung đúng hằng số này, lệch một nơi là địa chỉ tổng hợp lọt
+ * qua bộ lọc và cả loạt thư đi vào hư không:
+ *   1. nơi tạo tài khoản mềm
+ *   2. nơi phân giải tài khoản mềm
+ *   3. bộ lọc chặn gửi thư trong `email.service`
+ */
+export const GUEST_EMAIL_SUFFIX = '@guest.rcfield.local';
+
+/** Địa chỉ này có phải email tổng hợp nội bộ không (tức là không gửi được). */
+export function isSyntheticGuestEmail(email: string | null | undefined): boolean {
+  return typeof email === 'string' && email.toLowerCase().endsWith(GUEST_EMAIL_SUFFIX);
 }
 
 export enum BookingStatus {
@@ -551,6 +571,8 @@ export enum NotificationType {
   CUSTOMER_EXTENSION_REJECTED = 'CUSTOMER_EXTENSION_REJECTED',
   CUSTOMER_PAYMENT_CONFIRMED = 'CUSTOMER_PAYMENT_CONFIRMED',
   BOOKING_REVIEW_REQUEST = 'BOOKING_REVIEW_REQUEST',
+  /** Đơn đặt sân vừa được thanh toán — báo cho nhân viên chi nhánh và chủ sân. */
+  BOOKING_CREATED = 'BOOKING_CREATED',
   CONTEST_REGISTRATION_CREATED = 'CONTEST_REGISTRATION_CREATED',
   CONTEST_REGISTRATION_APPROVED = 'CONTEST_REGISTRATION_APPROVED',
   CONTEST_REGISTRATION_REJECTED = 'CONTEST_REGISTRATION_REJECTED',

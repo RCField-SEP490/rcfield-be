@@ -3,7 +3,13 @@ import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import { AppError, ChannelStatus, ChannelType, FbMessagingEvent } from '../types';
+import {
+  AppError,
+  ChannelStatus,
+  ChannelType,
+  FbFormattedMessage,
+  FbMessagingEvent,
+} from '../types';
 import { CafeChannel } from '../models/cafe-channel.entity';
 import { incrementAIQuota } from '../services/subscription.service';
 import { decryptToken } from '../utils/crypto';
@@ -16,7 +22,15 @@ import {
   ragChat,
 } from '../services/chat.service';
 import { FbMessengerFormatter } from '../services/fb-messenger.formatter';
-import { sendMessage, sendText, markSeen, typingOn } from '../services/fb-messenger.service';
+import {
+  sendMessage,
+  sendText,
+  sendImage,
+  markSeen,
+  typingOn,
+} from '../services/fb-messenger.service';
+import { tryHandleBookingTurn } from '../services/fb-booking-orchestrator';
+import { appendTurn, clearHistory, loadHistory } from '../services/fb-conversation-memory';
 import { getFbChatQueue } from '../queues/fb-chat.queue';
 
 interface FbWebhookPayload {
@@ -25,6 +39,33 @@ interface FbWebhookPayload {
     id: string;
     messaging: FbMessagingEvent[];
   }>;
+}
+
+/**
+ * Ngân sách thời gian cho một lượt trả lời (FR-030).
+ *
+ * Không phải hạn của Facebook — webhook đã được xác nhận từ trước, ở
+ * `handleWebhookEvent`. Đây là hạn với KHÁCH: quá lâu mà không có gì thì họ bỏ
+ * đi, và tệ hơn là họ nhắn lại, sinh thêm một lượt xử lý nữa.
+ */
+const REPLY_BUDGET_MS = 10_000;
+
+/** Lỗi riêng để phân biệt hết giờ với lỗi nghiệp vụ — hai thứ này báo cho khách khác nhau. */
+class ReplyBudgetExceeded extends Error {}
+
+async function withReplyBudget<T>(work: () => Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ReplyBudgetExceeded()), REPLY_BUDGET_MS);
+      }),
+    ]);
+  } finally {
+    // Không dọn thì tiến trình giữ một bộ đếm sống cho MỖI tin nhắn.
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function processEvent(event: FbMessagingEvent, pageId: string): Promise<void> {
@@ -65,12 +106,55 @@ export async function processEvent(event: FbMessagingEvent, pageId: string): Pro
     await checkGate(cafeId);
     if (providerId && providerRole !== 'ADMIN') await incrementAIQuota(providerId);
 
+    // Luồng đặt lịch được hỏi trước. Trả `null` nghĩa là lượt này không thuộc
+    // luồng đó, và đường hỏi–đáp bên dưới chạy y như trước — thêm tính năng này
+    // không đụng gì tới hành vi trả lời câu hỏi đã có.
+    //
+    // Bọc trong ngân sách thời gian (FR-030): một lượt đặt lịch có thể gọi bộ
+    // trích xuất rồi tới lượt sinh câu trả lời, mỗi bước một lần gọi mô hình.
+    // Chuỗi đó kéo dài bất định, mà khách ngồi nhìn chỉ báo "đang soạn tin"
+    // không có hồi kết thì bỏ đi.
+    const bookingTurn = await withReplyBudget(() =>
+      tryHandleBookingTurn({ cafeId, pageId, psid, text }),
+    );
+    if (bookingTurn) {
+      const message: FbFormattedMessage = {
+        text: bookingTurn.text,
+        quickReplies: [],
+        ...(bookingTurn.paymentUrl
+          ? {
+              buttons: [{ type: 'web_url', url: bookingTurn.paymentUrl, title: 'Thanh toán ngay' }],
+            }
+          : {}),
+      };
+      await sendMessage(psid, message, pageToken);
+
+      // Ảnh gửi thành tin RIÊNG: Messenger không kèm được chữ trong tin ảnh.
+      // Gửi sau phần chữ để khách đọc được số tiền và hạn thanh toán trước.
+      if (bookingTurn.qrImageUrl) {
+        await sendImage(psid, bookingTurn.qrImageUrl, pageToken).catch((err) =>
+          // Mất ảnh QR không sao — nút bấm mới là đường đi chính trên điện thoại.
+          logger.warn('Facebook Webhook', 'gửi ảnh QR thất bại', err),
+        );
+      }
+
+      await appendTurn(pageId, psid, text, bookingTurn.text);
+      logger.info('Facebook Webhook', 'booking turn handled', { cafeId, psid });
+      return;
+    }
+
     const { route: chatRoute, confidence } = await route(text);
+
+    // Lịch sử của CHÍNH cuộc trò chuyện này. Widget web được trình duyệt gửi
+    // kèm lịch sử mỗi lượt; Facebook thì không có ai làm hộ, nên máy chủ tự
+    // giữ — xem `fb-conversation-memory.ts`.
+    const history = await loadHistory(pageId, psid);
+
     let response;
     if (chatRoute === 'fast') response = await fastAnswer(cafeId);
     else if (chatRoute === 'thanks') response = thanksAnswer();
     else if (chatRoute === 'farewell') response = farewellAnswer();
-    else response = await ragChat(cafeId, text, [], confidence);
+    else response = await ragChat(cafeId, text, history, confidence);
 
     const formatted = FbMessengerFormatter.format(response);
 
@@ -79,7 +163,31 @@ export async function processEvent(event: FbMessagingEvent, pageId: string): Pro
 
     await sendMessage(psid, formatted, pageToken);
     logger.info('Facebook Webhook', 'replied', { cafeId, pageId, psid });
+
+    // Ghi SAU khi đã gửi: khách không phải chờ Redis, và lượt nào gửi hỏng thì
+    // cũng không lọt vào lịch sử.
+    //
+    // Chào tạm biệt thì dọn luôn — lần sau quay lại là chuyện khác, nối tiếp
+    // ngữ cảnh cũ chỉ làm bot đoán sai.
+    if (chatRoute === 'farewell') {
+      await clearHistory(pageId, psid);
+    } else {
+      await appendTurn(pageId, psid, text, response.answer);
+    }
   } catch (err) {
+    // Hết ngân sách: phải nói cho khách biết, không được im lặng bỏ lượt
+    // (FR-030). Im lặng là kiểu hỏng tệ nhất ở đây — khách không biết nên chờ
+    // tiếp hay nhắn lại.
+    if (err instanceof ReplyBudgetExceeded) {
+      logger.warn('Facebook Webhook', 'quá ngân sách trả lời', { cafeId, psid });
+      await sendText(
+        psid,
+        'Xin lỗi, hệ thống đang xử lý hơi lâu. Bạn nhắn lại giúp mình nhé!',
+        pageToken,
+      ).catch(() => undefined);
+      return;
+    }
+
     if (
       err instanceof AppError &&
       (err.code === 'AI_DISABLED' ||

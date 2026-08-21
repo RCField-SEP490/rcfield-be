@@ -28,6 +28,7 @@ export interface RevenueTrendItem {
   extensionFee: number;
   damageCharge: number;
   packageFee: number;
+  contestFee: number;
   total: number;
 }
 
@@ -71,6 +72,76 @@ export interface RecentBookingItem {
   totalCharged: number;
 }
 
+/**
+ * Doanh thu của chủ sân — định nghĩa dùng chung cho MỌI con số trên dashboard.
+ *
+ * ── Mốc thời gian: NGÀY THU TIỀN ────────────────────────────────────────────
+ *
+ * Trước đây các query lọc theo `bookings.slot_start`, tức là gán doanh thu vào
+ * NGÀY KHÁCH CHƠI. Khách trả tiền ngày 17/08 cho suất ngày 25/08 thì tiền rơi
+ * vào tháng khác với lúc nó thực sự vào tài khoản — và không cách nào đối chiếu
+ * được với sao kê ngân hàng hay báo cáo cổng thanh toán.
+ *
+ * Giờ lọc theo `payment_components.created_at`. Các thành phần này được tạo
+ * TRONG luồng xác nhận thanh toán (`createPaymentComponents`, gọi từ 5 nhánh
+ * đều nằm sau khi thanh toán thành công), nên `created_at` chính là mốc tiền
+ * vào. Với khoản phát sinh tại quầy (gia hạn, hư hỏng, đồ ăn thêm) thì đó là
+ * lúc ghi khoản thu, trùng với lúc thu ở luồng bình thường.
+ *
+ * ── Ba nguồn, không phải một ────────────────────────────────────────────────
+ *
+ * Trước đây `getProviderKpi` chỉ đọc `bookings JOIN payment_components`, trong
+ * khi biểu đồ phân bổ lại cộng thêm tiền bán gói bằng một query riêng. Kết quả:
+ * ô "Tổng doanh thu" nhỏ hơn hẳn tổng các lát của chính biểu đồ ngay bên cạnh,
+ * mà không có gì giải thích.
+ *
+ * Ba nguồn phải xuất hiện ở CẢ BA nơi (KPI, phân bổ, xu hướng):
+ *
+ *  1. Thành phần thanh toán gắn với booking — phí sân, thuê xe, đồ ăn, gia hạn,
+ *     bồi thường.
+ *  2. Tiền bán gói (`customer_packages`) — không gắn booking nào.
+ *  3. Phí dự giải (`contest_registrations`) — cũng không gắn booking.
+ *
+ * ⚠️ Phí dự giải KHÔNG có trong bảng `payment_components`. Enum có giá trị
+ * `CONTEST_ENTRY_FEE`, có cả migration thêm nó vào Postgres, nhưng không dòng
+ * code nào ghi bản ghi loại đó — nó chỉ được dựng trên đường trả về API để in
+ * biên lai. Nên phải đọc thẳng từ `contest_registrations`, giống cách đang làm
+ * với tiền bán gói. Đổi lại thì phải sửa luồng thanh toán và backfill dữ liệu
+ * cũ, đắt hơn nhiều mà không được thêm gì.
+ */
+
+/** Điều kiện lọc chung cho tiền bán gói, dùng ở cả ba hàm. */
+const PACKAGE_REVENUE_WHERE = `
+  c.provider_id = $1
+  AND cp.status IN ('ACTIVE', 'EXHAUSTED')
+  AND cp.created_at >= $2::timestamptz
+  AND cp.created_at <= $3::timestamptz
+  AND ($4::uuid IS NULL OR cp.cafe_id = $4)
+`;
+
+/**
+ * Điều kiện lọc chung cho phí dự giải.
+ *
+ * Chỉ tính `MARKED_PAID` — `WAIVED` là được miễn (không có tiền), còn
+ * `PENDING_PAYMENT` là chưa trả. Mốc thời gian dùng `entry_fee_marked_paid_at`
+ * chứ không phải `created_at` của đăng ký: đăng ký từ tháng trước mà tháng này
+ * mới trả tiền thì tiền thuộc về tháng này.
+ */
+const CONTEST_FEE_WHERE = `
+  c.provider_id = $1
+  AND cr.payment_status = 'MARKED_PAID'
+  AND cr.entry_fee_amount > 0
+  AND cr.entry_fee_marked_paid_at >= $2::timestamptz
+  AND cr.entry_fee_marked_paid_at <= $3::timestamptz
+  AND ($4::uuid IS NULL OR ct.cafe_id = $4)
+`;
+
+const CONTEST_FEE_FROM = `
+  FROM contest_registrations cr
+  JOIN contests ct ON ct.id = cr.contest_id
+  JOIN cafes c ON c.id = ct.cafe_id AND c.deleted_at IS NULL
+`;
+
 export async function getProviderKpi(
   providerId: string,
   from?: string,
@@ -80,22 +151,51 @@ export async function getProviderKpi(
   const fromDate = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const toDate = to || new Date().toISOString();
 
-  // 1. Doanh thu và booking hoàn tất
-  const revenueRes = await AppDataSource.query<
-    [{ totalRevenue: string; completedBookings: string }]
-  >(
-    `SELECT
-      COALESCE(SUM(pc.amount), 0)::float AS "totalRevenue",
-      COUNT(DISTINCT CASE WHEN b.status = 'COMPLETED' THEN b.id END)::int AS "completedBookings"
+  // 1a. Tiền thu từ booking — lọc theo NGÀY THU, xem chú thích đầu tệp.
+  const revenueRes = await AppDataSource.query<[{ totalRevenue: string }]>(
+    `SELECT COALESCE(SUM(pc.amount), 0)::float AS "totalRevenue"
     FROM bookings b
     JOIN payment_components pc ON pc.booking_id = b.id
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
       AND pc.status IN ('HELD', 'DISBURSED')
       AND pc.type != 'SECURITY_DEPOSIT'
-      AND b.slot_start >= $2::timestamptz
-      AND b.slot_start <= $3::timestamptz
+      AND pc.created_at >= $2::timestamptz
+      AND pc.created_at <= $3::timestamptz
       AND ($4::uuid IS NULL OR b.cafe_id = $4)`,
+    [providerId, fromDate, toDate, cafeId || null],
+  );
+
+  // 1b. Tiền bán gói và phí dự giải — hai nguồn không gắn booking nào. Thiếu
+  // chúng thì ô "Tổng doanh thu" nhỏ hơn tổng các lát của biểu đồ ngay bên cạnh.
+  const [pkgRes, contestRes] = await Promise.all([
+    AppDataSource.query<[{ amount: string }]>(
+      `SELECT COALESCE(SUM(cp.purchased_price), 0)::float AS "amount"
+       FROM customer_packages cp
+       JOIN cafes c ON c.id = cp.cafe_id
+       WHERE ${PACKAGE_REVENUE_WHERE}`,
+      [providerId, fromDate, toDate, cafeId || null],
+    ),
+    AppDataSource.query<[{ amount: string }]>(
+      `SELECT COALESCE(SUM(cr.entry_fee_amount), 0)::float AS "amount"
+       ${CONTEST_FEE_FROM}
+       WHERE ${CONTEST_FEE_WHERE}`,
+      [providerId, fromDate, toDate, cafeId || null],
+    ),
+  ]);
+
+  // 1c. Booking hoàn tất — vẫn đếm theo NGÀY CHƠI, không phải ngày thu.
+  // Đây là con số vận hành ("hôm nay chạy được mấy suất"), không phải con số
+  // tiền, nên nó thuộc về ngày diễn ra buổi chơi.
+  const completedRes = await AppDataSource.query<[{ completedBookings: string }]>(
+    `SELECT COUNT(DISTINCT b.id)::int AS "completedBookings"
+     FROM bookings b
+     JOIN cafes c ON c.id = b.cafe_id
+     WHERE c.provider_id = $1
+       AND b.status = 'COMPLETED'
+       AND b.slot_start >= $2::timestamptz
+       AND b.slot_start <= $3::timestamptz
+       AND ($4::uuid IS NULL OR b.cafe_id = $4)`,
     [providerId, fromDate, toDate, cafeId || null],
   );
 
@@ -157,8 +257,11 @@ export async function getProviderKpi(
     [providerId, cafeId || null, fromDate, toDate],
   );
 
-  const totalRevenue = Number(revenueRes[0]?.totalRevenue ?? 0);
-  const completedBookings = Number(revenueRes[0]?.completedBookings ?? 0);
+  const totalRevenue =
+    Number(revenueRes[0]?.totalRevenue ?? 0) +
+    Number(pkgRes[0]?.amount ?? 0) +
+    Number(contestRes[0]?.amount ?? 0);
+  const completedBookings = Number(completedRes[0]?.completedBookings ?? 0);
   const totalBookings = Number(bookingsRes[0]?.totalBookings ?? 0);
   const cancellationRate = Number(bookingsRes[0]?.cancellationRate ?? 0);
 
@@ -220,7 +323,7 @@ export async function getProviderRevenueTrend(
     ),
     booking_revenue AS (
       SELECT
-        DATE_TRUNC($2, b.slot_start) AS period,
+        DATE_TRUNC($2, pc.created_at) AS period,
         COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN pc.amount END), 0)::float       AS "slotFee",
         COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN pc.amount END), 0)::float     AS "rentalFee",
         COALESCE(SUM(CASE WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN pc.amount END), 0)::float AS "fnbPreorder",
@@ -232,10 +335,10 @@ export async function getProviderRevenueTrend(
       WHERE c.provider_id = $3
         AND pc.status IN ('HELD', 'DISBURSED')
         AND pc.type != 'SECURITY_DEPOSIT'
-        AND b.slot_start >= $4::timestamptz
-        AND b.slot_start <= $5::timestamptz
+        AND pc.created_at >= $4::timestamptz
+        AND pc.created_at <= $5::timestamptz
         AND ($6::uuid IS NULL OR b.cafe_id = $6::uuid)
-      GROUP BY DATE_TRUNC($2, b.slot_start)
+      GROUP BY DATE_TRUNC($2, pc.created_at)
     )
     SELECT
       TO_CHAR(s.period_start, $1)           AS "label",
@@ -291,15 +394,63 @@ export async function getProviderRevenueTrend(
     ORDER BY s.period_start ASC
   `;
 
-  const pkgTrendRows = await AppDataSource.query<{ label: string; packageFee: number }[]>(
-    pkgQuery,
-    [providerId, truncUnit, fromDate, toDate, cafeId || null, intervalUnit, groupFormat],
-  );
+  // Phí dự giải theo kỳ — cùng khuôn với query gói ở trên.
+  const contestQuery = `
+    WITH series AS (
+      SELECT generate_series(
+        DATE_TRUNC($2, $3::timestamptz),
+        DATE_TRUNC($2, $4::timestamptz),
+        $6::interval
+      ) AS period_start
+    ),
+    contest_revenue AS (
+      SELECT
+        DATE_TRUNC($2, cr.entry_fee_marked_paid_at) AS period,
+        COALESCE(SUM(cr.entry_fee_amount), 0)::float AS "contestFee"
+      ${CONTEST_FEE_FROM}
+      WHERE c.provider_id = $1
+        AND cr.payment_status = 'MARKED_PAID'
+        AND cr.entry_fee_amount > 0
+        AND cr.entry_fee_marked_paid_at >= $3::timestamptz
+        AND cr.entry_fee_marked_paid_at <= $4::timestamptz
+        AND ($5::uuid IS NULL OR ct.cafe_id = $5::uuid)
+      GROUP BY DATE_TRUNC($2, cr.entry_fee_marked_paid_at)
+    )
+    SELECT
+      TO_CHAR(s.period_start, $7) AS "label",
+      COALESCE(cx."contestFee", 0) AS "contestFee"
+    FROM series s
+    LEFT JOIN contest_revenue cx ON cx.period = s.period_start
+    ORDER BY s.period_start ASC
+  `;
+
+  const [pkgTrendRows, contestTrendRows] = await Promise.all([
+    AppDataSource.query<{ label: string; packageFee: number }[]>(pkgQuery, [
+      providerId,
+      truncUnit,
+      fromDate,
+      toDate,
+      cafeId || null,
+      intervalUnit,
+      groupFormat,
+    ]),
+    AppDataSource.query<{ label: string; contestFee: number }[]>(contestQuery, [
+      providerId,
+      truncUnit,
+      fromDate,
+      toDate,
+      cafeId || null,
+      intervalUnit,
+      groupFormat,
+    ]),
+  ]);
   const pkgMap = new Map(pkgTrendRows.map((r) => [r.label, Number(r.packageFee)]));
+  const contestMap = new Map(contestTrendRows.map((r) => [r.label, Number(r.contestFee)]));
 
   // Lấy tập nhãn từ series chính (đã đủ tất cả khoảng), merge packageFee
   return rows.map((row) => {
     const packageFee = pkgMap.get(row.label) || 0;
+    const contestFee = contestMap.get(row.label) || 0;
     const slotFee = Number(row.slotFee);
     const rentalFee = Number(row.rentalFee);
     const fnbPreorder = Number(row.fnbPreorder);
@@ -314,7 +465,9 @@ export async function getProviderRevenueTrend(
       extensionFee,
       damageCharge,
       packageFee,
-      total: slotFee + rentalFee + fnbPreorder + extensionFee + damageCharge + packageFee,
+      contestFee,
+      total:
+        slotFee + rentalFee + fnbPreorder + extensionFee + damageCharge + packageFee + contestFee,
     };
   });
 }
@@ -349,10 +502,10 @@ export async function getProviderRevenueBreakdown(
     WHERE c.provider_id = $1
       AND pc.status IN ('HELD', 'DISBURSED')
       AND pc.type != 'SECURITY_DEPOSIT'
-      AND b.slot_start >= $2::timestamptz
-      AND b.slot_start <= $3::timestamptz
+      AND pc.created_at >= $2::timestamptz
+      AND pc.created_at <= $3::timestamptz
       AND ($4::uuid IS NULL OR b.cafe_id = $4)
-    GROUP BY 
+    GROUP BY
       CASE
         WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN 'FNB_PREORDER'
         ELSE pc.type
@@ -381,25 +534,35 @@ export async function getProviderRevenueBreakdown(
     amount: Number(row.amount),
   }));
 
-  // Fetch Package Purchases total revenue
-  const pkgRes = await AppDataSource.query<[{ amount: string }]>(
-    `SELECT COALESCE(SUM(cp.purchased_price), 0)::float AS "amount"
-     FROM customer_packages cp
-     JOIN cafes c ON c.id = cp.cafe_id
-     WHERE c.provider_id = $1
-       AND cp.status IN ('ACTIVE', 'EXHAUSTED')
-       AND cp.created_at >= $2::timestamptz
-       AND cp.created_at <= $3::timestamptz
-       AND ($4::uuid IS NULL OR cp.cafe_id = $4)`,
-    [providerId, fromDate, toDate, cafeId || null],
-  );
-  const pkgAmount = Number(pkgRes[0]?.amount || 0);
+  // Hai nguồn không gắn booking nào, phải hỏi riêng từng bảng.
+  const [pkgRes, contestRes] = await Promise.all([
+    AppDataSource.query<[{ amount: string }]>(
+      `SELECT COALESCE(SUM(cp.purchased_price), 0)::float AS "amount"
+       FROM customer_packages cp
+       JOIN cafes c ON c.id = cp.cafe_id
+       WHERE ${PACKAGE_REVENUE_WHERE}`,
+      [providerId, fromDate, toDate, cafeId || null],
+    ),
+    AppDataSource.query<[{ amount: string }]>(
+      `SELECT COALESCE(SUM(cr.entry_fee_amount), 0)::float AS "amount"
+       ${CONTEST_FEE_FROM}
+       WHERE ${CONTEST_FEE_WHERE}`,
+      [providerId, fromDate, toDate, cafeId || null],
+    ),
+  ]);
 
-  items.push({
-    type: 'PACKAGE_PURCHASE',
-    label: 'Phí gói',
-    amount: pkgAmount,
-  });
+  const pkgAmount = Number(pkgRes[0]?.amount || 0);
+  const contestAmount = Number(contestRes[0]?.amount || 0);
+
+  // Chỉ đẩy vào khi có tiền. Trước đây "Phí gói" luôn được thêm kể cả bằng 0,
+  // nên biểu đồ tròn lúc nào cũng có một lát rỗng và phần chú giải thừa một
+  // dòng "0 ₫" — người đọc tưởng số liệu bị lỗi.
+  if (pkgAmount > 0) {
+    items.push({ type: 'PACKAGE_PURCHASE', label: 'Phí gói', amount: pkgAmount });
+  }
+  if (contestAmount > 0) {
+    items.push({ type: 'CONTEST_ENTRY_FEE', label: 'Phí dự giải', amount: contestAmount });
+  }
 
   return items;
 }
@@ -417,10 +580,19 @@ export interface BookingChannelItem {
   bookingShare: number;
 }
 
+/**
+ * Nhãn tiếng Việt cho từng kênh đặt.
+ *
+ * ⚠️ Hàm bên dưới duyệt theo `Object.keys` của bảng này, KHÔNG duyệt theo enum.
+ * Nghĩa là thêm giá trị vào `BookingSource` mà quên khai ở đây thì kênh đó biến
+ * mất khỏi báo cáo — không báo lỗi, chỉ lặng lẽ thiếu, và doanh thu của nó
+ * không được tính vào đâu cả.
+ */
 const BOOKING_SOURCE_LABELS: Record<string, string> = {
   APP: 'Khách tự đặt qua app',
   STAFF_MANUAL: 'Nhân viên tạo (khách vãng lai)',
   CONTEST: 'Giải đấu',
+  FACEBOOK: 'Facebook Messenger',
 };
 
 /**
@@ -485,18 +657,58 @@ export async function getProviderBranchPerformance(
   const fromDate = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const toDate = to || new Date().toISOString();
 
+  /*
+    Doanh thu theo chi nhánh phải cộng đúng ba nguồn như KPI tổng — nếu không,
+    cộng doanh thu của mọi chi nhánh lại sẽ KHÔNG bằng ô "Tổng doanh thu", và đó
+    chính là loại mâu thuẫn vừa được sửa ở trên.
+
+    Ba nhánh gộp bằng UNION ALL rồi mới cộng theo chi nhánh, thay vì ba LEFT JOIN
+    song song: join nhiều bảng một-nhiều cùng lúc sẽ nhân chéo số dòng và thổi
+    phồng tổng tiền.
+  */
   const query = `
+    WITH doanh_thu AS (
+      SELECT b.cafe_id, pc.amount
+      FROM bookings b
+      JOIN payment_components pc ON pc.booking_id = b.id
+      WHERE pc.status IN ('HELD', 'DISBURSED')
+        AND pc.type != 'SECURITY_DEPOSIT'
+        AND pc.created_at >= $2::timestamptz
+        AND pc.created_at <= $3::timestamptz
+
+      UNION ALL
+
+      SELECT cp.cafe_id, cp.purchased_price
+      FROM customer_packages cp
+      WHERE cp.status IN ('ACTIVE', 'EXHAUSTED')
+        AND cp.created_at >= $2::timestamptz
+        AND cp.created_at <= $3::timestamptz
+
+      UNION ALL
+
+      SELECT ct.cafe_id, cr.entry_fee_amount
+      FROM contest_registrations cr
+      JOIN contests ct ON ct.id = cr.contest_id
+      WHERE cr.payment_status = 'MARKED_PAID'
+        AND cr.entry_fee_amount > 0
+        AND cr.entry_fee_marked_paid_at >= $2::timestamptz
+        AND cr.entry_fee_marked_paid_at <= $3::timestamptz
+    ),
+    so_booking AS (
+      SELECT b.cafe_id, COUNT(DISTINCT b.id)::int AS n
+      FROM bookings b
+      WHERE b.slot_start >= $2::timestamptz
+        AND b.slot_start <= $3::timestamptz
+      GROUP BY b.cafe_id
+    )
     SELECT
       c.id AS "cafeId",
       c.name AS "cafeName",
-      COALESCE(SUM(pc.amount), 0)::float AS "totalRevenue",
-      COUNT(DISTINCT b.id)::int AS "bookingCount"
+      COALESCE(SUM(dt.amount), 0)::float AS "totalRevenue",
+      COALESCE(MAX(sb.n), 0)::int AS "bookingCount"
     FROM cafes c
-    LEFT JOIN bookings b ON b.cafe_id = c.id
-      AND b.slot_start >= $2::timestamptz
-      AND b.slot_start <= $3::timestamptz
-    LEFT JOIN payment_components pc ON pc.booking_id = b.id
-      AND pc.status IN ('HELD', 'DISBURSED')
+    LEFT JOIN doanh_thu dt ON dt.cafe_id = c.id
+    LEFT JOIN so_booking sb ON sb.cafe_id = c.id
     WHERE c.provider_id = $1
       AND c.deleted_at IS NULL
     GROUP BY c.id, c.name

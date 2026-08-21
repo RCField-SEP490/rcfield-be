@@ -38,7 +38,6 @@ import {
   PaymentComponentStatus,
   PaymentTransactionType,
   PaymentTransactionStatus,
-  AuthProvider,
   SessionStatus,
   InspectionType,
   NotificationType,
@@ -54,6 +53,7 @@ import { notifyCafeStaffAboutFnbPrep } from './fnb-order-notification.service';
 import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { getBookingCutoff } from './subscription.service';
+import { createGuestUser, findUserByPhone } from './guest-user';
 import type { Promotion } from '../models/promotion.entity';
 import {
   DAY_MS,
@@ -1568,6 +1568,10 @@ export async function listCafeBookings(
       'b.id AS id',
       'b.status AS status',
       'b.play_mode AS "playMode"',
+      // Kênh đặt — nhân viên tại quầy cần biết đơn này đến từ đâu để xử lý đúng.
+      // Đơn Facebook thuộc về khách KHÔNG đăng nhập được, nên các bước cần khách
+      // xác nhận phải đi qua đường thao tác hộ.
+      'b.source AS source',
       'b.slot_start AS "slotStart"',
       'b.slot_end AS "slotEnd"',
       'b.created_at AS "createdAt"',
@@ -1663,6 +1667,7 @@ export interface CafeBookingListItem {
   id: string;
   status: BookingStatus;
   playMode: string;
+  source: BookingSource;
   slotStart: string;
   slotEnd: string;
   createdAt: string;
@@ -1732,21 +1737,16 @@ export async function createWalkInBooking(
     throw new AppError('Phải có ít nhất 1 người chơi tham gia', 400, 'PARTICIPANTS_REQUIRED');
   }
 
-  const userRepo = AppDataSource.getRepository(User);
-  let customer = await userRepo.findOne({ where: { phone: primaryGuest.guest_phone } });
-  if (!customer) {
-    customer = await userRepo.save(
-      userRepo.create({
-        email: `${primaryGuest.guest_phone}@guest.rcfield.local`,
-        full_name: primaryGuest.guest_name,
-        phone: primaryGuest.guest_phone,
-        password_hash: null,
-        role: UserRole.CUSTOMER,
-        is_active: true,
-        auth_provider: AuthProvider.LOCAL,
-      }),
-    );
-  }
+  // Khách vãng lai tại quầy: dùng lại BẤT KỲ người dùng nào trùng số điện thoại,
+  // kể cả tài khoản thật. Điều đó chấp nhận được ở đây vì staff đứng đối mặt
+  // khách và nhìn thấy họ.
+  //
+  // ⚠️ Luồng đặt qua Facebook KHÔNG được dùng đường này — không ai xác minh gì
+  // qua Messenger, nên nó phải đi qua `resolveFacebookSoftUser`, nơi có chốt
+  // chặn tài khoản thật.
+  const customer =
+    (await findUserByPhone(primaryGuest.guest_phone)) ??
+    (await createGuestUser(primaryGuest.guest_phone, primaryGuest.guest_name));
 
   const cafeRepo = AppDataSource.getRepository(Cafe);
   const cafe = await cafeRepo.findOne({ where: { id: cafeId } });
