@@ -38,6 +38,8 @@ export interface ExtractedFields {
   slotCount?: number;
   /** Tên xe khách nhắc tới — bộ điều phối tự đối chiếu sang mã xe thật. */
   vehicleNames?: string[];
+  /** Tên sân/đường đua khách nhắc tới — bộ điều phối tự đối chiếu sang mã thật. */
+  trackName?: string;
   /** Khách nói rõ là không muốn cho email. */
   declinedEmail?: boolean;
   /** Khách đang bộc lộ ý định đặt lịch (dùng để mở luồng). */
@@ -66,6 +68,11 @@ const EXTRACTION_SCHEMA = {
       type: Type.ARRAY,
       items: { type: Type.STRING },
       description: 'Tên các xe khách nhắc tới, ví dụ "xe A", "Traxxas".',
+    },
+    trackName: {
+      type: Type.STRING,
+      description:
+        'Tên sân hoặc đường đua khách nhắc tới, ví dụ "sân drift", "đường vượt chướng ngại".',
     },
     declinedEmail: {
       type: Type.BOOLEAN,
@@ -114,13 +121,23 @@ export async function extractBookingFields(
   message: string,
   draft: FbBookingDraft | null,
 ): Promise<ExtractedFields> {
+  /*
+    Dùng model CHÍNH, không dùng model hỗ trợ.
+
+    Đây không phải việc nhẹ như tên gọi "trích xuất" gợi ý. Nó phải đọc "19h tối
+    mai", "thứ 7 tuần sau", "cuối tuần này" ra một mốc thời gian tuyệt đối kèm
+    múi giờ — và sai một ngày ở đây nghĩa là khách bị giữ chỗ nhầm hôm, phát hiện
+    ra khi đã tới quán.
+
+    Chi phí của một lần đọc sai lớn hơn nhiều so với chênh lệch giá giữa hai
+    model. Đổi lại, lượt gọi này đã được chặn ở tầng trên nên chỉ chạy khi khách
+    thật sự đang đặt lịch, không chạy cho mọi câu hỏi vu vơ.
+  */
   const todayIso = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 
   try {
     const response = await ai.models.generateContent({
-      // Việc nhẹ, chạy MỌI lượt — dùng model hỗ trợ chứ không dùng model chính.
-      // Đây nằm trong ngân sách 10 giây cùng với lượt sinh câu trả lời phía sau.
-      model: env.ai.supportModel,
+      model: env.ai.model,
       config: {
         systemInstruction: buildPrompt(draft, todayIso),
         responseMimeType: 'application/json',
