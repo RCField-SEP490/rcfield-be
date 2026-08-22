@@ -21,7 +21,7 @@ import {
   type FbBookingDraft,
   type RequiredField,
 } from './fb-booking-draft';
-import { extractBookingFields } from './fb-booking-extractor';
+import { extractBookingFields, type ExtractedFields } from './fb-booking-extractor';
 import { handler as checkAvailabilityTool } from './chat-tools/check-availability';
 import { planTurn } from './fb-booking-triage';
 import { getEffectiveMultiplier } from './pricing.service';
@@ -131,7 +131,7 @@ async function cafeCanAcceptBookings(cafeId: string): Promise<boolean> {
 /** Ghi các trường vừa rút được vào đơn nháp, sau khi backend tự kiểm lại từng cái. */
 async function mergeExtracted(
   draft: FbBookingDraft,
-  extracted: Awaited<ReturnType<typeof extractBookingFields>>,
+  extracted: ExtractedFields,
   cafe: Cafe,
 ): Promise<FbBookingDraft> {
   const next: FbBookingDraft = { ...draft };
@@ -258,7 +258,7 @@ function matchByName<T extends { name: string }>(items: T[], spoken: string): T 
  */
 async function resolveIds(
   draft: FbBookingDraft,
-  extracted: Awaited<ReturnType<typeof extractBookingFields>>,
+  extracted: ExtractedFields,
 ): Promise<FbBookingDraft> {
   const next: FbBookingDraft = { ...draft };
 
@@ -727,12 +727,26 @@ export async function tryHandleBookingTurn(
     return null;
   }
 
-  const extracted =
-    plan.kind === 'DETERMINISTIC' ? plan.fields : await extractBookingFields(ctx.text, existing);
+  const extraction =
+    plan.kind === 'DETERMINISTIC'
+      ? { fields: plan.fields, failed: false }
+      : await extractBookingFields(ctx.text, existing);
+  const extracted = extraction.fields;
 
-  // Mô hình vẫn có quyền nói "câu này không phải đặt lịch" — nó đọc được ngữ
-  // cảnh mà bộ lọc từ khoá không đọc được.
-  if (!existing && plan.kind === 'EXTRACT' && !extracted.wantsToBook) {
+  // Mô hình HỎNG thì KHÔNG được coi là "khách không muốn đặt".
+  //
+  // Bộ lọc từ khoá phía trên đã thấy dấu hiệu đặt lịch — đó là bằng chứng đủ để
+  // đi tiếp. Rơi xuống hỏi–đáp lúc này nghĩa là cả tính năng ngừng hoạt động mỗi
+  // khi lượt gọi mô hình trục trặc, mà không có gì trong hội thoại cho thấy vì sao:
+  // khách chỉ thấy bot bảo "chưa tạo đơn qua chat được" và mời ra web.
+  if (!existing && plan.kind === 'EXTRACT' && extraction.failed) {
+    logger.error('FbBooking', 'trích xuất HỎNG — vẫn mở luồng đặt lịch theo dấu hiệu từ khoá', {
+      psid: ctx.psid,
+      text: ctx.text.slice(0, 60),
+    });
+  } else if (!existing && plan.kind === 'EXTRACT' && !extracted.wantsToBook) {
+    // Mô hình đọc được và kết luận đây không phải ý định đặt lịch — tin nó, vì
+    // nó thấy ngữ cảnh mà bộ lọc từ khoá không thấy.
     logger.info('FbBooking', 'bỏ qua: mô hình xác định câu này không phải ý định đặt lịch', {
       psid: ctx.psid,
       text: ctx.text.slice(0, 60),

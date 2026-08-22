@@ -116,11 +116,25 @@ function buildPrompt(draft: FbBookingDraft | null, todayIso: string): string {
   ].join('\n');
 }
 
-/** Trả về đối tượng rỗng khi không rút được gì hoặc mô hình lỗi — lượt đó coi như không có thông tin mới. */
+/**
+ * Kết quả một lượt trích xuất.
+ *
+ * `failed` tách bạch với `fields` rỗng là CÓ CHỦ Ý. Trước đây mọi sự cố đều trả
+ * về một đối tượng rỗng, không phân biệt được với việc mô hình đọc xong và kết
+ * luận "câu này không phải đặt lịch". Hệ quả: một lỗi mạng, một tên model sai,
+ * hay một lần hết quota đều âm thầm biến thành "khách không muốn đặt" — và cả
+ * luồng đặt lịch ngừng hoạt động mà không ai thấy lỗi ở đâu.
+ */
+export interface ExtractionResult {
+  fields: ExtractedFields;
+  /** `true` khi lượt gọi mô hình hỏng — KHÁC với việc mô hình trả lời "không". */
+  failed: boolean;
+}
+
 export async function extractBookingFields(
   message: string,
   draft: FbBookingDraft | null,
-): Promise<ExtractedFields> {
+): Promise<ExtractionResult> {
   /*
     Dùng model CHÍNH, không dùng model hỗ trợ.
 
@@ -147,13 +161,14 @@ export async function extractBookingFields(
     });
 
     const raw = (response.text ?? '').trim();
-    if (!raw) return {};
+    if (!raw) return { fields: {}, failed: true };
 
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    return parsed as ExtractedFields;
+    if (!parsed || typeof parsed !== 'object') return { fields: {}, failed: true };
+    return { fields: parsed as ExtractedFields, failed: false };
   } catch (err) {
-    logger.warn('FbExtract', 'không rút được thông tin từ câu khách', err);
-    return {};
+    // Mức `error`, không phải `warn`: đây là chỗ cả luồng đặt lịch đứng lại.
+    logger.error('FbExtract', 'lượt gọi mô hình trích xuất HỎNG', err);
+    return { fields: {}, failed: true };
   }
 }
