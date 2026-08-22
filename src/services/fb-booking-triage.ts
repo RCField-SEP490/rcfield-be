@@ -58,6 +58,35 @@ const QUESTION_HINTS = [
   'o dau',
 ];
 
+/**
+ * Dấu hiệu khách muốn SỬA thông tin đã khai.
+ *
+ * Phải xét TRƯỚC `looksLikeQuestion`. Người Việt đổi thông tin gần như luôn kèm
+ * dấu hỏi — "cho mình đổi sang 20h được không?", "đổi sân khác nhé?" — mà `'?'`
+ * lại nằm trong danh sách nhận diện câu hỏi. Xét sau thì mọi yêu cầu đổi đều bị
+ * đẩy sang hỏi–đáp, và khách mất luôn đường quay lại luồng đặt lịch.
+ */
+const MODIFICATION_HINTS = [
+  'đổi',
+  'doi ',
+  'sửa',
+  'sua ',
+  'thay',
+  'nhầm',
+  'nham',
+  'không phải',
+  'khong phai',
+  'sai rồi',
+  'sai roi',
+  'lại',
+  'lai ',
+];
+
+function looksLikeModification(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return MODIFICATION_HINTS.some((hint) => normalized.includes(hint));
+}
+
 function looksLikeQuestion(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return QUESTION_HINTS.some((hint) => normalized.includes(hint));
@@ -117,6 +146,11 @@ function looksLikeName(text: string): boolean {
 export function planTurn(draft: FbBookingDraft | null, text: string): TurnPlan {
   // Lời xác nhận nhận ra bằng tập từ khoá đóng, không cần mô hình.
   if (matchesConfirmationKeyword(text)) return { kind: 'DETERMINISTIC', fields: {} };
+
+  // Sửa thông tin đã khai — xét TRƯỚC câu hỏi, vì câu sửa thường mang dấu hỏi.
+  // Để mô hình đọc vì khách có thể đổi bất cứ trường nào, bằng bất cứ cách diễn
+  // đạt nào.
+  if (draft && looksLikeModification(text)) return { kind: 'EXTRACT' };
 
   // Khách hỏi giữa chừng thì phải được trả lời bằng dữ liệu thật, không phải bị
   // ép quay lại câu hỏi đang dở.
