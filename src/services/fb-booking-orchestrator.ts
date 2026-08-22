@@ -16,6 +16,7 @@ import {
   firstMissingField,
   isConfirmationTurn,
   matchesConfirmationKeyword,
+  clearDraft,
   loadDraft,
   saveDraft,
   type FbBookingDraft,
@@ -108,6 +109,63 @@ const BOOKING_INTENT_HINTS = [
 function looksLikeBookingIntent(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return BOOKING_INTENT_HINTS.some((hint) => normalized.includes(hint));
+}
+
+/**
+ * Khách muốn DỪNG HẲN hoặc làm lại từ đầu.
+ *
+ * ── Vì sao phải có ──────────────────────────────────────────────────────────
+ *
+ * Không có đường này thì khách bị kẹt vĩnh viễn. Bot đang chờ số điện thoại;
+ * khách gõ "huỷ"; bộ giải mã không đọc ra số nào nên gọi mô hình; mô hình không
+ * rút được gì; bot hỏi lại số điện thoại. Lặp cho tới khi đơn nháp hết hạn 30
+ * phút — và trong suốt thời gian đó khách không có cách nào thoát ra.
+ *
+ * ── Vì sao chỉ dùng CỤM TỪ rõ nghĩa ─────────────────────────────────────────
+ *
+ * Cố ý KHÔNG bắt "thôi" hay "dừng" đứng một mình. "thôi cho mình thuê xe của
+ * quán" là đổi ý về hình thức chơi, không phải huỷ đơn — bắt nhầm thì xoá sạch
+ * thông tin khách vừa khai xong.
+ */
+const CANCEL_PHRASES = [
+  'huỷ',
+  'hủy',
+  'bắt đầu lại',
+  'bat dau lai',
+  'đặt lại từ đầu',
+  'dat lai tu dau',
+  'làm lại từ đầu',
+  'lam lai tu dau',
+  'không đặt nữa',
+  'khong dat nua',
+  'thôi không đặt',
+  'thoi khong dat',
+  'dừng lại',
+  'dung lai',
+];
+
+function looksLikeCancel(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return CANCEL_PHRASES.some((phrase) => normalized.includes(phrase));
+}
+
+/**
+ * Câu hỏi mà luồng đặt lịch đang chờ trả lời, để đường hỏi–đáp nhắc lại.
+ *
+ * Khách hỏi xen ngang một câu, được trả lời, rồi... im lặng. Bot vẫn đang chờ
+ * số điện thoại nhưng không nói ra, nên từ phía khách luồng đặt lịch bốc hơi.
+ * Trả về `null` khi không có đơn nháp hoặc đã đủ trường.
+ */
+export async function pendingBookingQuestion(pageId: string, psid: string): Promise<string | null> {
+  const draft = await loadDraft(pageId, psid);
+  if (!draft || draft.state === 'BLOCKED_REAL_ACCOUNT') return null;
+  if (draft.state === 'AWAITING_PAYMENT') return null;
+
+  if (firstMissingField(draft) === null) {
+    return 'Quay lại đơn đặt lịch: bạn gõ "xác nhận" để mình giữ chỗ, hoặc "huỷ" nếu đổi ý nhé.';
+  }
+  const question = await nextQuestion(draft);
+  return question ? `Quay lại đơn đặt lịch nhé — ${question.text}` : null;
 }
 
 function loginUrl(): string {
@@ -262,7 +320,13 @@ async function resolveIds(
 ): Promise<FbBookingDraft> {
   const next: FbBookingDraft = { ...draft };
 
-  if (!next.trackConfigId) {
+  // Cho phép ĐỔI sân đã chọn, không chỉ điền lần đầu.
+  //
+  // Đường giải mã bằng luật chỉ đặt `trackName` khi sân còn trống, nên có
+  // `trackName` mà sân đã chọn rồi nghĩa là mô hình đọc ra một yêu cầu đổi —
+  // tin nó. Thiếu nhánh này thì "đổi sang sân 2" bị bỏ qua âm thầm: bot vẫn
+  // tóm tắt sân cũ và khách không hiểu vì sao.
+  if (!next.trackConfigId || extracted.trackName) {
     const tracks = await listTrackConfigs(next.cafeId);
     if (tracks.length === 1) {
       next.trackConfigId = tracks[0].id;
@@ -693,6 +757,16 @@ export async function tryHandleBookingTurn(
 
   // Chưa có đơn nháp thì phải thấy dấu hiệu muốn đặt mới xét tiếp — lọc thô,
   // không tốn gì.
+  // Huỷ / làm lại — phải xét TRƯỚC mọi thứ khác, vì đây là lối thoát duy nhất
+  // khi khách bị kẹt ở một câu hỏi họ không muốn trả lời.
+  if (existing && looksLikeCancel(ctx.text)) {
+    await clearDraft(ctx.pageId, ctx.psid);
+    logger.info('FbBooking', 'khách huỷ luồng đặt lịch', { psid: ctx.psid });
+    return {
+      text: 'Mình đã huỷ thông tin đặt lịch vừa rồi ạ. Bạn muốn đặt lại thì cứ nhắn mình ngày giờ mong muốn nhé!',
+    };
+  }
+
   // Khách gõ xác nhận mà không còn đơn nháp: phiên đã hết hạn hoặc đã mất.
   //
   // KHÔNG được để rơi xuống đường hỏi–đáp — mô hình sẽ đọc bản tóm tắt cũ trong
