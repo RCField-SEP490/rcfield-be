@@ -29,7 +29,11 @@ import {
   markSeen,
   typingOn,
 } from '../services/fb-messenger.service';
-import { describeDraftForContext, tryHandleBookingTurn } from '../services/fb-booking-orchestrator';
+import {
+  describeDraftForContext,
+  pendingBookingQuestion,
+  tryHandleBookingTurn,
+} from '../services/fb-booking-orchestrator';
 import { appendTurn, clearHistory, loadHistory } from '../services/fb-conversation-memory';
 import { getFbChatQueue } from '../queues/fb-chat.queue';
 
@@ -166,6 +170,15 @@ export async function processEvent(event: FbMessagingEvent, pageId: string): Pro
     else response = await ragChat(cafeId, text, contextualHistory, confidence, nluAvailable);
 
     const formatted = FbMessengerFormatter.format(response);
+
+    // Khách đang đặt lịch dở mà hỏi xen ngang: trả lời câu hỏi XONG thì nhắc lại
+    // chỗ đang dừng.
+    //
+    // Không nhắc thì luồng đặt lịch im lặng đứng lại — bot vẫn chờ số điện thoại
+    // nhưng không nói ra, và từ phía khách nó đã bốc hơi. Họ không biết mình cần
+    // làm gì tiếp, cũng không biết là vẫn còn đơn dở.
+    const pending = await pendingBookingQuestion(pageId, psid);
+    if (pending) formatted.text = `${formatted.text}\n\n---\n${pending}`;
 
     const elapsed = Date.now() - typingAt;
     if (elapsed < 1500) await new Promise((r) => setTimeout(r, 1500 - elapsed));
