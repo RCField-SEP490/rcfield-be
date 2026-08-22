@@ -773,25 +773,51 @@ export const bookingController = {
       const bookings = rawAndEntities.entities;
       const rawResults = rawAndEntities.raw;
 
-      // Batch-fetch active sessions for these bookings
+      // Batch-fetch active sessions and payment components for these bookings
       const bookingIds = bookings.map((b) => b.id);
-      const activeSessions =
+      const [activeSessions, paymentComponents] = await Promise.all([
         bookingIds.length > 0
-          ? await AppDataSource.getRepository(Session).find({
+          ? AppDataSource.getRepository(Session).find({
               where: {
                 bookingId: In(bookingIds),
                 status: Not(In([SessionStatus.COMPLETED, SessionStatus.CANCELLED])),
               },
               select: ['id', 'bookingId', 'status', 'plannedEndAt', 'actualStartAt'],
             })
-          : [];
+          : Promise.resolve([]),
+        bookingIds.length > 0
+          ? AppDataSource.getRepository(PaymentComponent).find({
+              where: { bookingId: In(bookingIds) },
+            })
+          : Promise.resolve([]),
+      ]);
 
       const sessionByBookingId = new Map(activeSessions.map((s) => [s.bookingId, s]));
+      const componentsByBookingId = new Map<string, PaymentComponent[]>();
+      paymentComponents.forEach((c) => {
+        const list = componentsByBookingId.get(c.bookingId) || [];
+        list.push(c);
+        componentsByBookingId.set(c.bookingId, list);
+      });
+
       const data = bookings.map((b, idx) => {
         const sess = sessionByBookingId.get(b.id);
         const raw = rawResults[idx];
+        const comps = componentsByBookingId.get(b.id) || [];
+
+        let totalAmount: number;
+        if (comps.length > 0) {
+          totalAmount = comps
+            .filter((c) => c.type !== PaymentComponentType.SECURITY_DEPOSIT)
+            .reduce((sum, c) => sum + Number(c.amount), 0);
+        } else {
+          const snapshot = b.snapshot as { total_charged?: number; total_amount?: number } | null;
+          totalAmount = Number(snapshot?.total_charged ?? snapshot?.total_amount ?? 0);
+        }
+
         return {
           ...b,
+          totalAmount,
           cafe: raw?.cafeName ? { name: raw.cafeName } : null,
           session: sess
             ? {

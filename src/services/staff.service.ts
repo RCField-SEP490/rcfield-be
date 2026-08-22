@@ -2291,19 +2291,31 @@ async function syncApprovedExtensionFeeComponent(
     (sum, proposal) => sum + Number(proposal.feeAmount),
     0,
   );
-  if (totalApprovedFee <= 0) return;
 
   const componentRepo = AppDataSource.getRepository(PaymentComponent);
   const extensionComponents = await componentRepo.find({
     where: { bookingId, type: PaymentComponentType.EXTENSION_FEE },
     order: { createdAt: 'ASC' },
   });
+
+  const paidExtensionFee = extensionComponents
+    .filter((component) => component.status !== PaymentComponentStatus.PENDING)
+    .reduce((sum, component) => sum + Number(component.amount), 0);
+
+  const remainingPendingFee = totalApprovedFee - paidExtensionFee;
   const pendingComponent = extensionComponents.find(
     (component) => component.status === PaymentComponentStatus.PENDING,
   );
 
+  if (remainingPendingFee <= 0) {
+    if (pendingComponent) {
+      await componentRepo.remove(pendingComponent);
+    }
+    return;
+  }
+
   if (pendingComponent) {
-    pendingComponent.amount = totalApprovedFee;
+    pendingComponent.amount = remainingPendingFee;
     await componentRepo.save(pendingComponent);
     return;
   }
@@ -2312,7 +2324,7 @@ async function syncApprovedExtensionFeeComponent(
     componentRepo.create({
       bookingId,
       type: PaymentComponentType.EXTENSION_FEE,
-      amount: totalApprovedFee,
+      amount: remainingPendingFee,
       status: PaymentComponentStatus.PENDING,
     }),
   );
@@ -3933,22 +3945,34 @@ export async function settleSessionCheckoutBilling(
   const newComponents: Partial<PaymentComponent>[] = [];
 
   if (totalExtensionFee > 0) {
-    const existingExtensionComp = existingComponents.find(
+    const extensionComponents = existingComponents.filter(
       (c) => c.type === PaymentComponentType.EXTENSION_FEE,
     );
-    if (existingExtensionComp) {
-      existingExtensionComp.amount = totalExtensionFee;
-      if (existingExtensionComp.status !== PaymentComponentStatus.DISBURSED) {
-        existingExtensionComp.status = PaymentComponentStatus.PENDING;
+    const paidExtensionFee = extensionComponents
+      .filter((c) => c.status !== PaymentComponentStatus.PENDING)
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+    const remainingPendingFee = totalExtensionFee - paidExtensionFee;
+
+    const pendingExtensionComp = extensionComponents.find(
+      (c) => c.status === PaymentComponentStatus.PENDING,
+    );
+
+    if (remainingPendingFee <= 0) {
+      if (pendingExtensionComp) {
+        await compRepo.remove(pendingExtensionComp);
       }
-      await compRepo.save(existingExtensionComp);
     } else {
-      newComponents.push({
-        bookingId: booking.id,
-        type: PaymentComponentType.EXTENSION_FEE,
-        amount: totalExtensionFee,
-        status: PaymentComponentStatus.PENDING,
-      });
+      if (pendingExtensionComp) {
+        pendingExtensionComp.amount = remainingPendingFee;
+        await compRepo.save(pendingExtensionComp);
+      } else {
+        newComponents.push({
+          bookingId: booking.id,
+          type: PaymentComponentType.EXTENSION_FEE,
+          amount: remainingPendingFee,
+          status: PaymentComponentStatus.PENDING,
+        });
+      }
     }
   }
 
