@@ -1,4 +1,4 @@
-import { planTurn } from '../../services/fb-booking-triage';
+import { classifyTurn } from '../../services/fb-booking-triage';
 import type { FbBookingDraft } from '../../services/fb-booking-draft';
 
 /**
@@ -23,62 +23,62 @@ describe('fb-booking-triage: chọn đường xử lý cho từng lượt', () =
   };
 
   it('lời xác nhận KHÔNG cần mô hình', () => {
-    expect(planTurn(base, 'xác nhận').kind).toBe('DETERMINISTIC');
-    expect(planTurn(base, 'đồng ý').kind).toBe('DETERMINISTIC');
+    expect(classifyTurn(base, 'xác nhận').kind).toBe('CONFIRM');
+    expect(classifyTurn(base, 'đồng ý').kind).toBe('CONFIRM');
   });
 
   it('số điện thoại KHÔNG cần mô hình', () => {
     const draft = { ...base, fullName: 'Nam' };
-    const plan = planTurn(draft, '0901234567');
-    expect(plan.kind).toBe('DETERMINISTIC');
-    if (plan.kind === 'DETERMINISTIC') expect(plan.fields.phone).toBe('0901234567');
+    const plan = classifyTurn(draft, '0901234567');
+    expect(plan.kind).toBe('PROVIDE_INFO');
+    if (plan.kind === 'PROVIDE_INFO') expect(plan.fields.phone).toBe('0901234567');
   });
 
   it('dạng +84 cũng nhận ra được, vẫn không cần mô hình', () => {
     const draft = { ...base, fullName: 'Nam' };
-    const plan = planTurn(draft, '+84901234567');
-    expect(plan.kind).toBe('DETERMINISTIC');
-    if (plan.kind === 'DETERMINISTIC') expect(plan.fields.phone).toBe('0901234567');
+    const plan = classifyTurn(draft, '+84901234567');
+    expect(plan.kind).toBe('PROVIDE_INFO');
+    if (plan.kind === 'PROVIDE_INFO') expect(plan.fields.phone).toBe('0901234567');
   });
 
   it('hình thức chơi KHÔNG cần mô hình', () => {
     const draft: FbBookingDraft = { ...base, playMode: undefined };
-    const rental = planTurn(draft, 'thuê xe của quán');
-    const byoc = planTurn(draft, 'mình mang xe cá nhân');
-    expect(rental.kind).toBe('DETERMINISTIC');
-    expect(byoc.kind).toBe('DETERMINISTIC');
-    if (rental.kind === 'DETERMINISTIC') expect(rental.fields.playMode).toBe('RENTAL');
-    if (byoc.kind === 'DETERMINISTIC') expect(byoc.fields.playMode).toBe('BYOC');
+    const rental = classifyTurn(draft, 'thuê xe của quán');
+    const byoc = classifyTurn(draft, 'mình mang xe cá nhân');
+    expect(rental.kind).toBe('PROVIDE_INFO');
+    expect(byoc.kind).toBe('PROVIDE_INFO');
+    if (rental.kind === 'PROVIDE_INFO') expect(rental.fields.playMode).toBe('RENTAL');
+    if (byoc.kind === 'PROVIDE_INFO') expect(byoc.fields.playMode).toBe('BYOC');
   });
 
   it('số người KHÔNG cần mô hình, đọc được cả chữ lẫn số', () => {
     const draft: FbBookingDraft = { ...base, playerCount: undefined };
-    const digit = planTurn(draft, '2');
-    const word = planTurn(draft, 'hai người');
-    if (digit.kind === 'DETERMINISTIC') expect(digit.fields.playerCount).toBe(2);
-    if (word.kind === 'DETERMINISTIC') expect(word.fields.playerCount).toBe(2);
+    const digit = classifyTurn(draft, '2');
+    const word = classifyTurn(draft, 'hai người');
+    if (digit.kind === 'PROVIDE_INFO') expect(digit.fields.playerCount).toBe(2);
+    if (word.kind === 'PROVIDE_INFO') expect(word.fields.playerCount).toBe(2);
   });
 
   it('MỐC THỜI GIAN là chỗ duy nhất cần mô hình', () => {
     const draft: FbBookingDraft = { ...base, slotStart: undefined, slotEnd: undefined };
-    expect(planTurn(draft, '19h tối mai').kind).toBe('EXTRACT');
-    expect(planTurn(draft, 'thứ 7 tuần sau').kind).toBe('EXTRACT');
+    expect(classifyTurn(draft, '19h tối mai').kind).toBe('NEEDS_MODEL');
+    expect(classifyTurn(draft, 'thứ 7 tuần sau').kind).toBe('NEEDS_MODEL');
   });
 
   it('khách hỏi giữa chừng thì trả về đường hỏi–đáp, không ép quay lại câu đang dở', () => {
     const draft: FbBookingDraft = { ...base, playerCount: undefined };
-    expect(planTurn(draft, 'giá bao nhiêu vậy shop?').kind).toBe('QUESTION');
-    expect(planTurn(draft, 'quán mở mấy giờ').kind).toBe('QUESTION');
+    expect(classifyTurn(draft, 'giá bao nhiêu vậy shop?').kind).toBe('ASK_QUESTION');
+    expect(classifyTurn(draft, 'quán mở mấy giờ').kind).toBe('ASK_QUESTION');
   });
 
   it('không chắc chắn thì để mô hình đọc, KHÔNG đoán bừa', () => {
     // Ghi dữ liệu rác vào đơn nháp tệ hơn nhiều so với tốn một lượt gọi mô hình.
     const draft: FbBookingDraft = { ...base, playMode: undefined };
-    expect(planTurn(draft, 'ừm thì cũng chưa biết nữa').kind).toBe('EXTRACT');
+    expect(classifyTurn(draft, 'ừm thì cũng chưa biết nữa').kind).toBe('NEEDS_MODEL');
   });
 
   it('chưa có đơn nháp thì luôn để mô hình đọc', () => {
-    expect(planTurn(null, 'mai mình muốn đặt sân').kind).toBe('EXTRACT');
+    expect(classifyTurn(null, 'mai mình muốn đặt sân').kind).toBe('NEEDS_MODEL');
   });
 });
 
@@ -114,25 +114,25 @@ describe('fb-booking-triage: khách sửa thông tin đã khai', () => {
       'mình đổi số điện thoại được không?',
       'sửa lại số người được không?',
     ]) {
-      expect(planTurn(complete, text).kind).toBe('EXTRACT');
+      expect(classifyTurn(complete, text).kind).toBe('NEEDS_MODEL');
     }
   });
 
   it('câu đổi thông tin không dấu hỏi cũng ở lại luồng', () => {
     for (const text of ['đổi sang 20h', 'mình khai nhầm số điện thoại', 'thay sân khác đi']) {
-      expect(planTurn(complete, text).kind).toBe('EXTRACT');
+      expect(classifyTurn(complete, text).kind).toBe('NEEDS_MODEL');
     }
   });
 
   it('câu hỏi THẬT vẫn được chuyển sang hỏi–đáp', () => {
     // Không được vì sửa lỗi trên mà nuốt luôn câu hỏi thường.
     for (const text of ['giá bao nhiêu vậy shop?', 'quán ở đâu ạ', 'quán mở mấy giờ']) {
-      expect(planTurn(complete, text).kind).toBe('QUESTION');
+      expect(classifyTurn(complete, text).kind).toBe('ASK_QUESTION');
     }
   });
 
   it('vẫn ưu tiên lời xác nhận trên hết', () => {
-    expect(planTurn(complete, 'xác nhận').kind).toBe('DETERMINISTIC');
+    expect(classifyTurn(complete, 'xác nhận').kind).toBe('CONFIRM');
   });
 });
 
@@ -158,21 +158,13 @@ describe('fb-booking-triage: câu huỷ không được hiểu thành câu trả
     fullName: 'Nam',
   };
 
-  it('"huỷ" không bị đọc thành số điện thoại', () => {
-    // Bộ giải mã số điện thoại phải TỪ CHỐI, để bộ điều phối có cơ hội xử lý huỷ.
-    const plan = planTurn(awaitingPhone, 'huỷ');
-    if (plan.kind === 'DETERMINISTIC') {
-      expect(plan.fields.phone).toBeUndefined();
-    }
+  it('"huỷ" được nhận ra là huỷ, không bị đọc thành số điện thoại', () => {
+    expect(classifyTurn(awaitingPhone, 'huỷ').kind).toBe('CANCEL');
   });
 
-  it('câu huỷ và làm lại không bị nuốt thành dữ liệu rác', () => {
+  it('mọi câu huỷ và làm lại đều ra CANCEL', () => {
     for (const text of ['huỷ đơn giúp mình', 'bắt đầu lại từ đầu', 'thôi không đặt nữa']) {
-      const plan = planTurn(awaitingPhone, text);
-      if (plan.kind === 'DETERMINISTIC') {
-        expect(plan.fields.phone).toBeUndefined();
-        expect(plan.fields.fullName).toBeUndefined();
-      }
+      expect(classifyTurn(awaitingPhone, text).kind).toBe('CANCEL');
     }
   });
 
@@ -180,8 +172,8 @@ describe('fb-booking-triage: câu huỷ không được hiểu thành câu trả
     // Đây là đổi ý về hình thức chơi. Bắt nhầm thành huỷ là xoá sạch thông tin
     // khách vừa khai xong — đó là lý do không bắt "thôi" đứng một mình.
     const draft: FbBookingDraft = { ...awaitingPhone, playMode: undefined };
-    const plan = planTurn(draft, 'thôi cho mình thuê xe của quán');
-    expect(plan.kind).toBe('DETERMINISTIC');
-    if (plan.kind === 'DETERMINISTIC') expect(plan.fields.playMode).toBe('RENTAL');
+    const plan = classifyTurn(draft, 'thôi cho mình thuê xe của quán');
+    expect(plan.kind).toBe('PROVIDE_INFO');
+    if (plan.kind === 'PROVIDE_INFO') expect(plan.fields.playMode).toBe('RENTAL');
   });
 });

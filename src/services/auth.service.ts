@@ -6,7 +6,15 @@ import { IsNull } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
-import { AppError, UserRole, AuthProvider, ProviderStatus, CafeStatus } from '../types';
+import {
+  AppError,
+  UserRole,
+  AuthProvider,
+  ProviderStatus,
+  CafeStatus,
+  isSyntheticGuestEmail,
+} from '../types';
+import { normalizePhone } from './fb-soft-user';
 import { User } from '../models/user.entity';
 import { RefreshToken } from '../models/refresh-token.entity';
 import { ProviderProfile } from '../models/provider-profile.entity';
@@ -173,7 +181,16 @@ class AuthService {
     let phoneExisting: User | null = null;
     let guestUser: User | null = null;
     if (input.phone) {
-      const trimmedPhone = input.phone.trim();
+      /*
+        Chuẩn hoá số điện thoại TRƯỚC khi tra, đúng cách luồng đặt lịch qua
+        Facebook đang làm.
+
+        Tài khoản mềm luôn được lưu ở dạng `0xxxxxxxxx`. Khách đăng ký bằng
+        `+84xxxxxxxxx` mà tra thô thì không thấy dòng nào, và hệ thống tạo một
+        tài khoản THỨ HAI — lịch sử đặt lịch của họ nằm lại ở tài khoản mềm cũ,
+        không ai gộp lại được nữa vì hai dòng khác `id`.
+      */
+      const trimmedPhone = normalizePhone(input.phone) ?? input.phone.trim();
       const foundPhoneUser = await this.userRepo.findOne({
         where: {
           phone: trimmedPhone,
@@ -181,9 +198,11 @@ class AuthService {
       });
 
       if (foundPhoneUser) {
+        // Dùng hằng số dùng chung, KHÔNG chép lại chuỗi hậu tố. Đây là nơi thứ
+        // tư đọc tới nó — chép tay một nơi là chỗ đó lệch khỏi ba nơi kia mà
+        // không ai biết, và khách mất đường nâng cấp tài khoản.
         const isGuest =
-          foundPhoneUser.email === `${trimmedPhone}@guest.rcfield.local` &&
-          !foundPhoneUser.password_hash;
+          isSyntheticGuestEmail(foundPhoneUser.email) && !foundPhoneUser.password_hash;
         if (!isGuest) {
           phoneExisting = foundPhoneUser;
         } else {
@@ -220,7 +239,7 @@ class AuthService {
           manager.create(User, {
             email,
             full_name: input.full_name.trim(),
-            phone: input.phone ?? null,
+            phone: input.phone ? (normalizePhone(input.phone) ?? input.phone.trim()) : null,
             password_hash,
             role: input.role,
             auth_provider: AuthProvider.LOCAL,

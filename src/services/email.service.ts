@@ -175,11 +175,13 @@ class EmailService {
         cafe_address: string;
         customer_email: string;
         customer_name: string;
+        contact_email: string | null;
       }[]
     >(
       `SELECT b.id AS booking_id, b.slot_start, b.slot_end, b.play_mode,
               c.name AS cafe_name, c.address AS cafe_address,
-              u.email AS customer_email, u.full_name AS customer_name
+              u.email AS customer_email, u.full_name AS customer_name,
+              b.snapshot->>'contact_email' AS contact_email
          FROM bookings b
          JOIN cafes c ON c.id = b.cafe_id
          JOIN users u ON u.id = b.customer_id
@@ -190,10 +192,23 @@ class EmailService {
     if (!rows.length) return;
     const r = rows[0];
 
+    /*
+      Địa chỉ nhận: ưu tiên email khách TỰ CHO khi đặt lịch.
+
+      Với tài khoản mềm, `users.email` luôn là chuỗi tổng hợp từ số điện thoại —
+      không gửi tới đâu được. Email thật (nếu khách cho) nằm ở ảnh chụp của ĐƠN
+      HÀNG chứ không ở tài khoản, vì nó gắn với một lần đặt chứ không phải với
+      danh tính.
+
+      Chỉ đọc `users.email` thì mọi khách Facebook đều bị bỏ qua kể cả khi đã cho
+      địa chỉ — và kênh email dự phòng của FR-033 không bao giờ chạy được.
+    */
+    const recipient = r.contact_email ?? r.customer_email;
+
     // Thoát SỚM, trước khi sinh mã QR và tải lên kho ảnh. Chốt cuối ở
     // `brevoSend` cũng chặn được, nhưng lúc đó đã tốn một lượt tải ảnh lên cho
     // một lá thư không bao giờ gửi.
-    if (isSyntheticGuestEmail(r.customer_email)) {
+    if (isSyntheticGuestEmail(recipient)) {
       logger.info('Email', 'bỏ qua thư xác nhận — khách chưa cho email thật', { bookingId });
       return;
     }
@@ -233,7 +248,7 @@ class EmailService {
 
     await this.brevoSend({
       sender: { email: env.email.fromEmail, name: env.email.fromName },
-      to: [{ email: r.customer_email, name: r.customer_name }],
+      to: [{ email: recipient, name: r.customer_name }],
       subject: `✅ Đặt sân thành công — #${shortRef} | RCField`,
       htmlContent: `
         <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
@@ -282,7 +297,7 @@ class EmailService {
 
     logger.info('EmailService', 'booking confirmation sent', {
       bookingId,
-      email: r.customer_email,
+      email: recipient,
     });
   }
 
@@ -321,9 +336,14 @@ class EmailService {
     if (!rows.length) return;
     const r = rows[0];
 
+    // Cùng quy tắc với thư xác nhận: ưu tiên email khách tự cho khi đặt lịch,
+    // vì `users.email` của tài khoản mềm là chuỗi tổng hợp không gửi tới đâu.
+    const snapshotForEmail = r.snapshot as { contact_email?: string } | null;
+    const recipient = snapshotForEmail?.contact_email ?? r.customer_email;
+
     // Thoát sớm, trước khi dựng PDF hoá đơn — xem chú thích cùng loại ở
     // `sendBookingConfirmation`.
-    if (isSyntheticGuestEmail(r.customer_email)) {
+    if (isSyntheticGuestEmail(recipient)) {
       logger.info('Email', 'bỏ qua hoá đơn — khách chưa cho email thật', { bookingId });
       return;
     }
@@ -444,7 +464,8 @@ class EmailService {
       cafeAddress: r.cafe_address,
       cafePhone: r.cafe_phone,
       customerName: r.customer_name,
-      customerEmail: r.customer_email,
+      // Trên hoá đơn cũng in địa chỉ liên lạc thật, không in chuỗi tổng hợp nội bộ.
+      customerEmail: recipient,
       participants,
       slotStart,
       slotEnd,
@@ -478,7 +499,7 @@ class EmailService {
 
     await this.brevoSend({
       sender: { email: env.email.fromEmail, name: env.email.fromName },
-      to: [{ email: r.customer_email, name: r.customer_name }],
+      to: [{ email: recipient, name: r.customer_name }],
       subject: `Hóa đơn đặt sân #${shortRef} — RCField`,
       htmlContent: `
         <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#111827">
@@ -564,7 +585,7 @@ class EmailService {
       ],
     });
 
-    logger.info('EmailService', 'invoice email sent', { bookingId, email: r.customer_email });
+    logger.info('EmailService', 'invoice email sent', { bookingId, email: recipient });
   }
 
   /**

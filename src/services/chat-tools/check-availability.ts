@@ -40,10 +40,16 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
       slot_duration_minutes: number;
       slot_fee_rate: string;
       name: string;
+      operating_hours: Record<
+        string,
+        { open?: string; close?: string; is_closed?: boolean }
+      > | null;
     }[]
-  >(`SELECT byoc_capacity, slot_duration_minutes, slot_fee_rate, name FROM cafes WHERE id = $1`, [
-    cafeId,
-  ]);
+  >(
+    `SELECT byoc_capacity, slot_duration_minutes, slot_fee_rate, name, operating_hours
+       FROM cafes WHERE id = $1`,
+    [cafeId],
+  );
   if (!cafeRows.length) return JSON.stringify({ error: 'Cafe not found' });
 
   const byocCapacity = Number(cafeRows[0].byoc_capacity);
@@ -147,6 +153,45 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
     );
   }
 
+  /*
+    Giờ mở cửa của chi nhánh.
+
+    `generate_series` phía trên rải khung giờ suốt 24 tiếng và chỉ lọc theo sức
+    chứa — nó KHÔNG biết quán mấy giờ mở. Nên công cụ này từng mời khách 10h
+    sáng Chủ nhật ở một chi nhánh 14h mới mở cửa, rồi `createBooking` từ chối ở
+    bước cuối. Cùng kiểu hỏng với chuyện giải đấu: hứa thứ mà bước tạo đơn sẽ
+    khước từ.
+  */
+  const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const hours = cafeRows[0].operating_hours ?? {};
+
+  function isWithinOperatingHours(slotTime: Date): boolean {
+    // Thứ trong tuần và giờ đều phải đọc theo giờ Việt Nam, không theo giờ máy chủ.
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(slotTime);
+    const weekday = parts.find((part) => part.type === 'weekday')?.value?.toLowerCase() ?? '';
+    const hh = parts.find((part) => part.type === 'hour')?.value ?? '00';
+    const mm = parts.find((part) => part.type === 'minute')?.value ?? '00';
+
+    const day = hours[DAY_KEYS.find((key) => key.startsWith(weekday.slice(0, 3))) ?? weekday];
+    // Chưa khai giờ cho ngày đó thì không chặn — thà mời thừa rồi bị bước tạo
+    // đơn chặn, còn hơn im lặng khoá cả ngày vì thiếu cấu hình.
+    if (!day) return true;
+    if (day.is_closed) return false;
+    if (!day.open || !day.close) return true;
+
+    const now = `${hh}:${mm}`;
+    // Khung giờ phải bắt đầu trong giờ mở cửa VÀ kết thúc trước giờ đóng.
+    const endMinutes = Number(hh) * 60 + Number(mm) + slotMinutes;
+    const [closeH, closeM] = day.close.split(':').map(Number);
+    return now >= day.open && endMinutes <= closeH * 60 + closeM;
+  }
+
   const rentalTimes: string[] = [];
   const byocTimes: string[] = [];
   // Chỉ liệt kê khung giờ có giá KHÁC giá gốc. Liệt kê hết thì kết quả phình to
@@ -158,6 +203,7 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
     // Bỏ hẳn khỏi danh sách, không phải đánh dấu: đây là khung giờ KHÔNG đặt
     // được, nên nhắc tới nó chỉ làm model gợi ý nhầm.
     if (isBlockedByContest(slotTime)) continue;
+    if (!isWithinOperatingHours(slotTime)) continue;
     const t = toVnTimeString(slotTime);
     if (totalVehicles - r.rental_booked > 0) rentalTimes.push(t);
     if (byocCapacity - r.byoc_booked > 0) byocTimes.push(t);
@@ -170,6 +216,34 @@ export async function handler(cafeId: string, args: CheckAvailabilityArgs): Prom
 
   // Cả ngày bị giải đấu chiếm — nói thẳng lý do thay vì để model tự đoán vì sao
   // danh sách khung giờ trống rỗng.
+  // Cả ngày không còn khung nào vì quán chưa mở / đã đóng — nói rõ giờ mở cửa
+  // thay vì để mô hình đoán vì sao danh sách rỗng.
+  if (rentalTimes.length === 0 && byocTimes.length === 0 && fullBranchWindows.length === 0) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      weekday: 'short',
+    }).formatToParts(new Date(vnMidnight));
+    const weekday = parts.find((p) => p.type === 'weekday')?.value?.toLowerCase() ?? '';
+    const day = hours[DAY_KEYS.find((k) => k.startsWith(weekday.slice(0, 3))) ?? weekday];
+    if (day?.is_closed) {
+      return JSON.stringify({
+        date: dateStr,
+        available: false,
+        reason: 'CAFE_CLOSED',
+        message: 'Ngày này chi nhánh nghỉ ạ.',
+      });
+    }
+    if (day?.open && day?.close) {
+      return JSON.stringify({
+        date: dateStr,
+        available: false,
+        reason: 'OUTSIDE_OPERATING_HOURS',
+        openingHours: `${day.open}–${day.close}`,
+        message: `Ngày này chi nhánh mở cửa ${day.open}–${day.close}, hiện không còn khung giờ trống trong khoảng đó ạ.`,
+      });
+    }
+  }
+
   if (rentalTimes.length === 0 && byocTimes.length === 0 && fullBranchWindows.length > 0) {
     return JSON.stringify({
       date: dateStr,
