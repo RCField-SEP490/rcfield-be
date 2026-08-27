@@ -1,4 +1,4 @@
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any */
+/* eslint-disable no-console */
 import { AppDataSource } from '../config/database';
 
 async function main() {
@@ -12,8 +12,9 @@ async function main() {
     try {
       await AppDataSource.query(`TRUNCATE TABLE "${table}" CASCADE;`);
       console.log(`Successfully truncated table: ${table}`);
-    } catch (err: any) {
-      console.error(`Failed to truncate table: ${table}. Error: ${err.message}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to truncate table: ${table}. Error: ${message}`);
     }
   }
 

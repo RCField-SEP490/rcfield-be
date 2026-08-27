@@ -39,7 +39,7 @@ app.use(requestLogger);
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: env.NODE_ENV === 'production' ? 10000 : 5000,
+    max: env.NODE_ENV === 'production' ? 15000 : 5000,
     skip: (req) => /^\/api\/v1\/cafes\/[^/]+\/availability$/.test(req.path),
   }),
 );
