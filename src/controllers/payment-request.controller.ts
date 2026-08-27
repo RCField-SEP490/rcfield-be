@@ -29,10 +29,16 @@ export const paymentRequestController = {
         where: { userId: providerId },
       });
 
+      // Số kênh đang kết nối không nằm trong thực thể gói — nó đếm từ
+      // `cafe_channels`. Trả kèm ở đây để giao diện khỏi phải tự đếm bằng một
+      // câu truy vấn khác rồi lệch với chốt chặn hạn mức.
+      const channelsUsed = await subscriptionService.countConnectedChannels(providerId);
+
       res.json({
         success: true,
         data: sub,
         trial_used_at: profile?.trialUsedAt ?? null,
+        channels_used: channelsUsed,
       });
     } catch (err) {
       next(err);

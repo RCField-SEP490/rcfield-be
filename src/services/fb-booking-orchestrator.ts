@@ -19,6 +19,7 @@ import {
   clearDraft,
   loadDraft,
   saveDraft,
+  touchDraft,
   type FbBookingDraft,
   type RequiredField,
 } from './fb-booking-draft';
@@ -833,7 +834,11 @@ export async function tryHandleBookingTurn(
     // Ba trường hợp nhường hẳn cho đường hỏi–đáp.
     case 'BLOCKED':
     case 'NOT_BOOKING':
+      return null;
+
     case 'ASK_QUESTION':
+      // Gia hạn đơn nháp: khách hỏi han bao lâu cũng được mà không mất tiến độ.
+      if (existing) await touchDraft(ctx.pageId, ctx.psid);
       return null;
 
     case 'CANCEL':
