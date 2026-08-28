@@ -174,6 +174,19 @@ export async function createContestRegistration(
       });
     }
 
+    if (existing) {
+      // Hủy các giao dịch cũ đang PENDING của registration này để không bị khóa 409 khi đăng ký lại
+      await manager.getRepository(PaymentTransaction).update(
+        {
+          contestRegistrationId: existing.id,
+          status: PaymentTransactionStatus.PENDING,
+        },
+        {
+          status: PaymentTransactionStatus.FAILED,
+        },
+      );
+    }
+
     const registration = existing ?? transactionalRepo.create();
     registration.contestId = contestId;
     registration.userId = viewer.userId;
@@ -197,6 +210,13 @@ export async function createContestRegistration(
       byoc_declaration:
         body.vehicle_source === VehicleSource.BYOC ? buildByocMetadata(body) : undefined,
     };
+
+    if (existing) {
+      registration.createdAt = new Date();
+      registration.cancelledAt = null;
+      registration.cancelledBy = null;
+      registration.cancellationReason = null;
+    }
 
     return transactionalRepo.save(registration);
   });
@@ -496,6 +516,18 @@ export async function rejectRegistration(registrationId: string, viewer: Viewer,
   registration.status = ContestRegistrationStatus.CANCELLED;
   registration.cancelledBy = viewer.userId;
   registration.cancelledAt = new Date();
+
+  // Hủy các giao dịch cũ đang PENDING của registration này
+  await AppDataSource.getRepository(PaymentTransaction).update(
+    {
+      contestRegistrationId: registration.id,
+      status: PaymentTransactionStatus.PENDING,
+    },
+    {
+      status: PaymentTransactionStatus.FAILED,
+    },
+  );
+
   // Lý do là bắt buộc ở tầng validate, nên tới đây luôn có chữ thật để gửi cho
   // VĐV thay vì câu mặc định vô nghĩa.
   registration.cancellationReason = reason;
@@ -614,6 +646,18 @@ export async function cancelRegistration(registrationId: string, viewer: Viewer,
   registration.cancelledBy = viewer.userId;
   registration.cancelledAt = new Date();
   registration.cancellationReason = reason ?? 'Cancelled';
+
+  // Hủy các giao dịch cũ đang PENDING của registration này
+  await AppDataSource.getRepository(PaymentTransaction).update(
+    {
+      contestRegistrationId: registration.id,
+      status: PaymentTransactionStatus.PENDING,
+    },
+    {
+      status: PaymentTransactionStatus.FAILED,
+    },
+  );
+
   await repo.save(registration);
   await removeRegistrationFromActiveMatches(registration.id);
   try {
