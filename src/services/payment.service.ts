@@ -1188,14 +1188,10 @@ export async function processConfirmationResult(
       gatewayTransactionId: result.transactionNo ?? null,
     });
 
-    // Khách CỐ Ý huỷ ở cổng thanh toán thì nhả suất trong giải ngay.
+    // Khách CỐ Ý huỷ ở cổng thanh toán (Mã 24) thì nhả suất trong giải ngay.
     //
-    // Chỉ mã 24 — "khách hàng huỷ giao dịch". Sai OTP, lỗi ngân hàng hay hết
-    // giờ ở cổng đều KHÔNG nhả: gõ nhầm một lần mà mất chỗ rồi phải tranh lại
-    // là quá nặng, và ở giải gần đầy thì gần như chắc chắn mất suất thật.
-    //
-    // Suất bị giữ là vấn đề có thật vì bộ đếm sức chứa tính mọi đăng ký chưa
-    // huỷ, kể cả người chưa trả đồng nào.
+    // Chỉ mã 24 — "khách hàng huỷ giao dịch". Sai OTP, lỗi ngân hàng hay thoát màn hình
+    // đều KHÔNG nhả: đơn giữ nguyên trạng thái chờ thanh toán để khách trả lại được.
     if (
       tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY &&
       tx.contestRegistrationId &&
@@ -1279,6 +1275,9 @@ export async function processConfirmationResult(
     registration.paymentStatus = ContestEntryFeePaymentStatus.MARKED_PAID;
     registration.entryFeeMarkedPaidAt = new Date();
     registration.entryFeeMarkedPaidBy = null;
+    registration.status = ContestRegistrationStatus.CONFIRMED;
+    registration.cancelledAt = null;
+    registration.cancellationReason = null;
     registration.metadata = {
       ...(registration.metadata ?? {}),
       payment_source: paymentSource,

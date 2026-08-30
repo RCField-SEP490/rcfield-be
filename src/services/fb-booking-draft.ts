@@ -128,6 +128,23 @@ export async function saveDraft(
   }
 }
 
+/**
+ * Gia hạn đơn nháp mà không sửa nội dung.
+ *
+ * Dùng cho những lượt khách hỏi xen ngang. `saveDraft` đặt lại hạn sống, nhưng
+ * lượt hỏi–đáp không ghi gì cả — nên nếu khách hỏi han đủ lâu, đơn nháp lặng lẽ
+ * hết hạn giữa cuộc trò chuyện: hỏi xong quay lại thì mọi thứ vừa khai đã mất và
+ * bot bắt đầu lại từ đầu. Hỏi nhiều là dấu hiệu khách ĐANG quan tâm, không phải
+ * đã bỏ đi.
+ */
+export async function touchDraft(pageId: string, psid: string): Promise<void> {
+  try {
+    await redis.expire(draftKey(pageId, psid), DRAFT_TTL_SECONDS);
+  } catch (err) {
+    logger.warn('FbDraft', `không gia hạn được đơn nháp psid=${psid}`, err);
+  }
+}
+
 /** Xoá đơn nháp — gọi sau khi đã tạo đơn xong. */
 export async function clearDraft(pageId: string, psid: string): Promise<void> {
   try {

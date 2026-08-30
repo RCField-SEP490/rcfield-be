@@ -189,6 +189,29 @@ export async function checkBranchQuota(providerId: string): Promise<void> {
   }
 }
 
+/**
+ * Số kênh chat đang kết nối của một chủ doanh nghiệp.
+ *
+ * Tách ra để chốt chặn hạn mức và thanh hiển thị dùng CHUNG một câu truy vấn.
+ * Trước đây chỉ `checkChannelQuota` đếm, mà nó ném lỗi chứ không trả số — nên
+ * giao diện không có nguồn nào để hiện và thanh "Kênh kết nối" đứng im ở 0
+ * trong khi chốt chặn vẫn chặn đúng. Nhìn trên màn hình là một mâu thuẫn tự nó
+ * tố cáo: báo còn trống nhưng bấm thêm thì bị từ chối vì đã đủ.
+ *
+ * Viết câu truy vấn thứ hai cho phần hiển thị thì sớm muộn một bên đếm
+ * `CONNECTED` còn bên kia đếm tất cả, và không ai biết bên nào đúng.
+ */
+export async function countConnectedChannels(providerId: string): Promise<number> {
+  const rows = await AppDataSource.query<[{ count: string }]>(
+    `SELECT COUNT(*) as count
+     FROM cafe_channels cc
+     JOIN cafes c ON c.id = cc.cafe_id
+     WHERE c.provider_id = $1 AND cc.status = 'CONNECTED' AND cc.deleted_at IS NULL`,
+    [providerId],
+  );
+  return parseInt(rows[0]?.count ?? '0', 10);
+}
+
 export async function checkChannelQuota(providerId: string): Promise<void> {
   const sub = await getActive(providerId);
   if (!sub)
@@ -197,14 +220,7 @@ export async function checkChannelQuota(providerId: string): Promise<void> {
   const plan = sub.plan as SubscriptionPlan;
   if (plan.channelLimit === -1) return;
 
-  const channelCount = await AppDataSource.query<[{ count: string }]>(
-    `SELECT COUNT(*) as count
-     FROM cafe_channels cc
-     JOIN cafes c ON c.id = cc.cafe_id
-     WHERE c.provider_id = $1 AND cc.status = 'CONNECTED' AND cc.deleted_at IS NULL`,
-    [providerId],
-  );
-  const count = parseInt(channelCount[0]?.count ?? '0', 10);
+  const count = await countConnectedChannels(providerId);
   if (count >= plan.channelLimit) {
     throw new AppError(
       `Gói ${plan.name} chỉ cho phép tối đa ${plan.channelLimit} kênh kết nối`,

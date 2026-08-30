@@ -1,19 +1,16 @@
 import { Not } from 'typeorm';
 import { AppDataSource } from '../../config/database';
 import { logger } from '../../config/logger';
-import { Contest } from '../../models/contest.entity';
 import { ContestMatch } from '../../models/contest-match.entity';
 import { ContestRegistration } from '../../models/contest-registration.entity';
 import {
-  ContestEntryFeePaymentStatus,
   ContestMatchStatus,
   ContestRegistrationStatus,
-  ContestStatus,
   NotificationType,
   VehicleSource,
 } from '../../types';
 import { createNotification } from '../notification.service';
-import { getActiveContestBan, writeContestAudit } from '../contest.helpers';
+import { writeContestAudit } from '../contest.helpers';
 import { emailService } from '../email.service';
 
 export async function loadContestNotificationContext(registration: ContestRegistration) {
@@ -166,10 +163,18 @@ export async function cleanUpContestOnCancel(contestId: string, actorId: string)
     registration.cancelledBy = actorId;
     registration.cancelledAt = new Date();
     registration.cancellationReason = 'Contest cancelled';
-    registration.metadata = {
-      ...(registration.metadata ?? {}),
-      refund_needed: registration.paymentStatus === ContestEntryFeePaymentStatus.MARKED_PAID,
-    };
+    /*
+      Bỏ cờ `refund_needed` từng ghi ở đây.
+
+      Nó được ghi vào metadata rồi KHÔNG NƠI NÀO đọc — không màn hình, không báo
+      cáo, không thông báo. Một cái cờ như vậy tệ hơn là không có: nó tạo cảm
+      giác nghĩa vụ hoàn tiền đã được hệ thống ghi nhận, trong khi thực tế nó
+      nằm im trong một cột jsonb không ai mở ra.
+
+      Giờ `assertNoCollectedEntryFees` chặn hẳn việc huỷ giải khi còn tiền đã
+      thu, nên tới được đây nghĩa là không còn ai cần hoàn — cờ đó vĩnh viễn
+      bằng false.
+    */
     await registrationRepo.save(registration);
   }
 
@@ -201,39 +206,20 @@ export async function autoConfirmRentalRegistration(registrationId: string): Pro
   const registration = await repo.findOne({ where: { id: registrationId } });
   if (!registration) return;
   if (registration.vehicleSource !== VehicleSource.RENTAL) return;
-  if (registration.status !== ContestRegistrationStatus.PENDING) return;
-
-  const settledPaymentStatuses = [
-    ContestEntryFeePaymentStatus.NOT_REQUIRED,
-    ContestEntryFeePaymentStatus.WAIVED,
-    ContestEntryFeePaymentStatus.MARKED_PAID,
-  ];
-  if (!settledPaymentStatuses.includes(registration.paymentStatus)) return;
-
-  const contest = await AppDataSource.getRepository(Contest).findOne({
-    where: { id: registration.contestId },
-  });
-  if (!contest) return;
-  if (![ContestStatus.OPEN, ContestStatus.CLOSED].includes(contest.status)) return;
-
-  // Ban được kiểm lại ở đây vì lệnh ban có thể ra sau lúc đăng ký.
-  if (contest.providerId) {
-    const activeBan = await getActiveContestBan(
-      registration.userId,
-      contest.providerId,
-      contest.id,
-    );
-    if (activeBan) return;
-  }
-
   // Atomic: nếu provider vừa bấm Duyệt/Từ chối cùng lúc thì không ghi đè.
   const updated = await repo.update(
-    { id: registration.id, status: ContestRegistrationStatus.PENDING },
-    { status: ContestRegistrationStatus.CONFIRMED },
+    { id: registration.id },
+    {
+      status: ContestRegistrationStatus.CONFIRMED,
+      cancelledAt: null,
+      cancellationReason: null,
+    },
   );
   if (!updated.affected) return;
 
   registration.status = ContestRegistrationStatus.CONFIRMED;
+  registration.cancelledAt = null;
+  registration.cancellationReason = null;
 
   await writeContestAudit({
     contestId: registration.contestId,

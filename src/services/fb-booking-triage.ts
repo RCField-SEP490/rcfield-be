@@ -133,35 +133,87 @@ const MODIFICATION_HINTS = [
 /**
  * Khách đang HỎI chứ không trả lời.
  *
- * Có cả "tư vấn", "gợi ý", "nên chọn" — đây là những câu khách hỏi giữa chừng
- * mà trước đây không khớp từ khoá nào, nên bị đem đi phân tích như một câu trả
- * lời, phân tích hụt, rồi bot hỏi lại đúng câu cũ.
+ * Danh sách này chỉ bắt các CỤM cố định. Từ để hỏi đơn lẻ nằm ở
+ * `INTERROGATIVE_PATTERNS` bên dưới — xem `looksLikeQuestion`.
  */
-const QUESTION_HINTS = [
-  '?',
-  'bao nhiêu',
-  'bao nhieu',
-  'mấy giờ',
-  'may gio',
-  'thế nào',
-  'the nao',
-  'có không',
-  'khác không',
-  'là gì',
-  'la gi',
-  'ở đâu',
-  'o dau',
-  'tư vấn',
-  'tu van',
-  'gợi ý',
-  'goi y',
-  'nên chọn',
-  'nen chon',
+const QUESTION_HINTS = ['?', 'tư vấn', 'tu van', 'gợi ý', 'goi y', 'nên chọn', 'nen chon'];
+
+/**
+ * Bỏ dấu để so khớp.
+ *
+ * Bắt buộc phải có, không phải để tiện. `\b` trong JavaScript tính theo bảng chữ
+ * ASCII, nên với chữ kết thúc bằng nguyên âm có dấu — "gì", "hả", "tuỳ" — thì
+ * `\b` ở cuối KHÔNG khớp: sau 'ì' là dấu cách, cả hai đều không phải ký tự từ
+ * nên không có ranh giới nào ở đó. `/\bgì\b/` là một biểu thức không bao giờ
+ * đúng, và nó hỏng lặng lẽ. Bỏ dấu trước rồi mới so khớp bằng ASCII.
+ */
+function deaccent(text: string): string {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+}
+
+/**
+ * Từ để hỏi. Viết ở dạng đã bỏ dấu — luôn so khớp qua `deaccent`.
+ *
+ * Trước đây chỉ có bảy cụm cố định ('?', 'bao nhiêu', 'thế nào'…), nên phần lớn
+ * câu hỏi thật của khách không khớp gì cả: "đường nào chơi dễ hơn", "xe cơ bản
+ * có gì khác", "mình nên đặt mấy giờ". Những câu đó bị đem đi phân tích như một
+ * câu TRẢ LỜI cho trường đang chờ — tệ nhất là ở bước hỏi tên, nơi cả câu bị ghi
+ * thẳng vào ô họ tên.
+ *
+ * Vài mẫu cố ý hẹp hơn mức tự nhiên:
+ *   • `may` phải đi kèm danh từ đếm được — "xe máy" không phải câu hỏi;
+ *   • không bắt `ha` ("hả") vì "Hà" là tên người rất phổ biến.
+ */
+const INTERROGATIVE_PATTERNS: RegExp[] = [
+  /\bnao\b/,
+  /\bsao\b/,
+  /\bgi\b/,
+  /\bdau\b/,
+  /\bmay\s+(gio|nguoi|tieng|cai|con|dong|xe)\b/,
+  /\bbao\s*(nhieu|lau)\b/,
+  /\bkhac\s*(nhau|gi)\b/,
+  /\bnen\b/,
+  /\bthe\s*nao\b/,
+  // Câu hỏi có–không của tiếng Việt kết thúc bằng chính từ phủ định:
+  // "được không", "còn chỗ ko", "đặt được chưa". Cho phép tiểu từ lịch sự đứng
+  // sau — "còn chỗ không ạ" vẫn là câu hỏi.
+  /\b(khong|ko|hong|chua)\s*(a|ah|ak|nhi|vay|the)?\s*[?.!]*$/,
+];
+
+/**
+ * Câu TRẢ LỜI có chứa từ để hỏi — "sân nào cũng được", "giờ nào cũng ok".
+ *
+ * Không có lối thoát này thì mọi câu "tuỳ bạn" đều bị đẩy sang hỏi–đáp và luồng
+ * đặt lịch đứng im ở đúng chỗ khách vừa trả lời xong.
+ */
+const ANSWER_ESCAPES = [
+  'cung duoc',
+  'cung ok',
+  'cung dc',
+  'sao cung',
+  'tuy ban',
+  'tuy quan',
+  'tuy shop',
 ];
 
 function contains(text: string, hints: string[]): boolean {
   const normalized = text.trim().toLowerCase();
   return hints.some((hint) => normalized.includes(hint));
+}
+
+/**
+ * Lượt này là câu hỏi chứ không phải câu trả lời.
+ *
+ * Cố ý NGHIÊNG VỀ PHÍA "là câu hỏi". Nhận nhầm một câu trả lời thành câu hỏi thì
+ * hỏi–đáp trả lời rồi `pendingBookingQuestion` hỏi lại ngay — mất một lượt.
+ * Nhận nhầm một câu hỏi thành câu trả lời thì dữ liệu rác đi thẳng vào đơn nháp
+ * và khách không hề biết. Hai kiểu sai này không cùng hạng.
+ */
+export function looksLikeQuestion(text: string): boolean {
+  const plain = deaccent(text.trim().toLowerCase());
+  if (ANSWER_ESCAPES.some((escape) => plain.includes(escape))) return false;
+  if (contains(text, QUESTION_HINTS)) return true;
+  return INTERROGATIVE_PATTERNS.some((pattern) => pattern.test(plain));
 }
 
 export function looksLikeBookingIntent(text: string): boolean {
@@ -207,10 +259,30 @@ function parsePlayerCount(text: string): number | null {
   return null;
 }
 
-/** Tên người: câu ngắn, không chữ số, không phải câu hỏi. */
+/**
+ * Từ thuộc chuyện đặt lịch — không ai tên như vậy.
+ *
+ * Ở bước hỏi tên, luật cũ nhận GẦN NHƯ MỌI câu ngắn không chữ số là họ tên. Khách
+ * hỏi "xe nào rẻ hơn" giữa chừng thì cả câu đó thành tên người trong đơn, và nó
+ * đi thẳng tới bản tóm tắt lẫn thư xác nhận mà không chỗ nào chặn lại.
+ */
+const NOT_NAME_WORDS = ['xe', 'san', 'gia', 'tien', 'gio', 'thue', 'dat', 'choi', 'cho', 'bao'];
+
+/**
+ * Tên người: câu ngắn, không chữ số, không phải câu hỏi, không dính từ nghiệp vụ.
+ *
+ * Không chắc thì trả `false` để mô hình đọc — nó thấy cả ngữ cảnh nên gỡ được
+ * "cho mình tên Nam" hay tên có chữ "Mai". Tốn thêm một lượt gọi, đổi lại không
+ * ghi rác vào ô họ tên.
+ */
 function looksLikeName(text: string): boolean {
   const t = text.trim();
-  return t.length > 0 && t.length <= 40 && !/\d/.test(t) && !contains(t, QUESTION_HINTS);
+  if (t.length === 0 || t.length > 40) return false;
+  if (/\d/.test(t)) return false;
+  if (looksLikeQuestion(t)) return false;
+  const words = deaccent(t.toLowerCase()).split(/\s+/);
+  if (words.length > 5) return false;
+  return !words.some((word) => NOT_NAME_WORDS.includes(word));
 }
 
 // ── Bảng quyết định ──────────────────────────────────────────────────────────
@@ -255,8 +327,9 @@ export function classifyTurn(draft: FbBookingDraft | null, text: string): TurnIn
   // 8. Sửa thông tin — TRƯỚC câu hỏi, vì câu sửa thường mang dấu hỏi.
   if (contains(text, MODIFICATION_HINTS)) return { kind: 'NEEDS_MODEL' };
 
-  // 9. Hỏi chuyện khác.
-  if (contains(text, QUESTION_HINTS)) return { kind: 'ASK_QUESTION' };
+  // 9. Hỏi chuyện khác — kể cả khi đang dở luồng đặt lịch. Đây là chỗ quyết định
+  //    khách có xen ngang được hay không.
+  if (looksLikeQuestion(text)) return { kind: 'ASK_QUESTION' };
 
   // 10. Câu trả lời cho trường đang chờ. Đọc được bằng luật thì không gọi mô
   //     hình; không chắc thì để mô hình đọc — ghi dữ liệu rác vào đơn nháp tệ

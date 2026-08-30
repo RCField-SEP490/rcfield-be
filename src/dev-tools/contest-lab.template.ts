@@ -280,10 +280,10 @@ export function renderContestLab(assetQuery = ''): string {
       </div>
       <div class="grid3">
         <div style="grid-column:span 2">
-          <label>Khuôn mẫu giải</label><select id="cTemplate"></select>
+          <label>Thể thức thi đấu — chọn ở ô này</label><select id="cTemplate"></select>
         </div>
         <div><label>&nbsp;</label>
-          <p class="hint" id="tplStatus" style="margin:0">Khuôn mẫu đã gắn sẵn loại giải và thể thức.</p>
+          <p class="hint" id="tplStatus" style="margin:0">Mở ô bên trái để đổi thể thức.</p>
         </div>
       </div>
       <div class="grid3">
@@ -1542,7 +1542,7 @@ function showTemplateDerived() {
   if (!tpl) { st.textContent = 'Chưa chọn khuôn mẫu.'; return; }
   const typeId = tpl.contestTypeId || tpl.contest_type_id;
   const formatId = tpl.contestFormatId || tpl.contest_format_id;
-  st.innerHTML = 'Loại giải <b>' + ((ctx.typeNames || {})[typeId] || '?') +
+  st.innerHTML = 'Đang chọn: loại giải <b>' + ((ctx.typeNames || {})[typeId] || '?') +
     '</b> · thể thức <b>' + ((ctx.formatNames || {})[formatId] || '?') + '</b>';
 }
 

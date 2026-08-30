@@ -1581,6 +1581,11 @@ export async function listCafeBookings(
       'u.full_name AS "customerName"',
       'u.phone AS "customerPhone"',
       's.status AS "sessionStatus"',
+      // Giờ kết thúc DỰ KIẾN của phiên, không phải giờ đặt: gia hạn đẩy nó ra
+      // xa hơn `slot_end`. Giao diện cần đúng mốc này để phân biệt "đang chơi"
+      // với "quá giờ chưa trả xe" — lấy `slot_end` thì mọi phiên đang gia hạn
+      // đều bị báo quá giờ oan.
+      's.planned_end_at AS "sessionPlannedEndAt"',
       "(SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS \"hasPendingRefund\"",
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
@@ -1677,6 +1682,7 @@ export interface CafeBookingListItem {
   customerName: string;
   customerPhone: string | null;
   sessionStatus?: string | null;
+  sessionPlannedEndAt?: string | null;
   hasPendingRefund?: boolean;
 }
 

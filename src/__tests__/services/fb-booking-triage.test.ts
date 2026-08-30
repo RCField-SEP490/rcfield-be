@@ -177,3 +177,79 @@ describe('fb-booking-triage: câu huỷ không được hiểu thành câu trả
     if (plan.kind === 'PROVIDE_INFO') expect(plan.fields.playMode).toBe('RENTAL');
   });
 });
+
+/**
+ * Khách xen ngang câu hỏi giữa lúc đang đặt lịch.
+ *
+ * Đây là yêu cầu sản phẩm, không phải trường hợp biên: đặt lịch qua chat gần như
+ * không bao giờ trôi một mạch. Khách hỏi một câu, nghe trả lời, rồi mới chọn.
+ *
+ * Luật cũ chỉ nhận ra bảy cụm cố định ('?', 'bao nhiêu', 'thế nào'…) nên phần lớn
+ * câu hỏi thật lọt lưới và bị đọc như câu TRẢ LỜI cho trường đang chờ. Ở bước hỏi
+ * tên thì nguyên câu hỏi bị ghi thẳng vào ô họ tên rồi đi tiếp tới thư xác nhận.
+ */
+describe('fb-booking-triage: hỏi xen ngang giữa luồng đặt lịch', () => {
+  const cafeId = '11111111-1111-1111-1111-111111111111';
+  const trackConfigId = '22222222-2222-2222-2222-222222222222';
+
+  /** Đã có khung giờ và hình thức chơi — đang chờ khách chọn SÂN. */
+  const awaitingTrack: FbBookingDraft = {
+    state: 'AWAITING_VEHICLES',
+    cafeId,
+    slotStart: '2026-08-22T12:00:00+07:00',
+    slotEnd: '2026-08-22T13:00:00+07:00',
+    playMode: 'BYOC',
+    playerCount: 1,
+  };
+
+  /** Đang chờ HỌ TÊN — bước dễ ghi rác nhất. */
+  const awaitingName: FbBookingDraft = {
+    ...awaitingTrack,
+    state: 'AWAITING_NAME',
+    trackConfigId,
+  };
+
+  it('câu hỏi không có dấu chấm hỏi vẫn là câu hỏi', () => {
+    // Đúng câu khách gõ trong ảnh chụp màn hình. Trước đây nó rơi xuống nhánh
+    // chọn sân, khớp hụt, rồi bot lặp lại y nguyên danh sách sân.
+    for (const text of [
+      'đường nào chơi dễ hơn',
+      'xe cơ bản có gì khác',
+      'mình nên đặt mấy giờ',
+      'sân này rộng bao nhiêu',
+      'còn chỗ không ạ',
+      'hai sân khác nhau chỗ nào',
+    ]) {
+      expect(classifyTurn(awaitingTrack, text).kind).toBe('ASK_QUESTION');
+    }
+  });
+
+  it('câu hỏi ở bước hỏi tên KHÔNG bị ghi thành họ tên', () => {
+    for (const text of ['xe nào rẻ hơn', 'thuê xe bao nhiêu tiền', 'quán mở tới mấy giờ']) {
+      const plan = classifyTurn(awaitingName, text);
+      expect(plan.kind).not.toBe('PROVIDE_INFO');
+    }
+  });
+
+  it('tên người thật vẫn nhận ra được, không cần mô hình', () => {
+    for (const name of ['Nguyễn Văn Nam', 'Trần Thị Mai', 'Hà']) {
+      const plan = classifyTurn(awaitingName, name);
+      expect(plan.kind).toBe('PROVIDE_INFO');
+      if (plan.kind === 'PROVIDE_INFO') expect(plan.fields.fullName).toBe(name);
+    }
+  });
+
+  it('câu trả lời có chứa từ để hỏi KHÔNG bị đẩy sang hỏi–đáp', () => {
+    // "sân nào cũng được" có chữ "nào" nhưng là câu TRẢ LỜI. Đẩy nhầm sang
+    // hỏi–đáp là luồng đặt lịch đứng im ngay chỗ khách vừa trả lời xong.
+    for (const text of ['sân nào cũng được', 'giờ nào cũng ok', 'tuỳ bạn']) {
+      expect(classifyTurn(awaitingTrack, text).kind).not.toBe('ASK_QUESTION');
+    }
+  });
+
+  it('"máy" không bị hiểu thành câu hỏi "mấy"', () => {
+    // Bỏ dấu xong "máy" và "mấy" trùng nhau, nên mẫu nhận dạng phải đòi có danh
+    // từ đếm được đi kèm — nếu không, mọi câu nhắc tới "xe máy" đều thành câu hỏi.
+    expect(classifyTurn(awaitingName, 'mình chạy xe máy tới').kind).not.toBe('ASK_QUESTION');
+  });
+});

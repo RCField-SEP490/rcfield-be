@@ -445,6 +445,48 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
   });
   return getContestDetail(contest.id, viewer);
 }
+/**
+ * Không cho huỷ giải khi tiền lệ phí đang nằm trong tay chủ sân.
+ *
+ * Nền tảng KHÔNG có luồng hoàn lệ phí giải. Trước đây huỷ giải vẫn chạy trót
+ * lọt: `cleanUpContestOnCancel` huỷ hết đăng ký rồi ghi một cờ `refund_needed`
+ * vào metadata — mà cờ đó không màn hình nào đọc, không báo cáo nào tổng hợp,
+ * không thông báo nào gửi đi. Mười lăm người đã trả một trăm nghìn mỗi người là
+ * một triệu rưỡi biến mất khỏi mọi giao diện, và không ai trong hệ thống biết
+ * còn nợ ai đồng nào.
+ *
+ * Vì vậy chặn tại đây, và chặn theo TIỀN chứ không theo trạng thái giải: giải
+ * mở đăng ký mà chưa ai trả thì huỷ vẫn vô hại. Chặn theo trạng thái sẽ nhốt
+ * cứng những giải phải huỷ vì lý do thật — mưa, mất điện, sân hỏng — vì bảng
+ * chuyển trạng thái không có đường nào khác ra khỏi `CLOSED`.
+ *
+ * Đường ra khi đã thu tiền: chủ sân hoàn tiền mặt cho từng người rồi bấm "miễn
+ * lệ phí" trên đăng ký đó để chốt sổ. Miễn hết thì huỷ được giải. Chậm, nhưng
+ * mỗi đồng đều có người ký tên vào.
+ */
+async function assertNoCollectedEntryFees(contestId: string): Promise<void> {
+  const rows = await AppDataSource.query<{ count: string; total: string | null }[]>(
+    `SELECT COUNT(*)::text AS count, SUM(entry_fee_amount)::text AS total
+       FROM contest_registrations
+      WHERE contest_id = $1
+        AND payment_status = 'MARKED_PAID'
+        AND status <> 'CANCELLED'`,
+    [contestId],
+  );
+  const paidCount = Number(rows[0]?.count ?? 0);
+  if (paidCount === 0) return;
+
+  const total = Number(rows[0]?.total ?? 0);
+  throw new AppError(
+    `Không huỷ được giải: ${paidCount} vận động viên đã nộp lệ phí` +
+      (total > 0 ? ` (tổng ${total.toLocaleString('vi-VN')}đ)` : '') +
+      `. Hệ thống không tự hoàn tiền — hãy hoàn tiền cho từng người rồi bấm "Miễn lệ phí" trên đăng ký của họ, sau đó mới huỷ giải được.`,
+    409,
+    'CONTEST_HAS_COLLECTED_FEES',
+    { paid_count: paidCount, paid_total: total },
+  );
+}
+
 export async function changeContestStatus(
   contestId: string,
   viewer: Viewer,
@@ -473,6 +515,7 @@ export async function changeContestStatus(
   }
 
   if (nextStatus === ContestStatus.CANCELLED) {
+    await assertNoCollectedEntryFees(contest.id);
     await cleanUpContestOnCancel(contest.id, viewer.userId);
   }
 

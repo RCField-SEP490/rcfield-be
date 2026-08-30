@@ -1,5 +1,5 @@
 import { AppDataSource } from '../../config/database';
-import { checkChannelQuota } from '../../services/subscription.service';
+import { checkChannelQuota, countConnectedChannels } from '../../services/subscription.service';
 import { ChannelStatus, ChannelType, SubscriptionStatus, UserRole } from '../../types';
 import { createTestCafe, createTestUser } from '../helpers';
 
@@ -88,5 +88,61 @@ describe('checkChannelQuota', () => {
 
     // Hai dòng trên đều không còn hiệu lực, chỗ trống của gói STARTER vẫn còn.
     await expect(checkChannelQuota(provider.id)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Con số HIỆN trên thanh hạn mức và con số dùng để CHẶN phải là một.
+ *
+ * Trước đây chỉ `checkChannelQuota` đếm, mà nó ném lỗi chứ không trả số — giao
+ * diện không có nguồn nào nên thanh "Kênh kết nối" đứng im ở 0 trong khi chốt
+ * chặn vẫn chặn đúng. Chủ sân thấy còn trống, bấm nối thêm, bị từ chối vì đã
+ * đủ. Mâu thuẫn ngay trên một màn hình.
+ *
+ * Test này khoá lại: hai đường phải đọc cùng một câu truy vấn.
+ */
+describe('countConnectedChannels — số hiện ra khớp số dùng để chặn', () => {
+  it('đếm đúng kênh đang kết nối, cộng qua nhiều chi nhánh', async () => {
+    const { provider } = await seedProviderOnPlan('GROWTH');
+    // Mỗi chi nhánh chỉ nối được MỘT kênh cùng loại
+    // (`uq_cafe_channels_cafe_type`), nên muốn có hai kênh thì phải hai chi
+    // nhánh — và đó cũng là lý do hạn mức kênh của gói luôn đi kèm hạn mức
+    // chi nhánh.
+    const first = await createTestCafe({ provider_id: provider.id });
+    const second = await createTestCafe({ provider_id: provider.id });
+    await connectChannel(first.id);
+    await connectChannel(second.id);
+
+    await expect(countConnectedChannels(provider.id)).resolves.toBe(2);
+  });
+
+  it('bỏ qua kênh đã ngắt và kênh đã xoá mềm, giống hệt chốt chặn', async () => {
+    const { provider } = await seedProviderOnPlan('STARTER');
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    await connectChannel(cafe.id, { status: ChannelStatus.DISCONNECTED });
+    await connectChannel(cafe.id, { softDeleted: true });
+
+    await expect(countConnectedChannels(provider.id)).resolves.toBe(0);
+    // Cùng dữ liệu: chốt chặn cũng phải thấy còn chỗ.
+    await expect(checkChannelQuota(provider.id)).resolves.toBeUndefined();
+  });
+
+  it('vừa đủ hạn mức: số đếm bằng giới hạn VÀ chốt chặn từ chối', async () => {
+    const { provider } = await seedProviderOnPlan('STARTER');
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    await connectChannel(cafe.id);
+
+    // STARTER cho 1 kênh. Thanh phải hiện 1/1 chứ không phải 0/1.
+    await expect(countConnectedChannels(provider.id)).resolves.toBe(1);
+    await expect(checkChannelQuota(provider.id)).rejects.toMatchObject({
+      code: 'PLAN_LIMIT_EXCEEDED',
+    });
+  });
+
+  it('chủ sân chưa nối kênh nào thì là 0', async () => {
+    const { provider } = await seedProviderOnPlan('GROWTH');
+    await createTestCafe({ provider_id: provider.id });
+
+    await expect(countConnectedChannels(provider.id)).resolves.toBe(0);
   });
 });
