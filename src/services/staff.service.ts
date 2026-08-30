@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
-import { IsNull, SelectQueryBuilder } from 'typeorm';
+import { In, IsNull, SelectQueryBuilder } from 'typeorm';
 import { AppDataSource } from '../config/database';
 import { logger } from '../config/logger';
 import {
@@ -29,6 +29,7 @@ import {
   PaymentComponentStatus,
   PaymentTransactionType,
   PaymentTransactionStatus,
+  PaymentTransactionSubjectType,
   BookingParticipantType,
   CafeOperatingHours,
 } from '../types';
@@ -58,6 +59,11 @@ import { MenuItemVariant } from '../models/menu-item-variant.entity';
 import { emailService } from './email.service';
 import { authService } from './auth.service';
 import { transition } from './booking.service';
+import {
+  allocatePaymentRefCode,
+  buildBankTransferCheckout,
+  type BankTransferCheckout,
+} from './bank-transfer-checkout.service';
 import { env } from '../config/env';
 import { wsService } from './websocket.service';
 import { createBookingReviewRequestNotification, createNotification } from './notification.service';
@@ -189,6 +195,7 @@ export interface TodayBookingItem {
   plannedVehicles: string[];
   sessions: any[];
   hasPendingRefund?: boolean;
+  createdAt?: string;
 }
 
 const INVITE_TOKEN_TTL_HOURS = 48;
@@ -588,6 +595,7 @@ export async function getBookingsByDate(
        b.slot_end,
        b.slot_count,
        b.discount_amount,
+       b.created_at,
        b.notes,
        c.name AS cafe_name,
        c.address AS cafe_address,
@@ -722,6 +730,7 @@ export async function getBookingsByDate(
       plannedVehicles,
       sessions: sessionsList,
       hasPendingRefund: row.hasPendingRefund,
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
     });
   }
 
@@ -1332,12 +1341,20 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
     return existing;
   }
 
-  if (booking.slotStart.getTime() + 30 * 60 * 1000 < Date.now()) {
+  const isWalkIn = booking.source === BookingSource.STAFF_MANUAL;
+  const isSlotActive = booking.slotEnd.getTime() > Date.now();
+  const isRecentlyCreated = booking.createdAt.getTime() + 30 * 60 * 1000 > Date.now();
+
+  if (!isWalkIn && booking.slotStart.getTime() + 30 * 60 * 1000 < Date.now()) {
     throw new AppError(
       'Đơn đã quá thời hạn check-in 30 phút kể từ giờ bắt đầu',
       400,
       'CHECK_IN_WINDOW_EXPIRED',
     );
+  }
+
+  if (isWalkIn && !isSlotActive && !isRecentlyCreated) {
+    throw new AppError('Khung giờ của đơn vãng lai đã kết thúc', 400, 'CHECK_IN_WINDOW_EXPIRED');
   }
 
   if (existing) {
@@ -1353,6 +1370,27 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
   session.plannedEndAt = booking.slotEnd;
   session.actualTotalAmount = 0;
   await AppDataSource.getRepository(Session).save(session);
+
+  // Mark initial prepaid components as DISBURSED if they are still PENDING
+  const compRepo = AppDataSource.getRepository(PaymentComponent);
+  const pendingPrepaidComps = await compRepo.find({
+    where: {
+      bookingId,
+      status: PaymentComponentStatus.PENDING,
+      type: In([
+        PaymentComponentType.SLOT_FEE,
+        PaymentComponentType.RENTAL_FEE,
+        PaymentComponentType.FB_PREORDER,
+        PaymentComponentType.CONTEST_ENTRY_FEE,
+      ]),
+    },
+  });
+  if (pendingPrepaidComps.length > 0) {
+    for (const comp of pendingPrepaidComps) {
+      comp.status = PaymentComponentStatus.DISBURSED;
+      await compRepo.save(comp);
+    }
+  }
 
   const bookingParticipants = await AppDataSource.getRepository(BookingParticipant).find({
     where: { bookingId },
@@ -1555,6 +1593,107 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       }
     }
 
+    let mappedChecklist = checklist.map((c) => ({
+      itemKey: c.itemKey,
+      itemLabel: c.itemLabel,
+      status: c.status,
+      note: c.note,
+      id: c.itemKey,
+      label: c.itemLabel,
+      checked: c.status === InspectionItemStatus.OK,
+      notes: c.note ?? '',
+    }));
+
+    if (mappedChecklist.length === 0) {
+      const damageTypes = new Set(damageLineItemsMapped.map((d) => d.partType));
+      mappedChecklist = [
+        {
+          itemKey: 'ck-chassis',
+          itemLabel: 'Khung gầm xe (nứt, gãy, cong vênh, biến dạng)',
+          status: damageTypes.has(DamagePartType.CHASSIS)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.CHASSIS) ? 'Phát hiện hư hại' : null,
+          id: 'ck-chassis',
+          label: 'Khung gầm xe (nứt, gãy, cong vênh, biến dạng)',
+          checked: !damageTypes.has(DamagePartType.CHASSIS),
+          notes: damageTypes.has(DamagePartType.CHASSIS) ? 'Phát hiện hư hại' : '',
+        },
+        {
+          itemKey: 'ck-shell',
+          itemLabel: 'Vỏ nhựa xe / Shell (móp méo, rách vỡ, xước sâu)',
+          status: damageTypes.has(DamagePartType.SHELL)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.SHELL) ? 'Phát hiện hư hại' : null,
+          id: 'ck-shell',
+          label: 'Vỏ nhựa xe / Shell (móp méo, rách vỡ, xước sâu)',
+          checked: !damageTypes.has(DamagePartType.SHELL),
+          notes: damageTypes.has(DamagePartType.SHELL) ? 'Phát hiện hư hại' : '',
+        },
+        {
+          itemKey: 'ck-spoiler',
+          itemLabel: 'Cánh gió (gãy, biến dạng, rơi rụng)',
+          status: damageTypes.has(DamagePartType.SPOILER)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.SPOILER) ? 'Phát hiện hư hại' : null,
+          id: 'ck-spoiler',
+          label: 'Cánh gió (gãy, biến dạng, rơi rụng)',
+          checked: !damageTypes.has(DamagePartType.SPOILER),
+          notes: damageTypes.has(DamagePartType.SPOILER) ? 'Phát hiện hư hại' : '',
+        },
+        {
+          itemKey: 'ck-tire',
+          itemLabel: 'Bánh xe & Lốp (văng ốc hex, mòn rách, kẹt trục)',
+          status: damageTypes.has(DamagePartType.TIRE_WHEEL)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.TIRE_WHEEL) ? 'Phát hiện hư hại' : null,
+          id: 'ck-tire',
+          label: 'Bánh xe & Lốp (văng ốc hex, mòn rách, kẹt trục)',
+          checked: !damageTypes.has(DamagePartType.TIRE_WHEEL),
+          notes: damageTypes.has(DamagePartType.TIRE_WHEEL) ? 'Phát hiện hư hại' : '',
+        },
+        {
+          itemKey: 'ck-motor',
+          itemLabel: 'Motor / Động cơ (kẹt quay, quá nhiệt, mùi khét)',
+          status: damageTypes.has(DamagePartType.MOTOR)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.MOTOR) ? 'Phát hiện hư hại' : null,
+          id: 'ck-motor',
+          label: 'Motor / Động cơ (kẹt quay, quá nhiệt, mùi khét)',
+          checked: !damageTypes.has(DamagePartType.MOTOR),
+          notes: damageTypes.has(DamagePartType.MOTOR) ? 'Phát hiện hư hại' : '',
+        },
+        {
+          itemKey: 'ck-servo',
+          itemLabel: 'Hệ thống lái / Servo (kẹt góc, trượt bánh răng)',
+          status: damageTypes.has(DamagePartType.SERVO)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.SERVO) ? 'Phát hiện hư hại' : null,
+          id: 'ck-servo',
+          label: 'Hệ thống lái / Servo (kẹt góc, trượt bánh răng)',
+          checked: !damageTypes.has(DamagePartType.SERVO),
+          notes: damageTypes.has(DamagePartType.SERVO) ? 'Phát hiện hư hại' : '',
+        },
+        {
+          itemKey: 'ck-remote',
+          itemLabel: 'Remote điều khiển (đủ tay cầm, cần lái nguyên vẹn)',
+          status: damageTypes.has(DamagePartType.REMOTE)
+            ? InspectionItemStatus.BROKEN
+            : InspectionItemStatus.OK,
+          note: damageTypes.has(DamagePartType.REMOTE) ? 'Phát hiện hư hại' : null,
+          id: 'ck-remote',
+          label: 'Remote điều khiển (đủ tay cầm, cần lái nguyên vẹn)',
+          checked: !damageTypes.has(DamagePartType.REMOTE),
+          notes: damageTypes.has(DamagePartType.REMOTE) ? 'Phát hiện hư hại' : '',
+        },
+      ];
+    }
+
     const mappedInsp = {
       inspectionId: insp.id,
       type: insp.type,
@@ -1564,16 +1703,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
         direction: p.angle,
         notes: p.metadata?.notes ?? '',
       })),
-      checklist: checklist.map((c) => ({
-        itemKey: c.itemKey,
-        itemLabel: c.itemLabel,
-        status: c.status,
-        note: c.note,
-        id: c.itemKey,
-        label: c.itemLabel,
-        checked: c.status === InspectionItemStatus.OK,
-        notes: c.note ?? '',
-      })),
+      checklist: mappedChecklist,
       staffNotes: insp.damageDescription || '',
       customerConfirmed: insp.customerConfirmed,
       customerConfirmedAt: insp.customerConfirmedAt?.toISOString(),
@@ -2007,6 +2137,40 @@ export async function submitInspection(
         await lineItemRepo.save(li);
       }
     }
+
+    if (booking) {
+      const compRepo = AppDataSource.getRepository(PaymentComponent);
+      const totalDamageCharge = Array.isArray(damageLineItems)
+        ? damageLineItems.reduce(
+            (sum, item) => sum + (Number(item.partsPrice) || 0) + (Number(item.laborPrice) || 0),
+            0,
+          )
+        : 0;
+
+      const damageComp = await compRepo.findOne({
+        where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
+      });
+
+      if (damageFlagged && totalDamageCharge > 0) {
+        if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
+          damageComp.amount = totalDamageCharge;
+          await compRepo.save(damageComp);
+        } else if (!damageComp) {
+          await compRepo.save(
+            compRepo.create({
+              bookingId: booking.id,
+              type: PaymentComponentType.DAMAGE_CHARGE,
+              amount: totalDamageCharge,
+              status: PaymentComponentStatus.PENDING,
+            }),
+          );
+        }
+      } else if (!damageFlagged || totalDamageCharge === 0) {
+        if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
+          await compRepo.remove(damageComp);
+        }
+      }
+    }
   }
 
   // Notify customer via WebSocket and save in DB
@@ -2036,15 +2200,12 @@ export async function submitInspection(
           inspection.type === InspectionType.CHECK_IN ? 'Biên bản bàn giao xe' : 'Biên bản trả xe',
           inspection.type === InspectionType.CHECK_IN
             ? 'Nhân viên trực ca đã hoàn tất bàn giao xe. Phiên chơi đã bắt đầu; bạn có thể xem lại ảnh biên bản trong chi tiết đơn đặt.'
-            : 'Nhân viên trực ca vừa gửi biên bản trả xe. Vui lòng bấm vào để kiểm tra và xác nhận.',
+            : 'Nhân viên trực ca vừa lập biên bản trả xe. Chi tiết đã được cập nhật trong đơn đặt lịch.',
           {
             sessionId,
             inspectionId: inspection.id,
             inspectionType: inspection.type,
-            route:
-              inspection.type === InspectionType.CHECK_IN
-                ? `/customer/bookings/${booking.id}?section=handover`
-                : `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+            route: `/customer/bookings/${booking.id}?section=handover`,
             damageFlagged: !!damageFlagged,
           },
         );
@@ -2054,10 +2215,7 @@ export async function submitInspection(
           bookingId: booking.id,
           inspectionId: inspection.id,
           type: inspection.type,
-          route:
-            inspection.type === InspectionType.CHECK_IN
-              ? `/customer/bookings/${booking.id}?section=handover`
-              : `/customer/inspections/${sessionId}?inspectionId=${inspection.id}`,
+          route: `/customer/bookings/${booking.id}?section=handover`,
           damageFlagged: !!damageFlagged,
         });
       }
@@ -2348,15 +2506,21 @@ async function syncOnsiteFnbFeeComponent(bookingId: string): Promise<void> {
     where: { bookingId },
     order: { createdAt: 'ASC' },
   });
-  // FB_PREORDER was historically also used for counter orders. Consolidating
-  // pending legacy rows here prevents a duplicated amount at checkout.
   const pendingComponents = existingComponents.filter(
     (component) =>
       component.status === PaymentComponentStatus.PENDING &&
-      [PaymentComponentType.FNB_ON_SITE, PaymentComponentType.FB_PREORDER].includes(component.type),
+      component.type === PaymentComponentType.FNB_ON_SITE,
   );
 
-  if (totalAmount <= 0) {
+  const paidOnsiteFnb = existingComponents
+    .filter(
+      (c) =>
+        c.type === PaymentComponentType.FNB_ON_SITE && c.status !== PaymentComponentStatus.PENDING,
+    )
+    .reduce((sum, c) => sum + Number(c.amount), 0);
+  const remainingPendingAmount = Math.max(0, totalAmount - paidOnsiteFnb);
+
+  if (remainingPendingAmount <= 0) {
     if (pendingComponents.length > 0) {
       await componentRepo.remove(pendingComponents);
     }
@@ -2368,7 +2532,7 @@ async function syncOnsiteFnbFeeComponent(bookingId: string): Promise<void> {
     pendingComponents[0];
   if (primaryComponent) {
     primaryComponent.type = PaymentComponentType.FNB_ON_SITE;
-    primaryComponent.amount = totalAmount;
+    primaryComponent.amount = remainingPendingAmount;
     await componentRepo.save(primaryComponent);
     const duplicateComponents = pendingComponents.filter(
       (component) => component.id !== primaryComponent.id,
@@ -2383,7 +2547,7 @@ async function syncOnsiteFnbFeeComponent(bookingId: string): Promise<void> {
     componentRepo.create({
       bookingId,
       type: PaymentComponentType.FNB_ON_SITE,
-      amount: totalAmount,
+      amount: remainingPendingAmount,
       status: PaymentComponentStatus.PENDING,
     }),
   );
@@ -3786,7 +3950,22 @@ export async function updateDamageLineItems(
     partsPrice: number;
     laborPrice?: number;
   }[],
-): Promise<{ inspectionId: string; damageLineItems: any[]; totalDamageCharge: number }> {
+  checklist?: { itemKey?: string; itemLabel: string; status: string; note?: string | null }[],
+  staffNotes?: string,
+): Promise<{
+  inspectionId: string;
+  damageLineItems: Array<{
+    id: string;
+    partType: DamagePartType;
+    customPartName: string | null;
+    partsPrice: number;
+    laborPrice: number;
+    lineTotal: number;
+  }>;
+  totalDamageCharge: number;
+  checklist?: InspectionChecklist[];
+  staffNotes?: string;
+}> {
   const inspRepo = AppDataSource.getRepository(Inspection);
   const inspection = await inspRepo.findOne({ where: { id: inspectionId, sessionId } });
   if (!inspection)
@@ -3816,7 +3995,85 @@ export async function updateDamageLineItems(
   );
 
   inspection.damageNoted = saved.length > 0;
+  if (typeof staffNotes === 'string') {
+    inspection.damageDescription = staffNotes || null;
+  }
   await inspRepo.save(inspection);
+
+  const clRepo = AppDataSource.getRepository(InspectionChecklist);
+
+  let targetChecklist = checklist;
+  if (!targetChecklist || targetChecklist.length === 0) {
+    const damageTypes = new Set(saved.map((d) => d.partType));
+    targetChecklist = [
+      {
+        itemKey: 'ck-chassis',
+        itemLabel: 'Khung gầm xe (nứt, gãy, cong vênh, biến dạng)',
+        status: damageTypes.has(DamagePartType.CHASSIS) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.CHASSIS) ? 'Phát hiện hư hại' : '',
+      },
+      {
+        itemKey: 'ck-shell',
+        itemLabel: 'Vỏ nhựa xe / Shell (móp méo, rách vỡ, xước sâu)',
+        status: damageTypes.has(DamagePartType.SHELL) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.SHELL) ? 'Phát hiện hư hại' : '',
+      },
+      {
+        itemKey: 'ck-spoiler',
+        itemLabel: 'Cánh gió (gãy, biến dạng, rơi rụng)',
+        status: damageTypes.has(DamagePartType.SPOILER) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.SPOILER) ? 'Phát hiện hư hại' : '',
+      },
+      {
+        itemKey: 'ck-tire',
+        itemLabel: 'Bánh xe & Lốp (văng ốc hex, mòn rách, kẹt trục)',
+        status: damageTypes.has(DamagePartType.TIRE_WHEEL) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.TIRE_WHEEL) ? 'Phát hiện hư hại' : '',
+      },
+      {
+        itemKey: 'ck-motor',
+        itemLabel: 'Motor / Động cơ (kẹt quay, quá nhiệt, mùi khét)',
+        status: damageTypes.has(DamagePartType.MOTOR) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.MOTOR) ? 'Phát hiện hư hại' : '',
+      },
+      {
+        itemKey: 'ck-servo',
+        itemLabel: 'Hệ thống lái / Servo (kẹt góc, trượt bánh răng)',
+        status: damageTypes.has(DamagePartType.SERVO) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.SERVO) ? 'Phát hiện hư hại' : '',
+      },
+      {
+        itemKey: 'ck-remote',
+        itemLabel: 'Remote điều khiển (đủ tay cầm, cần lái nguyên vẹn)',
+        status: damageTypes.has(DamagePartType.REMOTE) ? 'BROKEN' : 'OK',
+        note: damageTypes.has(DamagePartType.REMOTE) ? 'Phát hiện hư hại' : '',
+      },
+    ];
+  }
+
+  await clRepo.delete({ inspectionId });
+  const updatedChecklist: InspectionChecklist[] = [];
+  for (const item of targetChecklist) {
+    const c = new InspectionChecklist();
+    c.inspectionId = inspectionId;
+    c.itemKey = item.itemKey || item.itemLabel;
+    c.itemLabel = item.itemLabel;
+    let itemStatus: InspectionItemStatus = InspectionItemStatus.OK;
+    if (item.status === 'BROKEN' || item.status === 'DAMAGED' || item.status === 'NOT_OK') {
+      itemStatus = InspectionItemStatus.BROKEN;
+    } else if (item.status === 'SCRATCHED') {
+      itemStatus = InspectionItemStatus.SCRATCHED;
+    } else if (item.status === 'MISSING') {
+      itemStatus = InspectionItemStatus.MISSING;
+    } else if (item.status === 'DIRTY') {
+      itemStatus = InspectionItemStatus.DIRTY;
+    } else if (item.status === 'NEEDS_REVIEW') {
+      itemStatus = InspectionItemStatus.NEEDS_REVIEW;
+    }
+    c.status = itemStatus;
+    c.note = item.note ?? (item as any).notes ?? null;
+    updatedChecklist.push(await clRepo.save(c));
+  }
 
   // Sync the DAMAGE_CHARGE PENDING component amount to match updated line items
   const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
@@ -3825,18 +4082,24 @@ export async function updateDamageLineItems(
     const damageComp = await compRepo.findOne({
       where: { bookingId: session.bookingId, type: PaymentComponentType.DAMAGE_CHARGE },
     });
-    if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
-      damageComp.amount = totalDamageCharge;
-      await compRepo.save(damageComp);
-    } else if (!damageComp && totalDamageCharge > 0) {
-      await compRepo.save(
-        compRepo.create({
-          bookingId: session.bookingId,
-          type: PaymentComponentType.DAMAGE_CHARGE,
-          amount: totalDamageCharge,
-          status: PaymentComponentStatus.PENDING,
-        }),
-      );
+    if (totalDamageCharge > 0) {
+      if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
+        damageComp.amount = totalDamageCharge;
+        await compRepo.save(damageComp);
+      } else if (!damageComp) {
+        await compRepo.save(
+          compRepo.create({
+            bookingId: session.bookingId,
+            type: PaymentComponentType.DAMAGE_CHARGE,
+            amount: totalDamageCharge,
+            status: PaymentComponentStatus.PENDING,
+          }),
+        );
+      }
+    } else {
+      if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
+        await compRepo.remove(damageComp);
+      }
     }
 
     broadcastSessionUpdated({
@@ -3859,6 +4122,8 @@ export async function updateDamageLineItems(
       lineTotal: Number(li.partsPrice) + Number(li.laborPrice),
     })),
     totalDamageCharge,
+    checklist: updatedChecklist,
+    staffNotes: inspection.damageDescription || '',
   };
 }
 
@@ -3977,21 +4242,34 @@ export async function settleSessionCheckoutBilling(
   }
 
   if (totalOnsiteFnb > 0) {
-    const existingOnsiteFnbComp = existingComponents.find(
-      (c) =>
-        [PaymentComponentType.FNB_ON_SITE, PaymentComponentType.FB_PREORDER].includes(c.type) &&
-        c.status === PaymentComponentStatus.PENDING,
+    const onsiteFnbComponents = existingComponents.filter(
+      (c) => c.type === PaymentComponentType.FNB_ON_SITE,
     );
-    if (existingOnsiteFnbComp) {
-      existingOnsiteFnbComp.amount = totalOnsiteFnb;
-      await compRepo.save(existingOnsiteFnbComp);
+    const paidOnsiteFnb = onsiteFnbComponents
+      .filter((c) => c.status !== PaymentComponentStatus.PENDING)
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+    const remainingPendingFnb = Math.max(0, totalOnsiteFnb - paidOnsiteFnb);
+
+    const pendingOnsiteFnbComp = onsiteFnbComponents.find(
+      (c) => c.status === PaymentComponentStatus.PENDING,
+    );
+
+    if (remainingPendingFnb <= 0) {
+      if (pendingOnsiteFnbComp) {
+        await compRepo.remove(pendingOnsiteFnbComp);
+      }
     } else {
-      newComponents.push({
-        bookingId: booking.id,
-        type: PaymentComponentType.FNB_ON_SITE,
-        amount: totalOnsiteFnb,
-        status: PaymentComponentStatus.PENDING,
-      });
+      if (pendingOnsiteFnbComp) {
+        pendingOnsiteFnbComp.amount = remainingPendingFnb;
+        await compRepo.save(pendingOnsiteFnbComp);
+      } else {
+        newComponents.push({
+          bookingId: booking.id,
+          type: PaymentComponentType.FNB_ON_SITE,
+          amount: remainingPendingFnb,
+          status: PaymentComponentStatus.PENDING,
+        });
+      }
     }
   }
 
@@ -4056,6 +4334,18 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     where: { bookingId },
     order: { createdAt: 'DESC' },
   });
+
+  // Ràng buộc thứ tự: Chặn Staff thu tiền khi ca chơi chưa hoàn tất kiểm tra trả xe
+  if (
+    sessionForNotification &&
+    [SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(sessionForNotification.status)
+  ) {
+    throw new AppError(
+      'Khách hàng đang trong ca chơi. Vui lòng thực hiện BƯỚC 1: KIỂM TRA TRẢ XE trước khi quyết toán thu tiền.',
+      400,
+      'SESSION_NOT_CHECKED_OUT',
+    );
+  }
 
   let checkoutWasCompletedDuringSettlement = false;
   let completedSessionIdDuringSettlement: string | undefined;
@@ -4280,6 +4570,219 @@ export async function createWalkInBooking(
   body: any,
 ): Promise<any> {
   return createWalkInBookingService(staffId, cafeId, body);
+}
+
+export async function initiateWalkInSettleBankTransfer(
+  staffId: string,
+  cafeId: string,
+  bookingId: string,
+): Promise<{
+  success: boolean;
+  bookingId: string;
+  amount: number;
+  bankTransfer: BankTransferCheckout;
+}> {
+  const bookingRepo = AppDataSource.getRepository(Booking);
+  const booking = await bookingRepo.findOne({ where: { id: bookingId, cafeId } });
+  if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  const sessionForNotification = await AppDataSource.getRepository(Session).findOne({
+    where: { bookingId },
+    order: { createdAt: 'DESC' },
+  });
+
+  if (
+    sessionForNotification &&
+    [SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(sessionForNotification.status)
+  ) {
+    throw new AppError(
+      'Khách hàng đang trong ca chơi. Vui lòng thực hiện BƯỚC 1: KIỂM TRA TRẢ XE trước khi quyết toán thu tiền.',
+      400,
+      'SESSION_NOT_CHECKED_OUT',
+    );
+  }
+
+  const compRepo = AppDataSource.getRepository(PaymentComponent);
+  const allPendingComponents = await compRepo.find({
+    where: { bookingId, status: PaymentComponentStatus.PENDING },
+  });
+
+  const pendingComponents = allPendingComponents.filter((c) =>
+    [
+      PaymentComponentType.FNB_ON_SITE,
+      PaymentComponentType.EXTENSION_FEE,
+      PaymentComponentType.DAMAGE_CHARGE,
+    ].includes(c.type),
+  );
+
+  const totalCharged = pendingComponents.reduce((sum, c) => sum + Number(c.amount), 0);
+  if (totalCharged <= 0) {
+    throw new AppError(
+      'Không có khoản thanh toán phát sinh nào cần xử lý',
+      400,
+      'NO_PENDING_ADDITIONAL_FEES',
+    );
+  }
+
+  const paymentRefCode = await allocatePaymentRefCode();
+  const qrExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+  const bankTransfer = await buildBankTransferCheckout({
+    cafeId: booking.cafeId,
+    amount: totalCharged,
+    refCode: paymentRefCode,
+    expiresAt: qrExpiresAt,
+  });
+
+  const txRepo = AppDataSource.getRepository(PaymentTransaction);
+  const txnRef = `ctr_${bookingId.replace(/-/g, '').substring(0, 18)}_${Date.now().toString().slice(-4)}`;
+
+  const tx = txRepo.create({
+    bookingId,
+    customerPackageId: null,
+    contestRegistrationId: null,
+    subjectType: PaymentTransactionSubjectType.BOOKING,
+    type: PaymentTransactionType.PAYMENT,
+    gateway: 'VIETQR',
+    txnRef,
+    paymentRefCode,
+    amount: totalCharged,
+    status: PaymentTransactionStatus.PENDING,
+    rawRequest: {
+      bookingId,
+      totalCharged,
+      additionalPayment: true,
+      initiatedByStaffId: staffId,
+      qrExpiresAt: qrExpiresAt.toISOString(),
+      bankTransfer,
+    },
+  });
+  await txRepo.save(tx);
+
+  return {
+    success: true,
+    bookingId,
+    amount: totalCharged,
+    bankTransfer,
+  };
+}
+
+export async function confirmWalkInBankTransfer(
+  staffId: string,
+  cafeId: string,
+  bookingId: string,
+): Promise<{ success: boolean; bookingId: string; status: string }> {
+  const bookingRepo = AppDataSource.getRepository(Booking);
+  const booking = await bookingRepo.findOne({
+    where: { id: bookingId, cafeId },
+  });
+  if (!booking) {
+    throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  }
+
+  const compRepo = AppDataSource.getRepository(PaymentComponent);
+  const allPendingComponents = await compRepo.find({
+    where: { bookingId: booking.id, status: PaymentComponentStatus.PENDING },
+  });
+  const pendingComponents = allPendingComponents.filter((c) =>
+    [
+      PaymentComponentType.FNB_ON_SITE,
+      PaymentComponentType.EXTENSION_FEE,
+      PaymentComponentType.DAMAGE_CHARGE,
+    ].includes(c.type),
+  );
+
+  const sessionForNotification = await AppDataSource.getRepository(Session).findOne({
+    where: { bookingId },
+    order: { createdAt: 'DESC' },
+  });
+
+  if (
+    sessionForNotification &&
+    [SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(sessionForNotification.status)
+  ) {
+    throw new AppError(
+      'Khách hàng đang trong ca chơi. Vui lòng thực hiện BƯỚC 1: KIỂM TRA TRẢ XE trước khi quyết toán thu tiền.',
+      400,
+      'SESSION_NOT_CHECKED_OUT',
+    );
+  }
+
+  let checkoutWasCompleted = false;
+  let completedSessionId: string | undefined;
+
+  await AppDataSource.transaction(async (em) => {
+    if (booking.status === BookingStatus.PENDING) {
+      booking.status = BookingStatus.CONFIRMED;
+      await em.save(booking);
+    }
+
+    const txRepo = em.getRepository(PaymentTransaction);
+    const tx = await txRepo.findOne({
+      where: {
+        bookingId: booking.id,
+        type: PaymentTransactionType.PAYMENT,
+        status: PaymentTransactionStatus.PENDING,
+      },
+      order: { createdAt: 'DESC' },
+    });
+    if (tx) {
+      tx.status = PaymentTransactionStatus.SUCCESS;
+      tx.rawResponse = {
+        ...((tx.rawResponse as Record<string, unknown>) || {}),
+        manualConfirmedByStaffId: staffId,
+        manualConfirmedAt: new Date().toISOString(),
+      };
+      await txRepo.save(tx);
+    }
+
+    for (const comp of pendingComponents) {
+      comp.status = PaymentComponentStatus.DISBURSED;
+      await em.save(comp);
+    }
+
+    if (sessionForNotification && sessionForNotification.status === SessionStatus.CHECKING_OUT) {
+      const inspection = await em.getRepository(Inspection).findOne({
+        where: { sessionId: sessionForNotification.id, type: InspectionType.CHECK_OUT },
+      });
+      if (inspection) {
+        const completion = await completeCheckingOutSession(
+          sessionForNotification,
+          inspection,
+          staffId,
+        );
+        checkoutWasCompleted = !completion.alreadyCompleted;
+        if (!completion.alreadyCompleted) {
+          completedSessionId = sessionForNotification.id;
+        }
+      }
+    }
+  });
+
+  if (checkoutWasCompleted) {
+    await reconcileBookingAfterCheckout(booking);
+    if (completedSessionId) {
+      void pushCheckoutCompletedEvents(booking, completedSessionId, staffId);
+    }
+  }
+
+  try {
+    wsService.pushToCafe(cafeId, 'BOOKING_PAYMENT_UPDATED', {
+      bookingId: booking.id,
+      status: booking.status,
+      paymentStatus: 'PAID',
+    });
+    if (booking.customerId) {
+      wsService.pushToUser(booking.customerId, 'CUSTOMER_PAYMENT_CONFIRMED', {
+        bookingId: booking.id,
+        status: booking.status,
+      });
+    }
+  } catch (err) {
+    logger.warn('StaffService', `Failed to emit payment WS event: ${err}`);
+  }
+
+  return { success: true, bookingId: booking.id, status: booking.status };
 }
 
 const PART_TYPE_VIETNAMESE: Record<string, string> = {

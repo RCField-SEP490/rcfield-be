@@ -153,12 +153,18 @@ export async function getProviderKpi(
 
   // 1a. Tiền thu từ booking — lọc theo NGÀY THU, xem chú thích đầu tệp.
   const revenueRes = await AppDataSource.query<[{ totalRevenue: string }]>(
-    `SELECT COALESCE(SUM(pc.amount), 0)::float AS "totalRevenue"
+    `SELECT COALESCE(SUM(
+      CASE
+        WHEN pc.status IN ('HELD', 'DISBURSED') THEN pc.amount
+        WHEN pc.status = 'PARTIALLY_REFUNDED' THEN (pc.amount - COALESCE(pc.refunded_amount, 0))
+        ELSE 0
+      END
+    ), 0)::float AS "totalRevenue"
     FROM bookings b
     JOIN payment_components pc ON pc.booking_id = b.id
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
-      AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
       AND pc.type != 'SECURITY_DEPOSIT'
       AND pc.created_at >= $2::timestamptz
       AND pc.created_at <= $3::timestamptz
@@ -324,16 +330,16 @@ export async function getProviderRevenueTrend(
     booking_revenue AS (
       SELECT
         DATE_TRUNC($2, pc.created_at) AS period,
-        COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN pc.amount END), 0)::float       AS "slotFee",
-        COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN pc.amount END), 0)::float     AS "rentalFee",
-        COALESCE(SUM(CASE WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN pc.amount END), 0)::float AS "fnbPreorder",
+        COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN (CASE WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0) ELSE pc.amount END) END), 0)::float       AS "slotFee",
+        COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN (CASE WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0) ELSE pc.amount END) END), 0)::float     AS "rentalFee",
+        COALESCE(SUM(CASE WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN (CASE WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0) ELSE pc.amount END) END), 0)::float AS "fnbPreorder",
         COALESCE(SUM(CASE WHEN pc.type = 'EXTENSION_FEE' THEN pc.amount END), 0)::float  AS "extensionFee",
         COALESCE(SUM(CASE WHEN pc.type = 'DAMAGE_CHARGE' THEN pc.amount END), 0)::float  AS "damageCharge"
       FROM bookings b
       JOIN payment_components pc ON pc.booking_id = b.id
       JOIN cafes c ON c.id = b.cafe_id
       WHERE c.provider_id = $3
-        AND pc.status IN ('HELD', 'DISBURSED')
+        AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
         AND pc.type != 'SECURITY_DEPOSIT'
         AND pc.created_at >= $4::timestamptz
         AND pc.created_at <= $5::timestamptz
@@ -495,12 +501,17 @@ export async function getProviderRevenueBreakdown(
         WHEN pc.type = 'DAMAGE_CHARGE' THEN 'Phí bồi thường'
         ELSE pc.type::text
       END AS "label",
-      COALESCE(SUM(pc.amount), 0)::float AS "amount"
+      COALESCE(SUM(
+        CASE
+          WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+          ELSE pc.amount
+        END
+      ), 0)::float AS "amount"
     FROM bookings b
     JOIN payment_components pc ON pc.booking_id = b.id
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
-      AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
       AND pc.type != 'SECURITY_DEPOSIT'
       AND pc.created_at >= $2::timestamptz
       AND pc.created_at <= $3::timestamptz
@@ -631,8 +642,13 @@ export async function getProviderBookingChannels(
     `SELECT
        b.source AS "source",
        COUNT(DISTINCT b.id)::int AS "bookingCount",
-       COALESCE(SUM(pc.amount) FILTER (
-         WHERE pc.status IN ('HELD', 'DISBURSED') AND pc.type != 'SECURITY_DEPOSIT'
+       COALESCE(SUM(
+         CASE
+           WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+           ELSE pc.amount
+         END
+       ) FILTER (
+         WHERE pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED') AND pc.type != 'SECURITY_DEPOSIT'
        ), 0)::float AS "revenue"
      FROM bookings b
      JOIN cafes c ON c.id = b.cafe_id
@@ -688,10 +704,15 @@ export async function getProviderBranchPerformance(
   */
   const query = `
     WITH doanh_thu AS (
-      SELECT b.cafe_id, pc.amount
+      SELECT
+        b.cafe_id,
+        CASE
+          WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+          ELSE pc.amount
+        END AS amount
       FROM bookings b
       JOIN payment_components pc ON pc.booking_id = b.id
-      WHERE pc.status IN ('HELD', 'DISBURSED')
+      WHERE pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
         AND pc.type != 'SECURITY_DEPOSIT'
         AND pc.created_at >= $2::timestamptz
         AND pc.created_at <= $3::timestamptz
@@ -814,12 +835,17 @@ export async function getProviderBranchOperations(
         `WITH booking_revenue AS (
            SELECT
              b.cafe_id AS cafe_id,
-             COALESCE(SUM(pc.amount), 0)::float AS total_revenue,
+             COALESCE(SUM(
+               CASE
+                 WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+                 ELSE pc.amount
+               END
+             ), 0)::float AS total_revenue,
              COUNT(DISTINCT b.id)::int AS booking_count
            FROM bookings b
            JOIN cafes c ON c.id = b.cafe_id
            LEFT JOIN payment_components pc ON pc.booking_id = b.id
-             AND pc.status IN ('HELD', 'DISBURSED')
+             AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
              AND pc.type != 'SECURITY_DEPOSIT'
            WHERE c.provider_id = $1
              AND c.deleted_at IS NULL

@@ -2023,6 +2023,19 @@ export async function createCheckoutAdditionalPaymentUrl(
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
+  // Ràng buộc thứ tự: Chặn khởi tạo thanh toán phát sinh khi phiên chơi chưa hoàn tất kiểm tra trả xe
+  const sessionRepo = AppDataSource.getRepository(Session);
+  const activeSession = await sessionRepo.findOne({
+    where: { bookingId, status: In([SessionStatus.ACTIVE, SessionStatus.EXTENDING]) },
+  });
+  if (activeSession) {
+    throw new AppError(
+      'Vui lòng hoàn tất kiểm tra và trả xe tại quầy với Nhân viên trước khi thực hiện thanh toán các khoản phát sinh.',
+      400,
+      'SESSION_NOT_CHECKED_OUT',
+    );
+  }
+
   const gateway = getPaymentGateway(gatewayName);
 
   const compRepo = AppDataSource.getRepository(PaymentComponent);
