@@ -588,10 +588,22 @@ export interface BookingChannelItem {
  * mất khỏi báo cáo — không báo lỗi, chỉ lặng lẽ thiếu, và doanh thu của nó
  * không được tính vào đâu cả.
  */
+/**
+ * Các kênh KHÁCH TÌM ĐẾN chi nhánh.
+ *
+ * Cố ý KHÔNG có `CONTEST`. Đơn nguồn giải đấu vẫn là một hàng thật trong
+ * `bookings` — `contest-rental.service.ts` tạo ra chúng khi vận động viên thuê
+ * xe của quán — nhưng chúng không phải một kênh đặt lịch: không ai mở app rồi
+ * chọn "đặt qua giải đấu". Chúng là hệ quả của việc đăng ký thi đấu, và tiền
+ * của chúng đã có sổ riêng ở báo cáo tài chính từng giải.
+ *
+ * Để lẫn vào đây thì bảng trả lời sai câu hỏi nó đặt ra ("khách tự đặt qua app
+ * hay nhân viên tạo tại quầy"), và tỷ lệ phần trăm của các kênh thật bị pha
+ * loãng bởi một thứ không cạnh tranh với chúng.
+ */
 const BOOKING_SOURCE_LABELS: Record<string, string> = {
   APP: 'Khách tự đặt qua app',
   STAFF_MANUAL: 'Nhân viên tạo (khách vãng lai)',
-  CONTEST: 'Giải đấu',
   FACEBOOK: 'Facebook Messenger',
 };
 
@@ -629,6 +641,14 @@ export async function getProviderBookingChannels(
        AND b.slot_start >= $2::timestamptz
        AND b.slot_start <= $3::timestamptz
        AND ($4::uuid IS NULL OR b.cafe_id = $4)
+       -- Loại đơn giải đấu khỏi CẢ tử số lẫn mẫu số. Chỉ ẩn hàng mà vẫn đếm
+       -- vào tổng thì phần trăm các kênh còn lại không cộng lại thành 100%, và
+       -- người đọc ngồi tìm xem mình sai ở đâu.
+       --
+       -- Kiểm cả hai điều kiện: contest_id là mối liên kết thật, còn source là
+       -- thứ được gán lúc tạo. Dữ liệu cũ có thể chỉ có một trong hai.
+       AND b.contest_id IS NULL
+       AND b.source <> 'CONTEST'
      GROUP BY b.source`,
     [providerId, fromDate, toDate, cafeId || null],
   );
@@ -847,7 +867,11 @@ export async function getProviderBranchOperations(
        WHERE c.provider_id = $1
          AND c.deleted_at IS NULL
          AND b.deleted_at IS NULL
-         AND b.status IN ('PENDING', 'CONFIRMED', 'COMPLETED')
+         -- AWAITING_PAYMENT nghĩa là khách đã chơi xong, chỉ còn nợ khoản phát
+         -- sinh cuối phiên. Sân đã bị chiếm thật, nên nó phải nằm trong tử số.
+         -- Bỏ sót thì mỗi đơn chờ thu tiền lại làm tỷ lệ khai thác tụt xuống,
+         -- đúng vào những ngày đông khách nhất.
+         AND b.status IN ('PENDING', 'CONFIRMED', 'AWAITING_PAYMENT', 'COMPLETED')
          AND b.slot_start < $3::timestamptz
          AND b.slot_end > $2::timestamptz
        GROUP BY b.cafe_id`,
