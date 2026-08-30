@@ -179,9 +179,11 @@ export const bankPaymentController = {
     try {
       const user = requireUser(req);
       const q = ProviderReconciliationQuerySchema.parse(req.query);
+      const fromIso = q.from ? new Date(q.from.setUTCHours(0, 0, 0, 0)).toISOString() : undefined;
+      const toIso = q.to ? new Date(q.to.setUTCHours(23, 59, 59, 999)).toISOString() : undefined;
       const data = await reconciliationService.listProviderReconciliation(user.userId, {
-        from: q.from?.toISOString(),
-        to: q.to?.toISOString(),
+        from: fromIso,
+        to: toIso,
         cafeId: q.cafe_id,
         channel: q.channel,
         status: q.status as BankTransactionMatchStatus | undefined,
@@ -200,9 +202,11 @@ export const bankPaymentController = {
     try {
       const user = requireUser(req);
       const q = ProviderReconciliationQuerySchema.parse(req.query);
+      const fromIso = q.from ? new Date(q.from.setUTCHours(0, 0, 0, 0)).toISOString() : undefined;
+      const toIso = q.to ? new Date(q.to.setUTCHours(23, 59, 59, 999)).toISOString() : undefined;
       const csv = await reconciliationService.exportProviderReconciliationCsv(user.userId, {
-        from: q.from?.toISOString(),
-        to: q.to?.toISOString(),
+        from: fromIso,
+        to: toIso,
         cafeId: q.cafe_id,
         channel: q.channel,
         status: q.status as BankTransactionMatchStatus | undefined,

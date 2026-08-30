@@ -45,7 +45,7 @@ import { AppError, BankTransactionMatchStatus } from '../types';
  * khi cổng đẩy chậm hoặc gửi bù, và sao kê thì luôn tính theo giờ ngân hàng.
  */
 
-export type ReconciliationChannel = 'BANK' | 'VNPAY';
+export type ReconciliationChannel = 'BANK' | 'VNPAY' | 'REFUND';
 
 export interface ReconciliationRow {
   id: string;
@@ -80,7 +80,7 @@ export interface ReconciliationRow {
 export interface ReconciliationSummary {
   /** Tổng số dòng khớp bộ lọc — mẫu số của mọi tỉ lệ bên dưới. */
   total_count: number;
-  /** Tổng tiền thu được trong kỳ, gộp mọi nguồn. */
+  /** Tổng tiền thu vào trong kỳ (Inflow). */
   total_amount: number;
   /** Riêng tiền vào tài khoản ngân hàng — con số so với SAO KÊ NGÂN HÀNG. */
   bank_count: number;
@@ -88,6 +88,11 @@ export interface ReconciliationSummary {
   /** Riêng tiền qua cổng — con số so với BÁO CÁO ĐỐI SOÁT CỦA VNPAY. */
   vnpay_count: number;
   vnpay_amount: number;
+  /** Tiền hoàn trả khách (Outflow) trong kỳ. */
+  refund_count: number;
+  refund_amount: number;
+  /** Doanh thu thực nhận sau khi trừ tiền hoàn trả. */
+  net_amount: number;
   matched_count: number;
   matched_amount: number;
   needs_review_count: number;
@@ -209,6 +214,49 @@ const NGUON = `
   -- thuộc sổ của chủ sân nào cả.
   JOIN cafes c ON c.id = COALESCE(b.cafe_id, cp.cafe_id, ct.cafe_id) AND c.deleted_at IS NULL
   WHERE pt.gateway = 'VNPAY' AND pt.status = 'SUCCESS' AND c.provider_id = $1
+
+  UNION ALL
+
+  SELECT
+    pt.id::text,
+    'REFUND',
+    COALESCE(pt.gateway_transaction_id, pt.txn_ref),
+    pt.gateway,
+    '',
+    pt.amount,
+    COALESCE(
+      CASE
+        WHEN pt.raw_response->>'method' = 'CASH' THEN 'Hoàn tiền mặt cho khách'
+        WHEN pt.raw_response->>'method' = 'BANK_TRANSFER' THEN 'Hoàn tiền chuyển khoản cho khách'
+        ELSE 'Hoàn tiền hủy đơn / cọc xe'
+      END,
+      pt.txn_ref
+    ),
+    pt.payment_ref_code,
+    pt.updated_at,
+    'MATCHED',
+    NULL,
+    c.id,
+    c.name,
+    NULL,
+    NULL,
+    pt.raw_response->>'auditAction',
+    pt.txn_ref,
+    pt.amount,
+    CASE
+      WHEN pt.booking_id IS NOT NULL              THEN 'BOOKING'
+      WHEN pt.customer_package_id IS NOT NULL     THEN 'PACKAGE'
+      WHEN pt.contest_registration_id IS NOT NULL THEN 'CONTEST'
+      ELSE NULL
+    END,
+    COALESCE(pt.booking_id, pt.customer_package_id, pt.contest_registration_id)
+  FROM payment_transactions pt
+  LEFT JOIN bookings b               ON b.id  = pt.booking_id
+  LEFT JOIN customer_packages cp     ON cp.id = pt.customer_package_id
+  LEFT JOIN contest_registrations cr ON cr.id = pt.contest_registration_id
+  LEFT JOIN contests ct              ON ct.id = cr.contest_id
+  JOIN cafes c ON c.id = COALESCE(b.cafe_id, cp.cafe_id, ct.cafe_id) AND c.deleted_at IS NULL
+  WHERE pt.type = 'REFUND' AND pt.status = 'SUCCESS' AND c.provider_id = $1
 `;
 
 /**
@@ -288,7 +336,11 @@ function toRow(r: Record<string, unknown>): ReconciliationRow {
     amount: Number(r.amount),
     content: String(r.content ?? ''),
     ref_code: (r.ref_code as string) ?? null,
-    transaction_date: (r.transaction_date as Date).toISOString(),
+    transaction_date: r.transaction_date
+      ? r.transaction_date instanceof Date
+        ? r.transaction_date.toISOString()
+        : new Date(String(r.transaction_date)).toISOString()
+      : new Date().toISOString(),
     match_status: r.match_status as BankTransactionMatchStatus,
     match_reason: (r.match_reason as string) ?? null,
     cafe_id: (r.cafe_id as string) ?? null,
@@ -298,7 +350,11 @@ function toRow(r: Record<string, unknown>): ReconciliationRow {
     subject: (r.subject as ReconciliationRow['subject']) ?? null,
     subject_id: (r.subject_id as string) ?? null,
     resolved_by_name: (r.resolved_by_name as string) ?? null,
-    resolved_at: r.resolved_at ? (r.resolved_at as Date).toISOString() : null,
+    resolved_at: r.resolved_at
+      ? r.resolved_at instanceof Date
+        ? r.resolved_at.toISOString()
+        : new Date(String(r.resolved_at)).toISOString()
+      : null,
     resolution_note: (r.resolution_note as string) ?? null,
   };
 }
@@ -335,13 +391,15 @@ export async function listProviderReconciliation(
   const [t] = await AppDataSource.query(
     `SELECT
        COUNT(*)::int                                                          AS total_count,
-       COALESCE(SUM(n.amount), 0)                                             AS total_amount,
+       COALESCE(SUM(n.amount) FILTER (WHERE n.channel IN ('BANK', 'VNPAY')), 0) AS total_amount,
        COUNT(*) FILTER (WHERE n.channel = 'BANK')::int                        AS bank_count,
        COALESCE(SUM(n.amount) FILTER (WHERE n.channel = 'BANK'), 0)           AS bank_amount,
        COUNT(*) FILTER (WHERE n.channel = 'VNPAY')::int                       AS vnpay_count,
        COALESCE(SUM(n.amount) FILTER (WHERE n.channel = 'VNPAY'), 0)          AS vnpay_amount,
-       COUNT(*) FILTER (WHERE n.match_status = 'MATCHED')::int                AS matched_count,
-       COALESCE(SUM(n.amount) FILTER (WHERE n.match_status = 'MATCHED'), 0)   AS matched_amount,
+       COUNT(*) FILTER (WHERE n.channel = 'REFUND')::int                      AS refund_count,
+       COALESCE(SUM(n.amount) FILTER (WHERE n.channel = 'REFUND'), 0)         AS refund_amount,
+       COUNT(*) FILTER (WHERE n.match_status = 'MATCHED' AND n.channel != 'REFUND')::int AS matched_count,
+       COALESCE(SUM(n.amount) FILTER (WHERE n.match_status = 'MATCHED' AND n.channel != 'REFUND'), 0) AS matched_amount,
        COUNT(*) FILTER (WHERE n.match_status = 'NEEDS_REVIEW')::int           AS needs_review_count,
        COALESCE(SUM(n.amount) FILTER (WHERE n.match_status = 'NEEDS_REVIEW'), 0) AS needs_review_amount,
        COUNT(*) FILTER (WHERE n.match_status = 'IGNORED')::int                AS ignored_count,
@@ -351,7 +409,8 @@ export async function listProviderReconciliation(
   );
 
   const matched = Number(t?.matched_amount ?? 0);
-  const totalAmount = Number(t?.total_amount ?? 0);
+  const totalInflow = Number(t?.total_amount ?? 0);
+  const refundAmount = Number(t?.refund_amount ?? 0);
 
   return {
     items: rows.map(toRow),
@@ -360,18 +419,21 @@ export async function listProviderReconciliation(
     limit: query.limit,
     summary: {
       total_count: Number(t?.total_count ?? 0),
-      total_amount: totalAmount,
+      total_amount: totalInflow,
       bank_count: Number(t?.bank_count ?? 0),
       bank_amount: Number(t?.bank_amount ?? 0),
       vnpay_count: Number(t?.vnpay_count ?? 0),
       vnpay_amount: Number(t?.vnpay_amount ?? 0),
+      refund_count: Number(t?.refund_count ?? 0),
+      refund_amount: refundAmount,
+      net_amount: Math.max(0, totalInflow - refundAmount),
       matched_count: Number(t?.matched_count ?? 0),
       matched_amount: matched,
       needs_review_count: Number(t?.needs_review_count ?? 0),
       needs_review_amount: Number(t?.needs_review_amount ?? 0),
       ignored_count: Number(t?.ignored_count ?? 0),
       ignored_amount: Number(t?.ignored_amount ?? 0),
-      unreconciled_amount: totalAmount - matched,
+      unreconciled_amount: totalInflow - matched,
     },
   };
 }
@@ -434,6 +496,7 @@ const STATUS_LABEL: Record<string, string> = {
 const CHANNEL_LABEL: Record<ReconciliationChannel, string> = {
   BANK: 'Chuyen khoan',
   VNPAY: 'VNPay',
+  REFUND: 'Hoan tien',
 };
 
 /**
