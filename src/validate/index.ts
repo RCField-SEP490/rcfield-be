@@ -1799,6 +1799,17 @@ export const CreateWalkInBookingSchema = z
         }),
       )
       .min(1, 'Phải có ít nhất 1 người chơi tham gia'),
+    fnb_items: z
+      .array(
+        z.object({
+          menu_item_id: z.string().uuid('ID món ăn không hợp lệ'),
+          variant_id: z.string().uuid('ID biến thể không hợp lệ').optional(),
+          quantity: z.number().int().positive('Số lượng phải lớn hơn 0'),
+          notes: z.string().optional(),
+        }),
+      )
+      .optional()
+      .default([]),
   })
   .superRefine((data, ctx) => {
     if (data.play_mode === BookingMode.RENTAL && data.vehicle_ids.length === 0) {
@@ -1869,6 +1880,17 @@ export const ConfirmCheckoutSchema = z.object({
 
 export const UpdateDamageItemsSchema = z.object({
   damageLineItems: z.array(DamageLineItemInputSchema).min(0),
+  checklist: z
+    .array(
+      z.object({
+        itemKey: z.string().optional(),
+        itemLabel: z.string(),
+        status: z.string(),
+        note: z.string().optional().nullable(),
+      }),
+    )
+    .optional(),
+  staffNotes: z.string().optional().nullable(),
 });
 
 // ── cafe_payment_settings / bank_transactions ─────────────────────────────────
@@ -1923,7 +1945,7 @@ export const ProviderReconciliationQuerySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   cafe_id: z.string().uuid().optional(),
-  channel: z.enum(['BANK', 'VNPAY']).optional(),
+  channel: z.enum(['BANK', 'VNPAY', 'REFUND']).optional(),
   status: z.enum(['MATCHED', 'NEEDS_REVIEW', 'IGNORED']).optional(),
   q: z.string().trim().max(120).optional(),
   page: z.coerce.number().int().min(1).default(1),

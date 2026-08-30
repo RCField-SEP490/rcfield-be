@@ -269,6 +269,50 @@ export const staffController = {
     }
   },
 
+  // POST /api/v1/staff/bookings/:bookingId/confirm-bank-transfer [auth]
+  async confirmWalkInBankTransfer(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const { bookingId } = req.params;
+      const data = await staffService.confirmWalkInBankTransfer(
+        req.user.userId,
+        req.user.cafeId,
+        bookingId,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  // POST /api/v1/staff/bookings/:bookingId/settle-bank-transfer [auth]
+  async initiateWalkInSettleBankTransfer(
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      if (!req.user.cafeId)
+        throw new AppError('Staff chưa được gán chi nhánh', 403, 'CAFE_NOT_ASSIGNED');
+      const { bookingId } = req.params;
+      const data = await staffService.initiateWalkInSettleBankTransfer(
+        req.user.userId,
+        req.user.cafeId,
+        bookingId,
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // GET /api/v1/staff/fnb-orders  [auth]
   async getFnbOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -467,11 +511,13 @@ export const staffController = {
   async updateDamageItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
-      const { damageLineItems } = UpdateDamageItemsSchema.parse(req.body);
+      const { damageLineItems, checklist, staffNotes } = UpdateDamageItemsSchema.parse(req.body);
       const data = await staffService.updateDamageLineItems(
         req.params.sessionId,
         req.params.inspectionId,
         damageLineItems,
+        checklist,
+        staffNotes ?? undefined,
       );
       logger.info('Staff', 'updateDamageItems', {
         staffId: req.user.userId,

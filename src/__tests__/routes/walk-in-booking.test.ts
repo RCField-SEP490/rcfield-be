@@ -95,6 +95,15 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
 
     // 3. Create a vehicle
     vehicle = await createTestVehicle({ cafe_id: cafe.id, tier: 'STANDARD' });
+
+    // 4. Configure verified bank payment settings for cafe
+    await AppDataSource.query(
+      `INSERT INTO cafe_payment_settings
+         (cafe_id, method, bank_code, bank_bin, account_number, account_name,
+          is_verified, verified_at)
+       VALUES ($1, 'BANK_TRANSFER', 'VCB', '970436', '1234567890', 'QUAN RC TEST', true, NOW())`,
+      [cafe.id],
+    );
   });
 
   afterEach(async () => {
@@ -138,8 +147,7 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   });
 
   it('tạo booking BYOC thành công, tự sinh tài khoản guest, ghi nhận audit và thanh toán', async () => {
-    const slotStart = new Date(Date.now() + 2 * 60 * 60 * 1000);
-    slotStart.setMinutes(0, 0, 0);
+    const slotStart = nextLocalDateAt(10, 0);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
     const body = {
@@ -203,8 +211,8 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
   });
 
   it('tạo booking RENTAL thành công, có xe thuê và ghi nhận phí xe + cọc xe', async () => {
-    const slotStart = new Date(Date.now() + 3 * 60 * 60 * 1000);
-    slotStart.setMinutes(0, 0, 0);
+    const testVehicle = await createTestVehicle({ cafe_id: cafe.id, tier: 'STANDARD' });
+    const slotStart = nextLocalDateAt(14, 0);
     const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
     const body = {
@@ -212,8 +220,8 @@ describe('POST /api/v1/staff/bookings (Walk-In Booking API)', () => {
       track_type_id: trackTypeId,
       slot_start: slotStart.toISOString(),
       slot_end: slotEnd.toISOString(),
-      payment_method: 'BANK_TRANSFER',
-      vehicle_ids: [vehicle.id],
+      payment_method: 'CASH',
+      vehicle_ids: [testVehicle.id],
       participants: [
         {
           guest_name: 'Khách Thuê Xe',
