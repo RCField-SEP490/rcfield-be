@@ -4,7 +4,6 @@ import { logger } from '../../config/logger';
 import { ContestMatch } from '../../models/contest-match.entity';
 import { ContestRegistration } from '../../models/contest-registration.entity';
 import {
-  ContestEntryFeePaymentStatus,
   ContestMatchStatus,
   ContestRegistrationStatus,
   NotificationType,
@@ -164,10 +163,18 @@ export async function cleanUpContestOnCancel(contestId: string, actorId: string)
     registration.cancelledBy = actorId;
     registration.cancelledAt = new Date();
     registration.cancellationReason = 'Contest cancelled';
-    registration.metadata = {
-      ...(registration.metadata ?? {}),
-      refund_needed: registration.paymentStatus === ContestEntryFeePaymentStatus.MARKED_PAID,
-    };
+    /*
+      Bỏ cờ `refund_needed` từng ghi ở đây.
+
+      Nó được ghi vào metadata rồi KHÔNG NƠI NÀO đọc — không màn hình, không báo
+      cáo, không thông báo. Một cái cờ như vậy tệ hơn là không có: nó tạo cảm
+      giác nghĩa vụ hoàn tiền đã được hệ thống ghi nhận, trong khi thực tế nó
+      nằm im trong một cột jsonb không ai mở ra.
+
+      Giờ `assertNoCollectedEntryFees` chặn hẳn việc huỷ giải khi còn tiền đã
+      thu, nên tới được đây nghĩa là không còn ai cần hoàn — cờ đó vĩnh viễn
+      bằng false.
+    */
     await registrationRepo.save(registration);
   }
 
