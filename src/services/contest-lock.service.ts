@@ -268,16 +268,28 @@ export async function assertNoContestBookingConflicts(params: {
   const conflicts = await findContestBookingConflicts(params);
   if (conflicts.length === 0) return;
 
+  /*
+    Mã đơn viết ĐÚNG dạng đang hiện ở màn danh sách đặt lịch: `#` và chữ hoa.
+
+    Trước đây in chữ thường không có `#`, nên chủ sân đọc được `3feef8c8` rồi đi
+    tìm trong danh sách toàn `#3FEEF8C8` — cùng một đơn mà nhìn không ra là một.
+    Một thông báo lỗi chỉ hữu ích khi nó chỉ tới được thứ nó đang nói về.
+  */
   const sample = conflicts
     .slice(0, 3)
     .map(
       (item) =>
-        `booking ${item.booking_id.slice(0, 8)} (${new Date(item.slot_start).toLocaleString('vi-VN')} - ${new Date(item.slot_end).toLocaleTimeString('vi-VN')})`,
+        `#${item.booking_id.slice(0, 8).toUpperCase()} (${new Date(item.slot_start).toLocaleString('vi-VN')} – ${new Date(item.slot_end).toLocaleTimeString('vi-VN')})`,
     )
     .join(', ');
 
+  const con = conflicts.length - Math.min(3, conflicts.length);
+
   throw new AppError(
-    `Khung giờ hoặc sân đã có booking trùng với lịch tổ chức giải đấu${sample ? `: ${sample}` : ''}`,
+    `Không tạo được giải: khung giờ này đã có ${conflicts.length} đơn đặt sân của khách` +
+      (sample ? ` — ${sample}` : '') +
+      (con > 0 ? ` và ${con} đơn khác` : '') +
+      `. Đơn đã đặt được giữ nguyên; hãy chọn khung giờ khác hoặc liên hệ khách để đổi lịch.`,
     409,
     'CONTEST_BOOKING_CONFLICT',
   );

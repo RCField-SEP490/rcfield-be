@@ -54,43 +54,82 @@ async function processExpiredGracePeriods(): Promise<void> {
   }
 }
 
-async function sendExpiryWarnings(): Promise<void> {
-  const subs = await AppDataSource.query<ProviderSubscription[]>(
-    `SELECT ps.id, ps.provider_id, ps.expires_at
-     FROM provider_subscriptions ps
-     WHERE ps.status = 'TRIAL'
-       AND ps.deleted_at IS NULL
-       AND ps.expires_at <= NOW() + INTERVAL '3 days'
-       AND NOT EXISTS (
-         SELECT 1 FROM notifications n
-         WHERE n.user_id = ps.provider_id
-           AND n.type = $1
-           AND n.created_at > NOW() - INTERVAL '7 days'
-       )`,
-    [NotificationType.TRIAL_EXPIRING_SOON],
-  );
+/**
+ * Bao nhiêu ngày trước khi hết hạn thì báo cho chủ sân.
+ *
+ * Gói trả phí báo sớm hơn vì việc gia hạn của họ TỐN THỜI GIAN: chuyển khoản,
+ * nộp chứng từ, rồi chờ quản trị viên duyệt. Ba ngày không đủ cho chuỗi đó, và
+ * người quên gia hạn hầu như luôn là quên chứ không phải muốn nghỉ — để họ rơi
+ * vào ân hạn là mất doanh thu của cả hai bên.
+ *
+ * Gói dùng thử giữ ba ngày: chưa trả đồng nào, và nhắc quá sớm thì thành làm
+ * phiền người còn đang cân nhắc.
+ */
+const CANH_BAO_HET_HAN = [
+  {
+    trangThai: SubscriptionStatus.ACTIVE,
+    soNgay: 7,
+    loai: NotificationType.SUBSCRIPTION_EXPIRING_SOON,
+    tieuDe: 'Gói đăng ký sắp hết hạn',
+    noiDung: (ngay: number) =>
+      `Gói đăng ký của bạn sẽ hết hạn sau ${ngay} ngày. Gia hạn sớm để chi nhánh không bị gián đoạn nhận đặt lịch.`,
+  },
+  {
+    trangThai: SubscriptionStatus.TRIAL,
+    soNgay: 3,
+    loai: NotificationType.TRIAL_EXPIRING_SOON,
+    tieuDe: 'Gói dùng thử sắp hết hạn',
+    noiDung: (ngay: number) =>
+      `Gói dùng thử của bạn sẽ hết hạn sau ${ngay} ngày. Hãy đăng ký gói để tiếp tục sử dụng.`,
+  },
+] as const;
 
-  for (const sub of subs) {
-    try {
-      const daysLeft = Math.max(
-        0,
-        Math.ceil(
-          (new Date((sub as unknown as { expires_at: string }).expires_at).getTime() - Date.now()) /
-            (1000 * 60 * 60 * 24),
-        ),
-      );
-      await createNotification(
-        (sub as unknown as { provider_id: string }).provider_id,
-        NotificationType.TRIAL_EXPIRING_SOON,
-        'Gói dùng thử sắp hết hạn',
-        `Gói dùng thử của bạn sẽ hết hạn sau ${daysLeft} ngày. Hãy đăng ký gói để tiếp tục sử dụng.`,
-      );
-      logger.info(
-        'SubscriptionLifecycle',
-        `expiry warning sent provId=${(sub as unknown as { provider_id: string }).provider_id}`,
-      );
-    } catch (err) {
-      logger.error('SubscriptionLifecycle', 'expiry warning failed', err);
+/** Xuất ra để test gọi thẳng, không phải chờ lịch chạy. */
+export async function sendExpiryWarnings(): Promise<void> {
+  for (const canhBao of CANH_BAO_HET_HAN) {
+    /*
+      Cửa sổ chống trùng lấy ĐÚNG bằng cửa sổ cảnh báo.
+
+      Ngắn hơn thì mỗi lần chạy lại gửi thêm một thông báo giống hệt — công việc
+      này chạy theo lịch nên đó là hàng chục cái mỗi ngày. Dài hơn thì chủ sân
+      gia hạn xong, gói mới lại sắp hết, mà lần này không được báo.
+    */
+    const subs = await AppDataSource.query<Array<{ provider_id: string; expires_at: string }>>(
+      `SELECT ps.id, ps.provider_id, ps.expires_at
+         FROM provider_subscriptions ps
+        WHERE ps.status = $1
+          AND ps.deleted_at IS NULL
+          AND ps.expires_at > NOW()
+          AND ps.expires_at <= NOW() + ($2 || ' days')::interval
+          AND NOT EXISTS (
+            SELECT 1 FROM notifications n
+             WHERE n.user_id = ps.provider_id
+               AND n.type = $3
+               AND n.created_at > NOW() - ($2 || ' days')::interval
+          )`,
+      [canhBao.trangThai, String(canhBao.soNgay), canhBao.loai],
+    );
+
+    for (const sub of subs) {
+      try {
+        const daysLeft = Math.max(
+          1,
+          Math.ceil((new Date(sub.expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+        );
+        await createNotification(
+          sub.provider_id,
+          canhBao.loai,
+          canhBao.tieuDe,
+          canhBao.noiDung(daysLeft),
+          { route: '/provider/subscriptions' },
+        );
+        logger.info(
+          'SubscriptionLifecycle',
+          `cảnh báo hết hạn (${canhBao.trangThai}) gửi tới provId=${sub.provider_id}`,
+        );
+      } catch (err) {
+        logger.error('SubscriptionLifecycle', 'gửi cảnh báo hết hạn thất bại', err);
+      }
     }
   }
 }
