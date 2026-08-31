@@ -14,8 +14,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *                        `customerVehicleId = null` — nghĩa là cột này không thể
  *                        nhận giá trị nào khác null qua API.
  *
- * Ba cột bị bỏ đều đang rỗng 100% (đã kiểm trên dữ liệu thật) và không cột nào
- * có index riêng, nên bỏ chúng không mất gì.
+ * Dữ liệu xe cũ có thể còn trên các môi trường đã seed trước khi luồng BYOC mới
+ * ra đời. Trước khi bỏ khoá ngoại, migration chép nguyên snapshot xe vào
+ * `contest_registrations.metadata`: vừa giữ được lịch sử giải, vừa không giữ
+ * một bảng không còn đường đọc/ghi trong ứng dụng.
  *
  * Kèm theo: `contest_registrations.customer_vehicle_id` từng lộ ra API dưới tên
  * `customer_vehicle_id`. Trường đó luôn null nên đã gỡ khỏi payload trong cùng
@@ -39,8 +41,52 @@ export class DropSupersededSubscriptionAndCustomerVehicle1786700000000 implement
     // chạy không người trông khi deploy. Thà dừng deploy còn hơn xoá nhầm.
     const problems: string[] = [];
 
+    // `customer_vehicles` từng được seed và có thể vẫn được các đăng ký BYOC cũ
+    // tham chiếu. Giữ lại snapshot ngay trên registration trước khi bỏ cột. Nếu
+    // registration đã có khai báo BYOC mới thì không ghi đè nó; snapshot cũ vẫn
+    // nằm ở `legacy_customer_vehicle` để phục vụ tra cứu lịch sử.
+    if (
+      (await queryRunner.hasTable('customer_vehicles')) &&
+      (await queryRunner.hasColumn('contest_registrations', 'customer_vehicle_id'))
+    ) {
+      await queryRunner.query(`
+        UPDATE contest_registrations registration
+        SET metadata = jsonb_set(
+          COALESCE(registration.metadata, '{}'::jsonb) || jsonb_build_object(
+            'legacy_customer_vehicle',
+            jsonb_build_object(
+              'id', to_jsonb(vehicle) ->> 'id',
+              'brand', to_jsonb(vehicle) ->> 'brand',
+              'model', to_jsonb(vehicle) ->> 'model',
+              'serial_number', to_jsonb(vehicle) ->> 'serial_number',
+              'description', to_jsonb(vehicle) ->> 'description',
+              'notes', to_jsonb(vehicle) ->> 'notes'
+            )
+          ),
+          '{byoc_declaration}',
+          COALESCE(
+            registration.metadata -> 'byoc_declaration',
+            jsonb_build_object(
+              'vehicle_name', NULLIF(TRIM(CONCAT_WS(' ', to_jsonb(vehicle) ->> 'brand', to_jsonb(vehicle) ->> 'model')), ''),
+              'vehicle_brand', to_jsonb(vehicle) ->> 'brand',
+              'vehicle_class', NULL,
+              'notes', NULLIF(CONCAT_WS(E'\\n', to_jsonb(vehicle) ->> 'description', to_jsonb(vehicle) ->> 'notes'), ''),
+              'photos', '[]'::jsonb
+            )
+          ),
+          true
+        )
+        FROM customer_vehicles vehicle
+        WHERE registration.customer_vehicle_id = vehicle.id
+      `);
+    }
+
     for (const table of DropSupersededSubscriptionAndCustomerVehicle1786700000000.TABLES) {
       if (!(await queryRunner.hasTable(table))) continue;
+      // Các dòng customer_vehicles đã được chép sang metadata ở trên. Những
+      // dòng còn lại không còn quan hệ nào trong schema nên là dữ liệu mồ côi
+      // của luồng BYOC đã bỏ.
+      if (table === 'customer_vehicles') continue;
       const [{ count }] = await queryRunner.query(`SELECT COUNT(*)::int AS count FROM "${table}"`);
       if (count > 0) problems.push(`bảng ${table} có ${count} dòng`);
     }
@@ -53,7 +99,9 @@ export class DropSupersededSubscriptionAndCustomerVehicle1786700000000 implement
       const [{ count }] = await queryRunner.query(
         `SELECT COUNT("${column}")::int AS count FROM "${table}"`,
       );
-      if (count > 0) problems.push(`${table}.${column} có ${count} giá trị khác null`);
+      if (count > 0 && !(table === 'contest_registrations' && column === 'customer_vehicle_id')) {
+        problems.push(`${table}.${column} có ${count} giá trị khác null`);
+      }
     }
 
     if (problems.length > 0) {

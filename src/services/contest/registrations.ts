@@ -137,6 +137,13 @@ export async function createContestRegistration(
   const saved: ContestRegistration = await AppDataSource.transaction(async (manager) => {
     const transactionalRepo = manager.getRepository(ContestRegistration);
 
+    // PostgreSQL không khoá "khoảng trống" khi SELECT ... FOR UPDATE chưa có
+    // registration nào. Khoá advisory theo contest khiến kiểm capacity và INSERT
+    // là một critical section, nên hai khách không thể cùng lấy suất cuối.
+    await manager.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `contest-registration:${contestId}`,
+    ]);
+
     // Lock existing registrations for this contest to serialize concurrent registrations.
     const existing = await transactionalRepo
       .createQueryBuilder('registration')
