@@ -1174,8 +1174,10 @@ export async function processConfirmationResult(
     return { rspCode: '01', message: 'Order not found' };
   }
 
-  // Idempotency: already processed
-  if (tx.status === PaymentTransactionStatus.SUCCESS) {
+  // Chỉ transaction đang chờ mới được xác nhận. Một registration có thể bị huỷ
+  // rồi đăng ký lại với cùng id; callback SUCCESS về muộn cho transaction đã bị
+  // huỷ (FAILED) không được phép đánh dấu lượt đăng ký mới là đã thanh toán.
+  if (tx.status !== PaymentTransactionStatus.PENDING) {
     return { rspCode: '02', message: 'Order already confirmed' };
   }
 
@@ -1466,7 +1468,7 @@ export async function processMockConfirmation(
     return { rspCode: '01', message: 'Order not found' };
   }
 
-  if (tx.status === PaymentTransactionStatus.SUCCESS) {
+  if (tx.status !== PaymentTransactionStatus.PENDING) {
     return { rspCode: '02', message: 'Order already confirmed' };
   }
 

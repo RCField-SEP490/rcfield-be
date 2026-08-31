@@ -408,6 +408,7 @@ contest.customer4@gmail.com</textarea>
 <div class="panel" id="resumePanel" style="display:none">
       <h2>Giải đang làm việc</h2>
       <p class="hint" id="resumeInfo" style="margin:0"></p>
+      <div class="picker" id="contestSnapshot" style="margin-top:14px;white-space:pre-line"></div>
       <div class="row">
         <button class="ghost" id="btnRefreshContest">Xem trạng thái hiện tại</button>
         <button class="warn" id="btnNewContest">Bỏ, bắt đầu giải mới</button>
@@ -478,6 +479,61 @@ function short(v) {
   return s.length > 400 ? s.slice(0, 400) + ' …' : s;
 }
 
+function contestPolicy(contest) {
+  return (contest && contest.vehicle_rule && contest.vehicle_rule.vehicle_policy) ||
+    (contest && contest.vehicleRule && contest.vehicleRule.vehicle_policy) || 'RENTAL_ONLY';
+}
+
+function contestBranches(contest) {
+  const rows = (contest && (contest.participating_branches || contest.cafes)) || [];
+  return rows.map((row) => row.cafe || row).filter(Boolean);
+}
+
+function renderContestSnapshot(contest) {
+  const box = $('contestSnapshot');
+  if (!box || !contest) return;
+  const labels = { BYOC_ONLY: 'Chỉ xe cá nhân (BYOC)', RENTAL_ONLY: 'Chỉ xe thuê', MIXED: 'Xe cá nhân hoặc xe thuê' };
+  const branches = contestBranches(contest).map((c) => c.name).filter(Boolean).join(', ') || 'Chưa xác định';
+  const fmt = (v) => v ? new Date(v).toLocaleString('vi-VN') : 'Không giới hạn';
+  box.textContent = [
+    contest.name + ' [' + contest.status + ']',
+    'Chính sách xe: ' + (labels[contestPolicy(contest)] || contestPolicy(contest)),
+    'Đăng ký: ' + (ctx.registrations || []).length + '/' + contest.capacity +
+      ' · Phí: ' + Number(contest.entry_fee || 0).toLocaleString('vi-VN') + 'đ',
+    'Khung đăng ký: ' + fmt(contest.registration_opens_at) + ' → ' + fmt(contest.registration_closes_at),
+    'Thi đấu: ' + fmt(contest.starts_at) + ' → ' + fmt(contest.ends_at),
+    'Chi nhánh: ' + branches,
+    'Điểm danh demo: ' + (contest.check_in_window_bypassed
+      ? 'ĐANG BẬT — được điểm danh ngay, thao tác có audit log'
+      : 'ĐANG TẮT — phải chờ tới giờ bắt đầu giải'),
+  ].join('\n');
+}
+
+function syncContestForm(contest) {
+  const branches = contestBranches(contest);
+  const host = (contest.host_branch && contest.host_branch.cafe) || branches[0];
+  ctx.contestSnapshot = contest;
+  $('cName').value = contest.name || '';
+  $('cCap').value = contest.capacity || 0;
+  $('cFee').value = Number(contest.entry_fee || 0);
+  $('cPolicy').value = contestPolicy(contest);
+  if (host && host.id) {
+    ctx.cafeId = host.id;
+    if ([...$('cCafe').options].some((o) => o.value === host.id)) $('cCafe').value = host.id;
+  }
+  if (contest.contest_template && contest.contest_template.id) {
+    ctx.tplName = contest.contest_template.name;
+    if ([...$('cTemplate').options].some((o) => o.value === contest.contest_template.id)) {
+      $('cTemplate').value = contest.contest_template.id;
+    }
+  }
+  if (contest.track_type && contest.track_type.id &&
+      [...$('cTrack').options].some((o) => o.value === contest.track_type.id)) {
+    $('cTrack').value = contest.track_type.id;
+  }
+  renderContestSnapshot(contest);
+}
+
 async function call(method, path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -497,6 +553,8 @@ async function call(method, path, body, token) {
     // dò chuỗi thông báo thì đổi câu chữ một lần là hỏng.
     const err = new Error(msg);
     err.status = res.status;
+    err.code = json && json.code;
+    err.payload = json;
     throw err;
   }
   log('ok', '  ✓ ' + res.status + '  ' + short(json && json.data !== undefined ? json.data : json));
@@ -906,13 +964,74 @@ const STEPS = [
     name: 'Vận động viên đăng ký',
     api: 'POST /contests/:id/register  (mỗi người một lần)',
     run: async () => {
-      const lines = $('athletes').value.split('\n').map((s) => s.trim()).filter(Boolean);
-      ctx.athletes = []; ctx.registrations = [];
-      const policy = $('cPolicy').value;
+      const inputLines = $('athletes').value.split('\n').map((s) => s.trim()).filter(Boolean);
+      const contest = await call('GET', '/contests/' + ctx.contestId, null, ctx.providerToken);
+      syncContestForm(contest);
+      const policy = contestPolicy(contest);
+      if (contest.status !== 'OPEN') {
+        throw new Error('Không thể import VĐV: giải đang ở trạng thái ' + contest.status +
+          '. Chỉ giải OPEN mới nhận đăng ký; Contest Lab không tự lùi trạng thái của giải thật.');
+      }
+
+      // Nạp danh sách thật trước khi làm gì. Bấm seed lại phải là thao tác
+      // idempotent: người đã có trong giải được giữ nguyên, không POST lần hai.
+      const existingRes = await call('GET', '/contests/' + ctx.contestId + '/registrations',
+        null, ctx.providerToken);
+      const existingRows = existingRes.data || existingRes;
+      const activeRows = (Array.isArray(existingRows) ? existingRows : [])
+        .filter((r) => !['CANCELLED', 'REJECTED'].includes(r.status));
+      const existingByEmail = new Map(activeRows.map((r) => [
+        String((r.participant && r.participant.email) || '').toLowerCase(), r,
+      ]));
+      ctx.athletes = [];
+      ctx.registrations = activeRows.map((r) => ({
+        id: r.id,
+        email: (r.participant && r.participant.email) || r.user_id,
+        status: r.status,
+        source: r.vehicle_source || r.vehicleSource,
+      }));
+
+      // Hội đồng không thể chờ mở hàng chục tài khoản. Ô danh sách là phần
+      // ưu tiên; nếu chưa đủ số chỗ còn lại thì Lab tự sinh email ổn định cho
+      // chính giải này. Nếu nhập dư, chỉ lấy đúng số cần để không tạo tài khoản
+      // rồi mới phát hiện giải đã full.
+      const remaining = Math.max(0, Number(contest.capacity || 0) - activeRows.length);
+      const candidateLines = [];
+      const seen = new Set(existingByEmail.keys());
+      for (const line of inputLines) {
+        const parsed = parseAthlete(line);
+        const key = parsed.email.toLowerCase();
+        if (!seen.has(key)) {
+          candidateLines.push(line);
+          seen.add(key);
+        }
+      }
+      let generatedNo = 1;
+      const contestKey = String(contest.id).replace(/-/g, '').slice(0, 10);
+      while (candidateLines.length < remaining) {
+        const email = 'contest.lab.' + contestKey + '.' + generatedNo + '@gmail.com';
+        generatedNo += 1;
+        if (seen.has(email)) continue;
+        candidateLines.push(email);
+        seen.add(email);
+      }
+      const lines = candidateLines.slice(0, remaining);
+      const activeEmails = activeRows
+        .map((r) => r.participant && r.participant.email).filter(Boolean);
+      $('athletes').value = activeEmails.concat(lines).join('\n');
+      if (!remaining) log('dim', '  (giải đã đủ ' + activeRows.length + '/' + contest.capacity + ' VĐV)');
+      if (lines.length > inputLines.length) {
+        log('dim', '  (tự sinh thêm ' + (lines.length - inputLines.length) +
+          ' tài khoản để lấp đủ sức chứa)');
+      }
 
       let created = 0;
       for (const [i, line] of lines.entries()) {
         const { email, password } = parseAthlete(line);
+        if (existingByEmail.has(email.toLowerCase())) {
+          log('dim', '  (đã có ' + email + ' trong giải — bỏ qua, không đăng ký lại)');
+          continue;
+        }
         const a = await loginOrRegister(email, password, fakeVietnameseName());
         ctx.athletes.push({ email, token: a.token, userId: a.user.id });
         if (a.createdNow) created += 1;
@@ -920,7 +1039,7 @@ const STEPS = [
       if (created) log('dim', '  (đã tạo mới ' + created + ' tài khoản)');
 
       let catalogs = [];
-      if (policy !== 'BYOC_ONLY') {
+      if (policy !== 'BYOC_ONLY' && ctx.athletes.length) {
         // Danh sách xe cho thuê của giải là endpoint DÀNH CHO KHÁCH — gọi bằng
         // token provider sẽ ăn 403. Dùng token của vận động viên đầu tiên.
         const opts = await call('GET', '/contests/' + ctx.contestId + '/rental-options',
@@ -943,8 +1062,9 @@ const STEPS = [
           byoc_vehicle_brand: 'Traxxas',
           byoc_vehicle_class: 'Buggy 1/10',
         };
-        const photo = $('byocPhoto').value.trim();
-        if (photo) body.byoc_vehicle_photos = [photo];
+        const photo = $('byocPhoto').value.trim() ||
+          'https://placehold.co/600x400/png?text=Contest+Lab+BYOC';
+        body.byoc_vehicle_photos = [photo];
         return body;
       };
 
@@ -973,7 +1093,7 @@ const STEPS = [
               idx = (idx + k + 1) % catalogs.length;
             } catch (e) {
               lastErr = e;
-              if (!/hết suất|FULL/i.test(e.message)) throw e;
+              if (e.code !== 'CONTEST_RENTAL_CATALOG_FULL' && !/hết suất|FULL/i.test(e.message)) throw e;
             }
           }
           if (!r && policy === 'MIXED') {
@@ -992,9 +1112,13 @@ const STEPS = [
           // chặn ở đây là KẾT QUẢ MONG ĐỢI chứ không phải hỏng. Chỉ nuốt đúng
           // lỗi đó — mọi lỗi khác vẫn phải nổ ra, không thì kịch bản báo đạt
           // trong khi thật ra nó chết vì lý do chẳng liên quan.
-          if (ctx.expectCapacity && /CONTEST_CAPACITY_REACHED|đủ sức chứa/i.test(e.message)) {
+          if (e.code === 'CONTEST_ALREADY_REGISTERED') {
+            log('dim', '  (' + email + ' đã được đăng ký ở lượt khác — đồng bộ lại thay vì báo lỗi)');
+            continue;
+          }
+          if (e.code === 'CONTEST_CAPACITY_REACHED' || /CONTEST_CAPACITY_REACHED|đủ sức chứa/i.test(e.message)) {
             ctx.capacityRejected.push(email);
-            log('dim', '  (bị chặn đúng như mong đợi — giải đã đủ chỗ)');
+            log('dim', '  (' + email + ' không import vì giải đã đủ chỗ)');
             continue;
           }
           throw e;
@@ -1002,8 +1126,27 @@ const STEPS = [
         ctx.registrations.push({ id: r.id, email, status: r.status,
           source: r.vehicle_source || r.vehicleSource });
       }
-      return ctx.registrations.length + ' người đã đăng ký' +
-        (ctx.capacityRejected.length ? ', ' + ctx.capacityRejected.length + ' người bị chặn vì hết chỗ' : '');
+      const finalRes = await call('GET', '/contests/' + ctx.contestId + '/registrations',
+        null, ctx.providerToken);
+      const finalRows = finalRes.data || finalRes;
+      ctx.registrations = (Array.isArray(finalRows) ? finalRows : [])
+        .filter((r) => !['CANCELLED', 'REJECTED'].includes(r.status))
+        .map((r) => ({ id: r.id, email: (r.participant && r.participant.email) || r.user_id,
+          status: r.status, source: r.vehicle_source || r.vehicleSource }));
+      renderContestSnapshot(contest);
+      const byocCount = ctx.registrations.filter((r) => r.source === 'BYOC').length;
+      const rentalCount = ctx.registrations.filter((r) => r.source === 'RENTAL').length;
+      const feeCounts = (Array.isArray(finalRows) ? finalRows : []).reduce((acc, r) => {
+        const key = r.entry_fee_status || r.entryFeeStatus || 'CHƯA XÁC ĐỊNH';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      const feeSummary = Object.entries(feeCounts).map(([key, value]) => key + ': ' + value).join(', ');
+      return 'Đã đồng bộ ' + ctx.registrations.length + '/' + contest.capacity + ' VĐV' +
+        ' · BYOC: ' + byocCount + ' · xe thuê: ' + rentalCount +
+        (feeSummary ? ' · phí [' + feeSummary + ']' : '') +
+        (created ? ', tạo mới ' + created + ' tài khoản' : '') +
+        (ctx.capacityRejected.length ? ', bỏ qua ' + ctx.capacityRejected.length + ' người vì hết chỗ' : '');
     },
   },
   {
@@ -1049,6 +1192,11 @@ const STEPS = [
     name: 'Đóng đăng ký — OPEN sang CLOSED',
     api: 'POST /contests/:id/close',
     run: async () => {
+      const current = await call('GET', '/contests/' + ctx.contestId, null, ctx.providerToken);
+      if (['CLOSED', 'RUNNING', 'COMPLETED'].includes(current.status)) {
+        syncContestForm(current);
+        return 'giải đã ' + current.status + ' — không đóng đăng ký lần hai';
+      }
       const c = await call('POST', '/contests/' + ctx.contestId + '/close', {}, ctx.providerToken);
       return 'trạng thái ' + c.status;
     },
@@ -1831,6 +1979,7 @@ async function adoptContest(contestId) {
     status: r.status,
     source: r.vehicle_source || r.vehicleSource,
   }));
+  syncContestForm(contest);
 
   try {
     ctx.matches = await fetchMatches();
@@ -2308,6 +2457,12 @@ async function generateUsers() {
 
 async function loadCatalog() {
   const flat = (x) => (Array.isArray(x) ? x : (x && x.data) || []);
+  // Reload danh mục chỉ làm mới option, không phải lệnh đổi thể thức. Giữ lựa
+  // chọn hiện tại (đặc biệt khi vừa nhận một giải có sẵn); chỉ chọn Knockout
+  // ở lần tải đầu tiên khi người dùng chưa có lựa chọn nào.
+  const selectedTemplateId = $('cTemplate').value ||
+    (ctx.contestSnapshot && ctx.contestSnapshot.contest_template &&
+      ctx.contestSnapshot.contest_template.id) || '';
   await loadTemplateLookups();
   const results = await Promise.allSettled(CATALOG.map((c) => call('GET', c.path)));
   const ok = [];
@@ -2318,7 +2473,13 @@ async function loadCatalog() {
       const rows = flat(r.value);
       if (c.sel === 'cTemplate') ctx.templates = rows;
       fillSelect(c.sel, rows, 'name');
-      if (c.sel === 'cTemplate') chonMacDinhKhuonMau(rows);
+      if (c.sel === 'cTemplate') {
+        if (selectedTemplateId && rows.some((t) => t.id === selectedTemplateId)) {
+          $('cTemplate').value = selectedTemplateId;
+        } else {
+          chonMacDinhKhuonMau(rows);
+        }
+      }
       ok.push(rows.length + ' ' + c.label);
     } else {
       fillSelect(c.sel, [], 'name');
@@ -2738,8 +2899,8 @@ FORM_IDS.forEach((id) => {
 
 $('btnRefreshContest').onclick = async () => {
   try {
-    const c = await call('GET', '/contests/' + ctx.contestId, null, ctx.providerToken);
-    log('ok', 'Giải đang ở trạng thái ' + c.status);
+    await adoptContest(ctx.contestId);
+    log('ok', 'Đã đồng bộ lại toàn bộ trạng thái giải đang làm việc.');
   } catch (e) { log('err', e.message); }
 };
 

@@ -174,3 +174,51 @@ describe('mặc định khuôn mẫu giải', () => {
     expect(CLIENT_SCRIPT).toContain('Xoá trạng thái phiên');
   });
 });
+
+describe('nạp giải có sẵn và import vận động viên', () => {
+  const html = renderContestLab();
+
+  it('hiện snapshot trạng thái thật của giải đang làm việc', () => {
+    expect(html).toContain('id="contestSnapshot"');
+    expect(CLIENT_SCRIPT).toContain('Chính sách xe:');
+    expect(CLIENT_SCRIPT).toContain('Khung đăng ký:');
+    expect(CLIENT_SCRIPT).toContain('syncContestForm(contest)');
+  });
+
+  it('lấy policy từ API thay vì giá trị cũ còn trên form', () => {
+    expect(CLIENT_SCRIPT).toContain('const policy = contestPolicy(contest)');
+    expect(CLIENT_SCRIPT).not.toContain("const policy = $('cPolicy').value");
+  });
+
+  it('seed lại là idempotent và đồng bộ danh sách đăng ký từ máy chủ', () => {
+    expect(CLIENT_SCRIPT).toContain('existingByEmail.has(email.toLowerCase())');
+    expect(CLIENT_SCRIPT).toContain('đã có ' + "' + email + '" + ' trong giải — bỏ qua');
+    expect(CLIENT_SCRIPT).toContain("e.code === 'CONTEST_ALREADY_REGISTERED'");
+    expect(CLIENT_SCRIPT).toContain("e.code === 'CONTEST_CAPACITY_REACHED'");
+  });
+
+  it('tự sinh đúng số tài khoản còn thiếu để lấp đầy sức chứa', () => {
+    expect(CLIENT_SCRIPT).toContain('Number(contest.capacity || 0) - activeRows.length');
+    expect(CLIENT_SCRIPT).toContain('while (candidateLines.length < remaining)');
+    expect(CLIENT_SCRIPT).toContain("'contest.lab.' + contestKey");
+    expect(CLIENT_SCRIPT).toContain('candidateLines.slice(0, remaining)');
+  });
+
+  it('báo cáo phương tiện và trạng thái phí sau khi import', () => {
+    expect(CLIENT_SCRIPT).toContain("r.source === 'BYOC'");
+    expect(CLIENT_SCRIPT).toContain("r.source === 'RENTAL'");
+    expect(CLIENT_SCRIPT).toContain('entry_fee_status || r.entryFeeStatus');
+  });
+
+  it('reload danh mục giữ nguyên thể thức đang chọn', () => {
+    expect(CLIENT_SCRIPT).toContain("const selectedTemplateId = $('cTemplate').value");
+    expect(CLIENT_SCRIPT).toContain('rows.some((t) => t.id === selectedTemplateId)');
+    expect(CLIENT_SCRIPT).toContain("$('cTemplate').value = selectedTemplateId");
+  });
+
+  it('hiện trạng thái bypass và không đóng lại giải đã CLOSED', () => {
+    expect(CLIENT_SCRIPT).toContain('contest.check_in_window_bypassed');
+    expect(CLIENT_SCRIPT).toContain("['CLOSED', 'RUNNING', 'COMPLETED'].includes(current.status)");
+    expect(CLIENT_SCRIPT).toContain('không đóng đăng ký lần hai');
+  });
+});
