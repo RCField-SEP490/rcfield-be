@@ -1280,6 +1280,23 @@ export async function cancelBooking(
       throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
     }
   }
+  if (role === UserRole.STAFF) {
+    const [assignment] = await AppDataSource.query<{ exists: boolean }[]>(
+      `SELECT EXISTS(
+         SELECT 1
+         FROM staff_cafe_assignments assignment
+         JOIN users staff ON staff.id = assignment.staff_id
+         WHERE assignment.staff_id = $1
+           AND assignment.cafe_id = $2
+           AND staff.is_active = true
+           AND staff.deleted_at IS NULL
+       ) AS exists`,
+      [cancelledBy, booking.cafeId],
+    );
+    if (!assignment?.exists) {
+      throw new AppError('Access denied', 403, 'STAFF_NOT_ASSIGNED_TO_CAFE');
+    }
+  }
 
   await repo.update(bookingId, {
     status: BookingStatus.CANCELLED,
