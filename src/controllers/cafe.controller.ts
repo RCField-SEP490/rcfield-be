@@ -47,6 +47,24 @@ function normalizeCafeListQuery(query: Request['query']) {
   return normalized;
 }
 
+/**
+ * Vì sao khung giờ này không đặt được.
+ *
+ * Trước đây bị giải đấu khoá sân cũng chỉ trả `available: false`, giống hệt khi
+ * hết chỗ vì khách khác đã đặt. Giao diện không có gì để phân biệt nên in "Hết"
+ * cho cả mười ba khung giờ trong ngày — khách nhìn vào tưởng quán kín lịch cả
+ * ngày và bỏ đi, trong khi sự thật là hôm đó có giải và hôm sau vẫn trống.
+ *
+ * Trả kèm tên giải để khách biết chuyện gì đang xảy ra. Đây là thông tin công
+ * khai: giải đấu vốn được đăng lên trang chủ để mời người tham gia.
+ */
+function contestUnavailable(lock: { contest_id: string; contest_name: string }) {
+  return {
+    unavailable_reason: 'CONTEST' as const,
+    contest: { id: lock.contest_id, name: lock.contest_name },
+  };
+}
+
 export const cafeController = {
   // POST /api/v1/cafes  [auth]
   async createCafe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -253,6 +271,7 @@ export const cafeController = {
               available: false,
               byoc_remaining: 0,
               vehicles: [],
+              ...contestUnavailable(contestLock),
             },
           });
           return;
@@ -335,6 +354,7 @@ export const cafeController = {
             play_mode: 'RENTAL',
             available: false,
             vehicles: [],
+            ...contestUnavailable(contestLock),
           },
         });
         return;

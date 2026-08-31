@@ -153,12 +153,18 @@ export async function getProviderKpi(
 
   // 1a. Tiền thu từ booking — lọc theo NGÀY THU, xem chú thích đầu tệp.
   const revenueRes = await AppDataSource.query<[{ totalRevenue: string }]>(
-    `SELECT COALESCE(SUM(pc.amount), 0)::float AS "totalRevenue"
+    `SELECT COALESCE(SUM(
+      CASE
+        WHEN pc.status IN ('HELD', 'DISBURSED') THEN pc.amount
+        WHEN pc.status = 'PARTIALLY_REFUNDED' THEN (pc.amount - COALESCE(pc.refunded_amount, 0))
+        ELSE 0
+      END
+    ), 0)::float AS "totalRevenue"
     FROM bookings b
     JOIN payment_components pc ON pc.booking_id = b.id
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
-      AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
       AND pc.type != 'SECURITY_DEPOSIT'
       AND pc.created_at >= $2::timestamptz
       AND pc.created_at <= $3::timestamptz
@@ -324,16 +330,16 @@ export async function getProviderRevenueTrend(
     booking_revenue AS (
       SELECT
         DATE_TRUNC($2, pc.created_at) AS period,
-        COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN pc.amount END), 0)::float       AS "slotFee",
-        COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN pc.amount END), 0)::float     AS "rentalFee",
-        COALESCE(SUM(CASE WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN pc.amount END), 0)::float AS "fnbPreorder",
+        COALESCE(SUM(CASE WHEN pc.type = 'SLOT_FEE' THEN (CASE WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0) ELSE pc.amount END) END), 0)::float       AS "slotFee",
+        COALESCE(SUM(CASE WHEN pc.type = 'RENTAL_FEE' THEN (CASE WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0) ELSE pc.amount END) END), 0)::float     AS "rentalFee",
+        COALESCE(SUM(CASE WHEN pc.type IN ('FNB_PREORDER', 'FNB_ON_SITE') THEN (CASE WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0) ELSE pc.amount END) END), 0)::float AS "fnbPreorder",
         COALESCE(SUM(CASE WHEN pc.type = 'EXTENSION_FEE' THEN pc.amount END), 0)::float  AS "extensionFee",
         COALESCE(SUM(CASE WHEN pc.type = 'DAMAGE_CHARGE' THEN pc.amount END), 0)::float  AS "damageCharge"
       FROM bookings b
       JOIN payment_components pc ON pc.booking_id = b.id
       JOIN cafes c ON c.id = b.cafe_id
       WHERE c.provider_id = $3
-        AND pc.status IN ('HELD', 'DISBURSED')
+        AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
         AND pc.type != 'SECURITY_DEPOSIT'
         AND pc.created_at >= $4::timestamptz
         AND pc.created_at <= $5::timestamptz
@@ -495,12 +501,17 @@ export async function getProviderRevenueBreakdown(
         WHEN pc.type = 'DAMAGE_CHARGE' THEN 'Phí bồi thường'
         ELSE pc.type::text
       END AS "label",
-      COALESCE(SUM(pc.amount), 0)::float AS "amount"
+      COALESCE(SUM(
+        CASE
+          WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+          ELSE pc.amount
+        END
+      ), 0)::float AS "amount"
     FROM bookings b
     JOIN payment_components pc ON pc.booking_id = b.id
     JOIN cafes c ON c.id = b.cafe_id
     WHERE c.provider_id = $1
-      AND pc.status IN ('HELD', 'DISBURSED')
+      AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
       AND pc.type != 'SECURITY_DEPOSIT'
       AND pc.created_at >= $2::timestamptz
       AND pc.created_at <= $3::timestamptz
@@ -588,10 +599,22 @@ export interface BookingChannelItem {
  * mất khỏi báo cáo — không báo lỗi, chỉ lặng lẽ thiếu, và doanh thu của nó
  * không được tính vào đâu cả.
  */
+/**
+ * Các kênh KHÁCH TÌM ĐẾN chi nhánh.
+ *
+ * Cố ý KHÔNG có `CONTEST`. Đơn nguồn giải đấu vẫn là một hàng thật trong
+ * `bookings` — `contest-rental.service.ts` tạo ra chúng khi vận động viên thuê
+ * xe của quán — nhưng chúng không phải một kênh đặt lịch: không ai mở app rồi
+ * chọn "đặt qua giải đấu". Chúng là hệ quả của việc đăng ký thi đấu, và tiền
+ * của chúng đã có sổ riêng ở báo cáo tài chính từng giải.
+ *
+ * Để lẫn vào đây thì bảng trả lời sai câu hỏi nó đặt ra ("khách tự đặt qua app
+ * hay nhân viên tạo tại quầy"), và tỷ lệ phần trăm của các kênh thật bị pha
+ * loãng bởi một thứ không cạnh tranh với chúng.
+ */
 const BOOKING_SOURCE_LABELS: Record<string, string> = {
   APP: 'Khách tự đặt qua app',
   STAFF_MANUAL: 'Nhân viên tạo (khách vãng lai)',
-  CONTEST: 'Giải đấu',
   FACEBOOK: 'Facebook Messenger',
 };
 
@@ -619,8 +642,13 @@ export async function getProviderBookingChannels(
     `SELECT
        b.source AS "source",
        COUNT(DISTINCT b.id)::int AS "bookingCount",
-       COALESCE(SUM(pc.amount) FILTER (
-         WHERE pc.status IN ('HELD', 'DISBURSED') AND pc.type != 'SECURITY_DEPOSIT'
+       COALESCE(SUM(
+         CASE
+           WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+           ELSE pc.amount
+         END
+       ) FILTER (
+         WHERE pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED') AND pc.type != 'SECURITY_DEPOSIT'
        ), 0)::float AS "revenue"
      FROM bookings b
      JOIN cafes c ON c.id = b.cafe_id
@@ -629,6 +657,14 @@ export async function getProviderBookingChannels(
        AND b.slot_start >= $2::timestamptz
        AND b.slot_start <= $3::timestamptz
        AND ($4::uuid IS NULL OR b.cafe_id = $4)
+       -- Loại đơn giải đấu khỏi CẢ tử số lẫn mẫu số. Chỉ ẩn hàng mà vẫn đếm
+       -- vào tổng thì phần trăm các kênh còn lại không cộng lại thành 100%, và
+       -- người đọc ngồi tìm xem mình sai ở đâu.
+       --
+       -- Kiểm cả hai điều kiện: contest_id là mối liên kết thật, còn source là
+       -- thứ được gán lúc tạo. Dữ liệu cũ có thể chỉ có một trong hai.
+       AND b.contest_id IS NULL
+       AND b.source <> 'CONTEST'
      GROUP BY b.source`,
     [providerId, fromDate, toDate, cafeId || null],
   );
@@ -668,10 +704,15 @@ export async function getProviderBranchPerformance(
   */
   const query = `
     WITH doanh_thu AS (
-      SELECT b.cafe_id, pc.amount
+      SELECT
+        b.cafe_id,
+        CASE
+          WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+          ELSE pc.amount
+        END AS amount
       FROM bookings b
       JOIN payment_components pc ON pc.booking_id = b.id
-      WHERE pc.status IN ('HELD', 'DISBURSED')
+      WHERE pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
         AND pc.type != 'SECURITY_DEPOSIT'
         AND pc.created_at >= $2::timestamptz
         AND pc.created_at <= $3::timestamptz
@@ -794,12 +835,17 @@ export async function getProviderBranchOperations(
         `WITH booking_revenue AS (
            SELECT
              b.cafe_id AS cafe_id,
-             COALESCE(SUM(pc.amount), 0)::float AS total_revenue,
+             COALESCE(SUM(
+               CASE
+                 WHEN pc.status = 'PARTIALLY_REFUNDED' THEN pc.amount - COALESCE(pc.refunded_amount, 0)
+                 ELSE pc.amount
+               END
+             ), 0)::float AS total_revenue,
              COUNT(DISTINCT b.id)::int AS booking_count
            FROM bookings b
            JOIN cafes c ON c.id = b.cafe_id
            LEFT JOIN payment_components pc ON pc.booking_id = b.id
-             AND pc.status IN ('HELD', 'DISBURSED')
+             AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
              AND pc.type != 'SECURITY_DEPOSIT'
            WHERE c.provider_id = $1
              AND c.deleted_at IS NULL
@@ -847,7 +893,11 @@ export async function getProviderBranchOperations(
        WHERE c.provider_id = $1
          AND c.deleted_at IS NULL
          AND b.deleted_at IS NULL
-         AND b.status IN ('PENDING', 'CONFIRMED', 'COMPLETED')
+         -- AWAITING_PAYMENT nghĩa là khách đã chơi xong, chỉ còn nợ khoản phát
+         -- sinh cuối phiên. Sân đã bị chiếm thật, nên nó phải nằm trong tử số.
+         -- Bỏ sót thì mỗi đơn chờ thu tiền lại làm tỷ lệ khai thác tụt xuống,
+         -- đúng vào những ngày đông khách nhất.
+         AND b.status IN ('PENDING', 'CONFIRMED', 'AWAITING_PAYMENT', 'COMPLETED')
          AND b.slot_start < $3::timestamptz
          AND b.slot_end > $2::timestamptz
        GROUP BY b.cafe_id`,

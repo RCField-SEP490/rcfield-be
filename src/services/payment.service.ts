@@ -1190,14 +1190,10 @@ export async function processConfirmationResult(
       gatewayTransactionId: result.transactionNo ?? null,
     });
 
-    // Khách CỐ Ý huỷ ở cổng thanh toán thì nhả suất trong giải ngay.
+    // Khách CỐ Ý huỷ ở cổng thanh toán (Mã 24) thì nhả suất trong giải ngay.
     //
-    // Chỉ mã 24 — "khách hàng huỷ giao dịch". Sai OTP, lỗi ngân hàng hay hết
-    // giờ ở cổng đều KHÔNG nhả: gõ nhầm một lần mà mất chỗ rồi phải tranh lại
-    // là quá nặng, và ở giải gần đầy thì gần như chắc chắn mất suất thật.
-    //
-    // Suất bị giữ là vấn đề có thật vì bộ đếm sức chứa tính mọi đăng ký chưa
-    // huỷ, kể cả người chưa trả đồng nào.
+    // Chỉ mã 24 — "khách hàng huỷ giao dịch". Sai OTP, lỗi ngân hàng hay thoát màn hình
+    // đều KHÔNG nhả: đơn giữ nguyên trạng thái chờ thanh toán để khách trả lại được.
     if (
       tx.subjectType === PaymentTransactionSubjectType.CONTEST_ENTRY &&
       tx.contestRegistrationId &&
@@ -1281,6 +1277,9 @@ export async function processConfirmationResult(
     registration.paymentStatus = ContestEntryFeePaymentStatus.MARKED_PAID;
     registration.entryFeeMarkedPaidAt = new Date();
     registration.entryFeeMarkedPaidBy = null;
+    registration.status = ContestRegistrationStatus.CONFIRMED;
+    registration.cancelledAt = null;
+    registration.cancellationReason = null;
     registration.metadata = {
       ...(registration.metadata ?? {}),
       payment_source: paymentSource,
@@ -2025,6 +2024,19 @@ export async function createCheckoutAdditionalPaymentUrl(
   const bookingRepo = AppDataSource.getRepository(Booking);
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
+
+  // Ràng buộc thứ tự: Chặn khởi tạo thanh toán phát sinh khi phiên chơi chưa hoàn tất kiểm tra trả xe
+  const sessionRepo = AppDataSource.getRepository(Session);
+  const activeSession = await sessionRepo.findOne({
+    where: { bookingId, status: In([SessionStatus.ACTIVE, SessionStatus.EXTENDING]) },
+  });
+  if (activeSession) {
+    throw new AppError(
+      'Vui lòng hoàn tất kiểm tra và trả xe tại quầy với Nhân viên trước khi thực hiện thanh toán các khoản phát sinh.',
+      400,
+      'SESSION_NOT_CHECKED_OUT',
+    );
+  }
 
   const gateway = getPaymentGateway(gatewayName);
 

@@ -54,6 +54,11 @@ import { wsService } from './websocket.service';
 import { createNotification } from './notification.service';
 import { getBookingCutoff } from './subscription.service';
 import { createGuestUser, findUserByPhone } from './guest-user';
+import {
+  allocatePaymentRefCode,
+  buildBankTransferCheckout,
+  type BankTransferCheckout,
+} from './bank-transfer-checkout.service';
 import type { Promotion } from '../models/promotion.entity';
 import {
   DAY_MS,
@@ -1581,6 +1586,11 @@ export async function listCafeBookings(
       'u.full_name AS "customerName"',
       'u.phone AS "customerPhone"',
       's.status AS "sessionStatus"',
+      // Giờ kết thúc DỰ KIẾN của phiên, không phải giờ đặt: gia hạn đẩy nó ra
+      // xa hơn `slot_end`. Giao diện cần đúng mốc này để phân biệt "đang chơi"
+      // với "quá giờ chưa trả xe" — lấy `slot_end` thì mọi phiên đang gia hạn
+      // đều bị báo quá giờ oan.
+      's.planned_end_at AS "sessionPlannedEndAt"',
       "(SELECT EXISTS (SELECT 1 FROM payment_transactions WHERE booking_id = b.id AND type = 'REFUND' AND status = 'PENDING')) AS \"hasPendingRefund\"",
     ])
     .where('b.cafe_id = :cafeId', { cafeId })
@@ -1652,7 +1662,6 @@ function resolveCafeBookingListPeriod(
       end: new Date(`${query.date}T23:59:59+07:00`),
     };
   }
-
   if (query.from && query.to) {
     return {
       start: new Date(`${query.from}T00:00:00+07:00`),
@@ -1677,6 +1686,7 @@ export interface CafeBookingListItem {
   customerName: string;
   customerPhone: string | null;
   sessionStatus?: string | null;
+  sessionPlannedEndAt?: string | null;
   hasPendingRefund?: boolean;
 }
 
@@ -1704,6 +1714,12 @@ export interface CreateWalkInBookingBody {
   payment_method: 'CASH' | 'BANK_TRANSFER';
   vehicle_ids: string[];
   participants: WalkInParticipantInput[];
+  fnb_items?: Array<{
+    menu_item_id: string;
+    variant_id?: string;
+    quantity: number;
+    notes?: string;
+  }>;
 }
 
 export interface CreateWalkInBookingResult {
@@ -1713,6 +1729,7 @@ export interface CreateWalkInBookingResult {
   source: string;
   paymentStatus: string;
   totalAmount: number;
+  bankTransfer?: BankTransferCheckout;
 }
 
 export async function createWalkInBooking(
@@ -1727,23 +1744,15 @@ export async function createWalkInBooking(
     throw new AppError('slot_start must be before slot_end', 400, 'INVALID_SLOT');
   }
 
-  if (slotStart <= new Date()) {
+  if (slotEnd <= new Date()) {
     throw new AppError('Cannot book a slot in the past', 400, 'SLOT_IN_PAST');
   }
 
-  // Find or create primary guest account based on the first participant's phone number
   const primaryGuest = body.participants[0];
   if (!primaryGuest) {
     throw new AppError('Phải có ít nhất 1 người chơi tham gia', 400, 'PARTICIPANTS_REQUIRED');
   }
 
-  // Khách vãng lai tại quầy: dùng lại BẤT KỲ người dùng nào trùng số điện thoại,
-  // kể cả tài khoản thật. Điều đó chấp nhận được ở đây vì staff đứng đối mặt
-  // khách và nhìn thấy họ.
-  //
-  // ⚠️ Luồng đặt qua Facebook KHÔNG được dùng đường này — không ai xác minh gì
-  // qua Messenger, nên nó phải đi qua `resolveFacebookSoftUser`, nơi có chốt
-  // chặn tài khoản thật.
   const customer =
     (await findUserByPhone(primaryGuest.guest_phone)) ??
     (await createGuestUser(primaryGuest.guest_phone, primaryGuest.guest_name));
@@ -1753,8 +1762,6 @@ export async function createWalkInBooking(
   if (!cafe) throw new AppError('Cafe not found', 404, 'CAFE_NOT_FOUND');
   if (cafe.status !== 'ACTIVE') throw new AppError('Cafe is not active', 400, 'CAFE_NOT_ACTIVE');
   assertSlotWithinOperatingHours(cafe, slotStart, slotEnd);
-  // Khách vãng lai chơi ngay nên hầu như luôn nằm trong phạm vi còn phục vụ.
-  // Vẫn kiểm để bất biến "không nhận đơn ngoài phạm vi" đúng ở mọi lối tạo đơn.
   await assertWithinSubscriptionCoverage(cafe, slotEnd);
 
   const slotDuration = cafe.slotDurationMinutes;
@@ -1791,8 +1798,9 @@ export async function createWalkInBooking(
     );
   }
 
-  const trackTypeRepo = AppDataSource.getRepository(TrackType);
-  const trackType = await trackTypeRepo.findOne({ where: { id: trackConfig.trackTypeId } });
+  const trackType = await AppDataSource.getRepository(TrackType).findOne({
+    where: { id: trackConfig.trackTypeId },
+  });
 
   await assertBookingNotBlockedByContest({
     cafeId,
@@ -1802,14 +1810,11 @@ export async function createWalkInBooking(
     trackTypeId: trackConfig.trackTypeId,
   });
 
-  // Dynamic pricing lookup
   const { multiplier: slotMultiplier, label: pricingLabel } = await getEffectiveMultiplier(
     cafeId,
     slotStart,
   );
-
-  const baseSlotFeeRate = Number(cafe.slotFeeRate) * slotMultiplier;
-  const slotFee = baseSlotFeeRate * slotCount * playerCount;
+  const slotFee = Math.round(Number(cafe.slotFeeRate) * slotCount * playerCount * slotMultiplier);
 
   let rentalFeeTotal = 0;
   const vehiclePricings: Array<{
@@ -1818,26 +1823,35 @@ export async function createWalkInBooking(
     rentalFee: number;
     catalogName: string;
     tier: string;
-    identifier: string | null;
+    identifier: string;
     color: string | null;
     coverImageUrl: string | null;
   }> = [];
 
   if (body.play_mode === BookingMode.RENTAL) {
-    if (!body.vehicle_ids.length) {
-      throw new AppError('vehicle_ids required for RENTAL mode', 400, 'VEHICLE_REQUIRED');
+    if (!body.vehicle_ids || body.vehicle_ids.length === 0) {
+      throw new AppError('Vehicles required for RENTAL mode', 400, 'VEHICLES_REQUIRED');
+    }
+    if (body.vehicle_ids.length !== playerCount) {
+      throw new AppError(
+        `Number of vehicles (${body.vehicle_ids.length}) must match number of participants (${playerCount})`,
+        400,
+        'VEHICLE_COUNT_MISMATCH',
+      );
     }
 
     const vehicleRepo = AppDataSource.getRepository(Vehicle);
     const catalogRepo = AppDataSource.getRepository(VehicleCatalog);
 
     for (const vehicleId of body.vehicle_ids) {
-      let vehicle = await vehicleRepo.findOne({ where: { id: vehicleId, cafeId } });
-      const catalog = vehicle
-        ? await catalogRepo.findOne({ where: { id: vehicle.catalogId } })
-        : await catalogRepo.findOne({ where: { id: vehicleId, cafeId } });
+      let vehicle = await vehicleRepo.findOne({
+        where: { id: vehicleId, cafeId },
+        relations: ['catalog'],
+      });
+      let catalog: VehicleCatalog | null | undefined = vehicle?.catalog;
 
       if (!vehicle) {
+        catalog = await catalogRepo.findOne({ where: { id: vehicleId, cafeId } });
         if (!catalog)
           throw new AppError(`Vehicle ${vehicleId} not found`, 404, 'VEHICLE_NOT_FOUND');
         vehicle = await vehicleRepo.findOne({
@@ -1855,7 +1869,6 @@ export async function createWalkInBooking(
 
       if (!catalog) throw new AppError('Vehicle catalog not found', 500, 'CATALOG_NOT_FOUND');
 
-      // Check catalog track type compatibility
       if (
         catalog.compatibleTrackTypes.length > 0 &&
         !catalog.compatibleTrackTypes.includes(trackConfig.trackTypeId)
@@ -1876,7 +1889,7 @@ export async function createWalkInBooking(
         rentalFee,
         catalogName: catalog.name,
         tier: catalog.tier,
-        identifier: vehicle.identifier,
+        identifier: vehicle.identifier ?? '',
         color: vehicle.color,
         coverImageUrl: vehicle.distinctiveImageUrl ?? catalog.coverImageUrl,
       });
@@ -1918,10 +1931,75 @@ export async function createWalkInBooking(
     }
   }
 
-  const totalAmount = slotFee + rentalFeeTotal;
-  const bookingId = randomUUID();
+  let fnbTotal = 0;
+  const fnbPricings: Array<{
+    menuItemId: string;
+    menuItemVariantId: string | null;
+    itemName: string;
+    variantName: string | null;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+    notes?: string;
+  }> = [];
 
-  // Acquire Redis slot locks for RENTAL vehicles
+  if (body.fnb_items && body.fnb_items.length > 0) {
+    const menuRepo = AppDataSource.getRepository(MenuItem);
+    for (const item of body.fnb_items) {
+      const menuItem = await menuRepo.findOne({
+        where: { id: item.menu_item_id, cafeId },
+      });
+      if (!menuItem || !menuItem.isAvailable) {
+        throw new AppError(
+          `Menu item ${item.menu_item_id} not available`,
+          400,
+          'MENU_ITEM_UNAVAILABLE',
+        );
+      }
+      if (item.variant_id && menuItem.isCombo) {
+        throw new AppError('Combo không có lựa chọn riêng', 400, 'INVALID_MENU_VARIANT');
+      }
+      const variant = item.variant_id
+        ? await AppDataSource.getRepository(MenuItemVariant).findOne({
+            where: { id: item.variant_id, menuItemId: menuItem.id },
+          })
+        : null;
+      if (item.variant_id && (!variant || !variant.isAvailable)) {
+        throw new AppError('Lựa chọn món không khả dụng', 400, 'MENU_VARIANT_UNAVAILABLE');
+      }
+      const unitPrice = Number(variant?.price ?? menuItem.price);
+      const subtotal = unitPrice * item.quantity;
+      fnbTotal += subtotal;
+      fnbPricings.push({
+        menuItemId: item.menu_item_id,
+        menuItemVariantId: variant?.id ?? null,
+        itemName: menuItem.name,
+        variantName: variant?.name ?? null,
+        quantity: item.quantity,
+        unitPrice,
+        subtotal,
+        notes: item.notes,
+      });
+    }
+  }
+
+  const totalAmount = slotFee + rentalFeeTotal + fnbTotal;
+  const bookingId = randomUUID();
+  const isBankTransfer = body.payment_method === 'BANK_TRANSFER';
+  const paymentExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  let refCode: string | null = null;
+  let bankTransfer: BankTransferCheckout | undefined;
+
+  if (isBankTransfer) {
+    refCode = await allocatePaymentRefCode();
+    bankTransfer = await buildBankTransferCheckout({
+      cafeId,
+      amount: totalAmount,
+      refCode,
+      expiresAt: paymentExpiresAt,
+    });
+  }
+
   const lockedVehicleSlots: VehicleSlotLock[] = vehiclePricings
     .flatMap(({ vehicleId }) => slotStarts.map((slotStart) => ({ vehicleId, slotStart })))
     .sort((left, right) => {
@@ -1962,16 +2040,15 @@ export async function createWalkInBooking(
         trackConfigId: trackConfig.id,
         playMode: body.play_mode,
         source: BookingSource.STAFF_MANUAL,
-        status: BookingStatus.CONFIRMED, // Walk-in is instantly CONFIRMED
+        status: isBankTransfer ? BookingStatus.PENDING : BookingStatus.CONFIRMED,
         slotStart,
         slotEnd,
-        paymentExpiresAt: new Date(),
+        paymentExpiresAt: isBankTransfer ? paymentExpiresAt : new Date(),
         discountAmount: 0,
         snapshot,
       });
       await em.save(newBooking);
 
-      // Primary participant (BOOKER) - mapping to customer
       const primaryParticipant = em.create(BookingParticipant, {
         bookingId: newBooking.id,
         userId: customer.id,
@@ -1980,7 +2057,6 @@ export async function createWalkInBooking(
       });
       await em.save(primaryParticipant);
 
-      // Save additional participants (exclude primary participant since it's already BOOKER)
       for (let i = 1; i < body.participants.length; i++) {
         const p = body.participants[i];
         const participant = em.create(BookingParticipant, {
@@ -1994,7 +2070,6 @@ export async function createWalkInBooking(
         await em.save(participant);
       }
 
-      // Booking vehicles
       const savedVehicles: BookingVehicle[] = [];
       for (const vp of vehiclePricings) {
         const bv = em.create(BookingVehicle, {
@@ -2013,13 +2088,16 @@ export async function createWalkInBooking(
         savedVehicles.push(bv);
       }
 
-      // Create Payment Components immediately as DISBURSED (Cash/card received at counter)
+      const compStatus = isBankTransfer
+        ? PaymentComponentStatus.PENDING
+        : PaymentComponentStatus.DISBURSED;
+
       const slotFeeComponent = em.create(PaymentComponent, {
         bookingId: newBooking.id,
         bookingVehicleId: null,
         type: PaymentComponentType.SLOT_FEE,
         amount: slotFee,
-        status: PaymentComponentStatus.DISBURSED,
+        status: compStatus,
       });
       await em.save(slotFeeComponent);
 
@@ -2029,27 +2107,70 @@ export async function createWalkInBooking(
           bookingVehicleId: bv.id,
           type: PaymentComponentType.RENTAL_FEE,
           amount: Number(bv.rentalFeeSnapshot),
-          status: PaymentComponentStatus.DISBURSED,
+          status: compStatus,
         });
         await em.save(rfComponent);
       }
 
-      // Create Payment Transaction as SUCCESS
+      if (fnbPricings.length > 0) {
+        const fnbOrder = em.create(FnbOrder, {
+          bookingId: newBooking.id,
+          orderType: FnbOrderType.PRE_ORDER,
+          totalAmount: fnbTotal,
+          status: isBankTransfer ? FnbOrderStatus.PENDING : FnbOrderStatus.CONFIRMED,
+        });
+        await em.save(fnbOrder);
+        for (const item of fnbPricings) {
+          const orderItem = em.create(FnbOrderItem, {
+            fnbOrderId: fnbOrder.id,
+            menuItemId: item.menuItemId,
+            variantId: item.menuItemVariantId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            subtotal: item.subtotal,
+            notes: item.notes ?? null,
+            nameSnapshot: item.itemName,
+            variantNameSnapshot: item.variantName,
+          });
+          await em.save(orderItem);
+        }
+
+        const fnbComponent = em.create(PaymentComponent, {
+          bookingId: newBooking.id,
+          bookingVehicleId: null,
+          type: PaymentComponentType.FB_PREORDER,
+          amount: fnbTotal,
+          status: compStatus,
+        });
+        await em.save(fnbComponent);
+      }
+
       const transaction = em.create(PaymentTransaction, {
         bookingId: newBooking.id,
         type: PaymentTransactionType.PAYMENT,
-        gateway: `COUNTER_${body.payment_method}`,
-        txnRef: `WALK_IN_${newBooking.id.substring(0, 8).toUpperCase()}_${Date.now()}`,
+        gateway: isBankTransfer ? 'VIETQR' : `COUNTER_${body.payment_method}`,
+        txnRef: isBankTransfer
+          ? refCode!
+          : `WALK_IN_${newBooking.id.substring(0, 8).toUpperCase()}_${Date.now()}`,
+        paymentRefCode: isBankTransfer ? refCode : null,
         amount: totalAmount,
-        status: PaymentTransactionStatus.SUCCESS,
+        status: isBankTransfer
+          ? PaymentTransactionStatus.PENDING
+          : PaymentTransactionStatus.SUCCESS,
         rawRequest: { created_by_staff_id: staffId, payment_method: body.payment_method },
-        rawResponse: {
-          processedAt: new Date().toISOString(),
-          processedByStaffId: staffId,
-          paymentMethod: body.payment_method,
-          status: 'SUCCESS',
-          amount: totalAmount,
-        },
+        rawResponse: isBankTransfer
+          ? {
+              bankTransfer,
+              requestedAt: new Date().toISOString(),
+              requestedByStaffId: staffId,
+            }
+          : {
+              processedAt: new Date().toISOString(),
+              processedByStaffId: staffId,
+              paymentMethod: body.payment_method,
+              status: 'SUCCESS',
+              amount: totalAmount,
+            },
       });
       await em.save(transaction);
 
@@ -2067,7 +2188,7 @@ export async function createWalkInBooking(
 
     logger.info(
       'BookingService',
-      `walk-in booking created bookingId=${booking.id} mode=${body.play_mode}`,
+      `walk-in booking created bookingId=${booking.id} mode=${body.play_mode} isBankTransfer=${isBankTransfer}`,
     );
 
     return {
@@ -2075,8 +2196,9 @@ export async function createWalkInBooking(
       bookingCode: `RCF-${booking.id.substring(0, 4).toUpperCase()}`,
       status: booking.status,
       source: booking.source,
-      paymentStatus: 'CAPTURED',
+      paymentStatus: isBankTransfer ? 'PENDING' : 'CAPTURED',
       totalAmount,
+      bankTransfer: isBankTransfer ? bankTransfer : undefined,
     };
   } catch (err) {
     // Release locks on transaction failure

@@ -552,6 +552,14 @@ export enum NotificationType {
   ACCOUNT_SUSPENDED = 'ACCOUNT_SUSPENDED',
   ACCOUNT_UNSUSPENDED = 'ACCOUNT_UNSUSPENDED',
   TRIAL_EXPIRING_SOON = 'TRIAL_EXPIRING_SOON',
+  /**
+   * Gói TRẢ PHÍ sắp hết hạn — tách khỏi `TRIAL_EXPIRING_SOON`.
+   *
+   * Dùng chung một loại thì không lọc ra được ai là khách trả tiền sắp rời đi,
+   * và nội dung thông báo buộc phải viết chung chung cho cả hai. Nói với người
+   * đang dùng gói Pro rằng "gói dùng thử sắp hết hạn" là sai sự thật.
+   */
+  SUBSCRIPTION_EXPIRING_SOON = 'SUBSCRIPTION_EXPIRING_SOON',
   GRACE_PERIOD_STARTED = 'GRACE_PERIOD_STARTED',
   SUBSCRIPTION_EXPIRED = 'SUBSCRIPTION_EXPIRED',
   SUBSCRIPTION_ACTIVATED = 'SUBSCRIPTION_ACTIVATED',

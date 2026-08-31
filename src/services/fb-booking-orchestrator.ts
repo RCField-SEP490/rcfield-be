@@ -1172,16 +1172,52 @@ async function issueCheckout(
       }).format(new Date(checkout.bank_transfer.expires_at))
     : null;
 
+  const bank = checkout.bank_transfer;
+
+  /*
+    KHÔNG dùng `checkout.payment_url` cho khách Facebook.
+
+    Đường dẫn đó trỏ tới trang `/payment/bank-transfer/:bookingId`, mà trang ấy
+    gọi `POST /bookings/:id/checkout` — một endpoint đòi đăng nhập VÀ đòi vai
+    CUSTOMER. Khách đặt qua Messenger là tài khoản mềm: không có mật khẩu, không
+    bao giờ đăng nhập được. Nút đó vì vậy KHÔNG THỂ chạy với bất kỳ đơn Facebook
+    nào — ai bấm cũng ra "Không mở được trang thanh toán", kể cả chính chủ quán
+    đang đăng nhập sẵn (vai PROVIDER thì `authorize(CUSTOMER)` chặn ngay).
+
+    Tệ hơn: nếu vượt được cửa quyền thì nó lại tạo một phiên thanh toán MỚI cho
+    cùng đơn, khác mã tham chiếu với mã QR vừa gửi trong Messenger.
+
+    Ở chế độ mô phỏng, `sandbox_url` mới là thứ đúng: đó chính là nội dung mã QR
+    kia mã hoá, một trang công khai không cần đăng nhập. Bấm nút và quét mã dẫn
+    tới cùng một chỗ.
+  */
+  const payUrl = bank?.sandbox_url;
+
   return {
     text: [
       `Đã giữ chỗ cho bạn tại ${cafeName}!`,
       ``,
       `Số tiền: ${checkout.total_amount.toLocaleString('vi-VN')}đ`,
       ...(expiresAt ? [`Thanh toán trước: ${expiresAt}`] : []),
+      // Thông tin chuyển khoản dạng chữ: đường thoát khi ảnh QR gửi hụt hoặc
+      // khách xem trên máy tính không quét được. Không có nó thì mất ảnh là mất
+      // luôn mọi cách trả tiền.
+      ...(bank
+        ? [
+            ``,
+            `Ngân hàng: ${bank.bank_name}`,
+            `Số tài khoản: ${bank.account_number}`,
+            `Chủ tài khoản: ${bank.account_name}`,
+            `Nội dung chuyển khoản: ${bank.ref_code}`,
+            `(Ghi đúng nội dung này để hệ thống tự khớp đơn giúp bạn.)`,
+          ]
+        : []),
       ``,
-      `Quét mã QR hoặc bấm nút bên dưới để thanh toán nhé.`,
+      payUrl
+        ? `Quét mã QR hoặc bấm nút bên dưới để thanh toán nhé.`
+        : `Quét mã QR để thanh toán nhé.`,
     ].join('\n'),
-    paymentUrl: checkout.payment_url ?? undefined,
+    paymentUrl: payUrl,
     qrImageUrl: qr?.url,
   };
 }

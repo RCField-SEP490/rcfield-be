@@ -1052,20 +1052,23 @@ export async function createContestEntryPaymentUrl(
     );
   }
 
-  const existingTxn = await AppDataSource.getRepository(PaymentTransaction).findOne({
+  // Nếu có giao dịch PENDING cũ của đăng ký này (do khách vừa thoát cổng thanh toán và bấm Thanh toán lại),
+  // tự động cập nhật FAILED cho giao dịch PENDING cũ để sinh link thanh toán mới mượt mà cho khách.
+  const existingTxns = await AppDataSource.getRepository(PaymentTransaction).find({
     where: {
       contestRegistrationId: registration.id,
       subjectType: PaymentTransactionSubjectType.CONTEST_ENTRY,
       type: PaymentTransactionType.PAYMENT,
       status: PaymentTransactionStatus.PENDING,
     },
-    order: { createdAt: 'DESC' },
   });
-  if (existingTxn) {
-    throw new AppError(
-      'Một giao dịch entry fee đang chờ xử lý; vui lòng hoàn tất hoặc hủy trước khi tạo mới',
-      409,
-      'ENTRY_FEE_TRANSACTION_PENDING',
+  if (existingTxns.length > 0) {
+    await AppDataSource.getRepository(PaymentTransaction).update(
+      existingTxns.map((t) => t.id),
+      {
+        status: PaymentTransactionStatus.FAILED,
+        rawResponse: { reason: 'REPLACED_BY_RETRY_PAYMENT' },
+      },
     );
   }
 

@@ -13,6 +13,10 @@ staffRouter.get('/packages/top-customers', staffController.getTopCustomers);
 staffRouter.get('/packages/search-customers', staffController.searchCustomers);
 staffRouter.get('/bookings', staffController.bookings);
 staffRouter.post('/bookings', staffController.createWalkInBooking);
+staffRouter.post(
+  '/bookings/:bookingId/confirm-bank-transfer',
+  staffController.confirmWalkInBankTransfer,
+);
 staffRouter.get('/fnb-orders', staffController.getFnbOrders);
 staffRouter.patch('/fnb-orders/:orderId', staffController.updateFnbOrder);
 
@@ -33,6 +37,10 @@ staffRouter.post('/sessions/:sessionId/swap-vehicle', staffController.swapSessio
 staffRouter.post(
   '/bookings/:bookingId/settle-pending-payments',
   staffController.settlePendingPayments,
+);
+staffRouter.post(
+  '/bookings/:bookingId/settle-bank-transfer',
+  staffController.initiateWalkInSettleBankTransfer,
 );
 staffRouter.post('/bookings/:bookingId/confirm-refund', staffController.confirmRefund);
 
