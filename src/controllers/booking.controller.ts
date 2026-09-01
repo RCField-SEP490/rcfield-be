@@ -5,6 +5,7 @@ import {
   AppError,
   AuthRequest,
   UserRole,
+  BookingStatus,
   SessionStatus,
   InspectionType,
   PaymentComponentStatus,
@@ -764,10 +765,37 @@ export const bookingController = {
             ? {
                 id: review.id,
                 overallScore: review.overallScore,
+                vehicleScore: review.vehicleScore,
+                staffScore: review.staffScore,
+                facilityScore: review.facilityScore,
                 note: review.note,
                 createdAt: review.createdAt,
               }
             : null,
+          can_review:
+            (booking.status === BookingStatus.COMPLETED || session?.status === 'COMPLETED') &&
+            !review &&
+            !booking.reviewDismissedAt &&
+            !(
+              (booking.completedAt || session?.actualEndAt || booking.slotEnd) &&
+              new Date().getTime() -
+                new Date(booking.completedAt || session?.actualEndAt || booking.slotEnd).getTime() >
+                5 * 24 * 60 * 60 * 1000
+            ),
+          is_review_expired:
+            !!(booking.completedAt || session?.actualEndAt || booking.slotEnd) &&
+            new Date().getTime() -
+              new Date(booking.completedAt || session?.actualEndAt || booking.slotEnd).getTime() >
+              5 * 24 * 60 * 60 * 1000,
+          review_deadline:
+            booking.completedAt || session?.actualEndAt || booking.slotEnd
+              ? new Date(
+                  new Date(
+                    booking.completedAt || session?.actualEndAt || booking.slotEnd,
+                  ).getTime() +
+                    5 * 24 * 60 * 60 * 1000,
+                ).toISOString()
+              : null,
         },
       });
     } catch (err) {

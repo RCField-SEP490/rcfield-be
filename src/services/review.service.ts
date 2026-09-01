@@ -1,7 +1,17 @@
 import { AppDataSource } from '../config/database';
 import { Review } from '../models/review.entity';
 import { Booking } from '../models/booking.entity';
-import { AppError, BookingMode, BookingStatus, ReviewStatus, UserRole } from '../types';
+import { Session } from '../models/session.entity';
+import { PaymentComponent } from '../models/payment-component.entity';
+import {
+  AppError,
+  BookingMode,
+  BookingStatus,
+  PaymentComponentStatus,
+  ReviewStatus,
+  SessionStatus,
+  UserRole,
+} from '../types';
 
 const REVIEW_WINDOW_DAYS = 5;
 const REVIEW_REMINDER_SNOOZE_HOURS = 24;
@@ -20,29 +30,53 @@ export interface CreateReviewBody {
 export async function createReview(customerId: string, body: CreateReviewBody): Promise<Review> {
   const bookingRepo = AppDataSource.getRepository(Booking);
   const reviewRepo = AppDataSource.getRepository(Review);
+  const sessionRepo = AppDataSource.getRepository(Session);
+  const paymentCompRepo = AppDataSource.getRepository(PaymentComponent);
 
   const booking = await bookingRepo.findOne({ where: { id: body.booking_id } });
   if (!booking || booking.customerId !== customerId) {
     throw new AppError('Booking không tồn tại hoặc bạn không có quyền', 404, 'BOOKING_NOT_FOUND');
   }
 
-  if (booking.status !== BookingStatus.COMPLETED) {
-    throw new AppError('Booking chưa hoàn thành', 400, 'BOOKING_NOT_COMPLETED');
-  }
-
-  if (!booking.completedAt) {
-    throw new AppError('Booking chưa hoàn thành', 400, 'BOOKING_NOT_COMPLETED');
-  }
-
-  const deadline = new Date(booking.completedAt);
-  deadline.setDate(deadline.getDate() + REVIEW_WINDOW_DAYS);
-  if (new Date() > deadline) {
-    throw new AppError('Thời hạn đánh giá đã hết (5 ngày)', 400, 'REVIEW_PERIOD_EXPIRED');
-  }
-
   const existing = await reviewRepo.findOne({ where: { bookingId: body.booking_id } });
   if (existing) {
     throw new AppError('Booking này đã được đánh giá', 409, 'ALREADY_REVIEWED');
+  }
+
+  // Check completion: either booking is COMPLETED or its associated session is COMPLETED
+  const session = await sessionRepo.findOne({ where: { bookingId: booking.id } });
+  const isSessionCompleted = session?.status === SessionStatus.COMPLETED;
+
+  if (booking.status !== BookingStatus.COMPLETED && !isSessionCompleted) {
+    throw new AppError('Booking chưa hoàn thành ca chơi', 400, 'BOOKING_NOT_COMPLETED');
+  }
+
+  // Auto-heal booking completion if session is completed and no pending payment components
+  if (booking.status !== BookingStatus.COMPLETED && isSessionCompleted) {
+    const pendingPayments = await paymentCompRepo.count({
+      where: { bookingId: booking.id, status: PaymentComponentStatus.PENDING },
+    });
+    if (pendingPayments === 0) {
+      booking.status = BookingStatus.COMPLETED;
+      booking.completedAt = booking.completedAt || session?.actualEndAt || new Date();
+      await bookingRepo.save(booking);
+    }
+  }
+
+  if (!booking.completedAt) {
+    booking.completedAt = session?.actualEndAt || booking.slotEnd || new Date();
+    await bookingRepo.save(booking);
+  }
+
+  const deadline = new Date(
+    new Date(booking.completedAt).getTime() + REVIEW_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+  if (new Date() > deadline) {
+    throw new AppError(
+      'Thời hạn đánh giá đã hết (5 ngày sau khi kết thúc phiên)',
+      400,
+      'REVIEW_PERIOD_EXPIRED',
+    );
   }
 
   const vehicleScore = booking.playMode === BookingMode.BYOC ? null : (body.vehicle_score ?? null);
