@@ -485,7 +485,12 @@ export async function listMyPackages(
   }
 
   const rows = await qb.getRawMany<MyPackageResponse>();
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    slots_total: Math.round(Number(r.slots_total)),
+    slots_remaining: Math.round(Number(r.slots_remaining)),
+    purchased_price: Number(r.purchased_price),
+  }));
 }
 
 // ── getPackageUsageHistory ────────────────────────────────────────────────────
