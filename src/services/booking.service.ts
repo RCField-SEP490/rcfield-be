@@ -648,6 +648,47 @@ export interface CreateBookingResult {
   breakdown: BookingBreakdown;
 }
 
+function isPendingBookingMatching(existingBooking: Booking, body: CreateBookingBody): boolean {
+  // 1. Kiểm tra gói hội viên
+  const existingPkgId = existingBooking.customerPackageId ?? undefined;
+  const bodyPkgId = body.customer_package_id ?? undefined;
+  if (existingPkgId !== bodyPkgId) return false;
+
+  // 2. Kiểm tra chế độ chơi
+  if (existingBooking.playMode !== body.play_mode) return false;
+
+  // 3. Kiểm tra loại sân / cấu hình sân
+  const existingTrackConfigId = existingBooking.trackConfigId ?? undefined;
+  const bodyTrackConfigId = body.track_config_id ?? undefined;
+  if (existingTrackConfigId !== bodyTrackConfigId) return false;
+
+  // 4. Kiểm tra slot_end
+  if (existingBooking.slotEnd.getTime() !== new Date(body.slot_end).getTime()) return false;
+
+  // 5. Kiểm tra mã ưu đãi (voucher)
+  const snapshot = existingBooking.snapshot as {
+    promotion_applied?: { code?: string };
+    vehicles?: Array<{ vehicle_id: string }>;
+    fnb_total?: number;
+  } | null;
+  const existingPromoCode = snapshot?.promotion_applied?.code ?? undefined;
+  const bodyPromoCode = body.promotion_code ?? undefined;
+  if (existingPromoCode !== bodyPromoCode) return false;
+
+  // 6. Kiểm tra xe thuê
+  const existingVehicles = (snapshot?.vehicles ?? []).map((v) => v.vehicle_id).sort();
+  const bodyVehicles = [...(body.vehicle_ids ?? [])].sort();
+  if (existingVehicles.length !== bodyVehicles.length) return false;
+  if (!existingVehicles.every((id, i) => id === bodyVehicles[i])) return false;
+
+  // 7. Kiểm tra F&B
+  const existingFnbTotal = Number(snapshot?.fnb_total ?? 0);
+  const bodyHasFnb = (body.fnb_items ?? []).some((item) => item.quantity > 0);
+  if (bodyHasFnb !== existingFnbTotal > 0) return false;
+
+  return true;
+}
+
 export async function createBooking(
   customerId: string,
   body: CreateBookingBody,
@@ -697,7 +738,10 @@ export async function createBooking(
         },
       });
   if (existingBooking) {
-    if (existingBooking.paymentExpiresAt > new Date()) {
+    if (
+      existingBooking.paymentExpiresAt > new Date() &&
+      isPendingBookingMatching(existingBooking, body)
+    ) {
       return {
         booking_id: existingBooking.id,
         status: BookingStatus.PENDING,
