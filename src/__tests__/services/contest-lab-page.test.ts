@@ -39,7 +39,9 @@ describe('trang Contest Lab', () => {
       new Set([...CLIENT_SCRIPT.matchAll(/\$\('([A-Za-z][\w-]*)'\)/g)].map((m) => m[1])),
     );
     expect(ids.length).toBeGreaterThan(50);
-    expect(ids.filter((id) => !html.includes(`id="${id}"`))).toEqual([]);
+    // resultPreview được tạo theo từng thể thức ngay trong renderSteps, không
+    // nằm sẵn trong HTML để tránh trùng id khi đổi giải.
+    expect(ids.filter((id) => id !== 'resultPreview' && !html.includes(`id="${id}"`))).toEqual([]);
   });
 
   it('thẻ div đóng mở cân nhau', () => {
@@ -199,9 +201,9 @@ describe('nạp giải có sẵn và import vận động viên', () => {
 
   it('tự sinh đúng số tài khoản còn thiếu để lấp đầy sức chứa', () => {
     expect(CLIENT_SCRIPT).toContain('Number(contest.capacity || 0) - activeRows.length');
-    expect(CLIENT_SCRIPT).toContain('while (candidateLines.length < remaining)');
+    expect(CLIENT_SCRIPT).toContain('while (candidateLines.length < importTarget)');
     expect(CLIENT_SCRIPT).toContain("'contest.lab.' + contestKey");
-    expect(CLIENT_SCRIPT).toContain('candidateLines.slice(0, remaining)');
+    expect(CLIENT_SCRIPT).toContain('candidateLines.slice(0, importTarget)');
   });
 
   it('báo cáo phương tiện và trạng thái phí sau khi import', () => {
@@ -218,6 +220,8 @@ describe('nạp giải có sẵn và import vận động viên', () => {
 
   it('hiện trạng thái bypass và không đóng lại giải đã CLOSED', () => {
     expect(CLIENT_SCRIPT).toContain('contest.check_in_window_bypassed');
+    expect(CLIENT_SCRIPT).toContain('contest.registration_window_bypassed');
+    expect(CLIENT_SCRIPT).toContain('Đăng ký demo:');
     expect(CLIENT_SCRIPT).toContain("['CLOSED', 'RUNNING', 'COMPLETED'].includes(current.status)");
     expect(CLIENT_SCRIPT).toContain('không đóng đăng ký lần hai');
   });

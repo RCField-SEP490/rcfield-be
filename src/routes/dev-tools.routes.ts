@@ -5,6 +5,8 @@ import { logger } from '../config/logger';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { AppDataSource } from '../config/database';
 import { AppError, AuthRequest, UserRole } from '../types';
+import { ContestCheckInSchema } from '../validate';
+import { checkInRegistration } from '../services/contest';
 import {
   executeContestPurge,
   hardDeleteUsers,
@@ -47,6 +49,49 @@ function requireDevToolsKey(req: Request, res: Response, next: NextFunction) {
 }
 
 router.use(requireDevToolsKey);
+
+/**
+ * The production deployment must explicitly configure a second, non-user
+ * secret before the time-bypass route can even be discovered.
+ */
+function requireProductionDevToolsToken(_req: Request, res: Response, next: NextFunction) {
+  if (env.NODE_ENV === 'production' && !env.devTools.token) {
+    res.status(404).type('text').send('Not Found');
+    return;
+  }
+  next();
+}
+
+// POST /dev-tools/contest-registrations/:registrationId/check-in-now [provider/staff]
+//
+// Only the contest time/status window is bypassed. The shared service still
+// checks confirmation, entry fee, branch, operator permission and vehicle
+// inspection/handover exactly like the production endpoint.
+router.post(
+  '/contest-registrations/:registrationId/check-in-now',
+  requireProductionDevToolsToken,
+  authenticate,
+  authorize(UserRole.PROVIDER, UserRole.STAFF),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const authReq = req as AuthRequest;
+      if (!authReq.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const body = ContestCheckInSchema.parse(req.body);
+      const data = await checkInRegistration(
+        req.params.registrationId,
+        body.checked_in_cafe_id,
+        { userId: authReq.user.userId, role: authReq.user.role },
+        body.rental_vehicle_id ?? null,
+        body.byoc_confirmed,
+        body.byoc_inspection,
+        { bypassWindow: true, bypassReason: 'CONTEST_LAB' },
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // GET /dev-tools/contest-lab
 router.get('/contest-lab', (req, res) => {

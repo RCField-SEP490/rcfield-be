@@ -36,6 +36,13 @@ export const env = {
    */
   bypassContestCheckInWindow: parseBoolean(process.env.DEV_BYPASS_CONTEST_CHECKIN),
 
+  /**
+   * Cho phép CUSTOMER đăng ký một contest OPEN dù chưa tới registration_opens_at
+   * hoặc đã qua registration_closes_at. Chỉ phục vụ demo/diễn tập; trạng thái
+   * OPEN và mọi guard policy, capacity, ban, phí vẫn được giữ nguyên.
+   */
+  bypassContestRegistrationWindow: parseBoolean(process.env.DEV_BYPASS_CONTEST_REGISTRATION_WINDOW),
+
   db: {
     url: process.env.DATABASE_URL,
     host: process.env.DB_HOST ?? 'localhost',

@@ -55,4 +55,20 @@ describe('cờ DEV_BYPASS_CONTEST_CHECKIN theo môi trường', () => {
     const env = loadEnv({ NODE_ENV: 'production', DEV_BYPASS_CONTEST_CHECKIN: 'false' });
     expect(env.bypassContestCheckInWindow).toBe(false);
   });
+
+  it('cờ bypass cửa sổ đăng ký bật độc lập ở production', () => {
+    const env = loadEnv({
+      NODE_ENV: 'production',
+      DEV_BYPASS_CONTEST_REGISTRATION_WINDOW: 'true',
+    });
+    expect(env.bypassContestRegistrationWindow).toBe(true);
+  });
+
+  it('cờ bypass cửa sổ đăng ký mặc định tắt', () => {
+    const env = loadEnv({
+      DEV_BYPASS_CONTEST_REGISTRATION_WINDOW: undefined,
+      DOTENV_CONFIG_PATH: '/tmp/rcfield-khong-ton-tai.env',
+    });
+    expect(env.bypassContestRegistrationWindow).toBe(false);
+  });
 });

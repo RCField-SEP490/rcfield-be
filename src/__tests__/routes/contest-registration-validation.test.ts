@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { app } from '../../app';
 import { AppDataSource } from '../../config/database';
+import { env } from '../../config/env';
 import { ProviderStatus, SubscriptionStatus, UserRole, VehicleSource } from '../../types';
 import { createTestCafe, createTestUser, generateToken } from '../helpers';
 
@@ -123,6 +124,103 @@ async function createRegistrationFixture(
 }
 
 describe('Contest registration validation', () => {
+  it('chặn đăng ký trước giờ mở khi bypass tắt', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const { contestId } = await createContestFixture(provider.id, cafe.id, {
+      status: 'OPEN',
+      vehiclePolicy: 'BYOC_ONLY',
+    });
+    await AppDataSource.query(
+      `UPDATE contests SET registration_opens_at = NOW() + INTERVAL '1 day',
+         registration_closes_at = NOW() + INTERVAL '2 days' WHERE id = $1`,
+      [contestId],
+    );
+
+    const original = env.bypassContestRegistrationWindow;
+    (env as { bypassContestRegistrationWindow: boolean }).bypassContestRegistrationWindow = false;
+    try {
+      const res = await request(app)
+        .post(`/api/v1/contests/${contestId}/register`)
+        .set('Authorization', `Bearer ${generateToken(customer)}`)
+        .send({ vehicle_source: 'BYOC', byoc_vehicle_name: 'Xe demo' })
+        .expect(400);
+      expect(res.body.code).toBe('CONTEST_REGISTRATION_NOT_OPEN_YET');
+    } finally {
+      (env as { bypassContestRegistrationWindow: boolean }).bypassContestRegistrationWindow =
+        original;
+    }
+  });
+
+  it('bypass chỉ bỏ qua cửa sổ giờ và ghi audit riêng', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const { contestId } = await createContestFixture(provider.id, cafe.id, {
+      status: 'OPEN',
+      vehiclePolicy: 'BYOC_ONLY',
+    });
+    await AppDataSource.query(
+      `UPDATE contests SET registration_opens_at = NOW() + INTERVAL '1 day',
+         registration_closes_at = NOW() + INTERVAL '2 days' WHERE id = $1`,
+      [contestId],
+    );
+
+    const original = env.bypassContestRegistrationWindow;
+    (env as { bypassContestRegistrationWindow: boolean }).bypassContestRegistrationWindow = true;
+    try {
+      await request(app)
+        .post(`/api/v1/contests/${contestId}/register`)
+        .set('Authorization', `Bearer ${generateToken(customer)}`)
+        .send({ vehicle_source: 'BYOC', byoc_vehicle_name: 'Xe demo' })
+        .expect(201);
+    } finally {
+      (env as { bypassContestRegistrationWindow: boolean }).bypassContestRegistrationWindow =
+        original;
+    }
+
+    const rows = await AppDataSource.query<{ event_type: string }[]>(
+      `SELECT event_type FROM contest_audit_logs
+       WHERE contest_id = $1 AND event_type = 'registration.created_outside_window'`,
+      [contestId],
+    );
+    expect(rows).toHaveLength(1);
+    const [registration] = await AppDataSource.query<{ entry_fee_due_at: Date }[]>(
+      `SELECT entry_fee_due_at FROM contest_registrations
+       WHERE contest_id = $1 AND user_id = $2`,
+      [contestId, customer.id],
+    );
+    expect(new Date(registration.entry_fee_due_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('bypass thời gian vẫn không cho đăng ký contest DRAFT', async () => {
+    const provider = await createTestUser({ role: UserRole.PROVIDER });
+    await activateProvider(provider.id);
+    const cafe = await createTestCafe({ provider_id: provider.id });
+    const customer = await createTestUser({ role: UserRole.CUSTOMER });
+    const { contestId } = await createContestFixture(provider.id, cafe.id, {
+      status: 'DRAFT',
+      vehiclePolicy: 'BYOC_ONLY',
+    });
+
+    const original = env.bypassContestRegistrationWindow;
+    (env as { bypassContestRegistrationWindow: boolean }).bypassContestRegistrationWindow = true;
+    try {
+      const res = await request(app)
+        .post(`/api/v1/contests/${contestId}/register`)
+        .set('Authorization', `Bearer ${generateToken(customer)}`)
+        .send({ vehicle_source: 'BYOC', byoc_vehicle_name: 'Xe demo' })
+        .expect(400);
+      expect(res.body.code).toBe('CONTEST_NOT_OPEN');
+    } finally {
+      (env as { bypassContestRegistrationWindow: boolean }).bypassContestRegistrationWindow =
+        original;
+    }
+  });
+
   it('rejects check-in when BYOC declaration is missing vehicle name', async () => {
     const provider = await createTestUser({ role: UserRole.PROVIDER });
     await activateProvider(provider.id);

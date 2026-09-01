@@ -19,7 +19,7 @@ function loadScript() {
     dataset: {},
     classList: { contains: () => false },
     appendChild() {},
-    querySelector: () => ({ textContent: '' }),
+    querySelector: () => ({ textContent: '', appendChild() {} }),
     addEventListener() {},
     scrollTop: 0,
     scrollHeight: 0,
@@ -46,7 +46,9 @@ function loadScript() {
   new vm.Script(
     CLIENT_SCRIPT +
       '\n;globalThis.__probe = { STEPS, STEP, SCENARIOS, BATCH, devPath, vietnameseName, slugTen,' +
-      ' TEN_NAM, TEN_NU, DEM_NAM, DEM_NU, KHU_VUC, duLieuChiNhanh, tenKhu, soDienThoai };',
+      ' TEN_NAM, TEN_NU, DEM_NAM, DEM_NU, KHU_VUC, duLieuChiNhanh, tenKhu, soDienThoai,' +
+      ' stableHash, resultRowsForMatch, executableMatches,' +
+      ' setContestId: (id) => { ctx.contestId = id; } };',
   ).runInContext(sandbox);
   return (sandbox as unknown as { __probe: Probe }).__probe;
 }
@@ -67,6 +69,18 @@ interface Probe {
   duLieuChiNhanh: (khu: Probe['KHU_VUC'][number], i: number) => Record<string, unknown>;
   tenKhu: (district: string) => string;
   soDienThoai: () => string;
+  stableHash: (text: string) => number;
+  setContestId: (id: string) => void;
+  resultRowsForMatch: (match: Record<string, unknown>) => Array<{
+    registration_id: string;
+    best_lap_seconds: number;
+    total_time_seconds: number;
+    is_winner: boolean;
+  }>;
+  executableMatches: (
+    matches: Array<Record<string, unknown>>,
+    phase: 'QUALIFYING' | 'FINAL',
+  ) => Array<Record<string, unknown>>;
 }
 
 describe('phần JS của Contest Lab', () => {
@@ -131,6 +145,53 @@ describe('phần JS của Contest Lab', () => {
     expect(probe.devPath('/dev-tools/customers?limit=500')).toBe(
       '/dev-tools/customers?limit=500&key=abc',
     );
+  });
+
+  describe('bộ sinh kết quả demo', () => {
+    it('cùng contest/match/VĐV luôn cho cùng kết quả và total không nhỏ hơn best lap', () => {
+      probe.setContestId('contest-a');
+      const match = {
+        id: 'match-1',
+        match_type: 'TIME_ATTACK',
+        round_no: 1,
+        metadata: { run_no: 1 },
+        participants: [{ registration_id: 'athlete-1', full_name: 'Nguyễn Văn An' }],
+      };
+      const first = probe.resultRowsForMatch(match);
+      const second = probe.resultRowsForMatch(match);
+      expect(second).toEqual(first);
+      expect(first[0].total_time_seconds).toBeGreaterThanOrEqual(first[0].best_lap_seconds);
+      expect(first[0].is_winner).toBe(false);
+    });
+
+    it('VĐV và lượt chạy khác nhau không bị điền cùng một thời gian', () => {
+      probe.setContestId('contest-a');
+      const make = (matchId: string, registrationId: string, runNo: number) =>
+        probe.resultRowsForMatch({
+          id: matchId,
+          match_type: 'TIME_ATTACK',
+          metadata: { run_no: runNo },
+          participants: [{ registration_id: registrationId }],
+        })[0].best_lap_seconds;
+      expect(make('m1', 'a1', 1)).not.toBe(make('m2', 'a2', 1));
+      expect(make('m1', 'a1', 1)).not.toBe(make('m3', 'a1', 2));
+    });
+
+    it('knockout chọn đúng một winner và chỉ lấy vòng sớm nhất đang chạy được', () => {
+      probe.setContestId('contest-a');
+      const ready = (id: string, round: number) => ({
+        id,
+        status: 'READY',
+        match_type: 'HEAD_TO_HEAD',
+        round_no: round,
+        participants: [{ registration_id: id + '-a' }, { registration_id: id + '-b' }],
+      });
+      const matches = [ready('semi', 1), ready('final', 2)];
+      expect(probe.executableMatches(matches, 'FINAL').map((m) => m.id)).toEqual(['semi']);
+      const results = probe.resultRowsForMatch(matches[0]);
+      expect(results.filter((r) => r.is_winner)).toHaveLength(1);
+      expect(new Set(results.map((r) => r.total_time_seconds)).size).toBe(results.length);
+    });
   });
 
   describe('sinh tên người Việt cho tài khoản tạo mới', () => {

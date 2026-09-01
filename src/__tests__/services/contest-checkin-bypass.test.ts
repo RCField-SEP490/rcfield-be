@@ -215,3 +215,67 @@ describe('cờ điểm danh ngoài khung giờ', () => {
     expect(await readAudit(contestId, 'registration.checked_in')).toHaveLength(1);
   });
 });
+
+describe('bypass riêng của Contest Lab', () => {
+  it('điểm danh trước giờ khi cờ toàn server đang tắt và audit đúng lý do', async () => {
+    const { cafeId, provider, registrationId, contestId } = await seedReadyRegistration(
+      ContestStatus.CLOSED,
+    );
+
+    await withBypass(false, () =>
+      checkInRegistration(
+        registrationId,
+        cafeId,
+        { userId: provider.id, role: UserRole.PROVIDER },
+        null,
+        true,
+        BYOC_INSPECTION,
+        { bypassWindow: true, bypassReason: 'CONTEST_LAB' },
+      ),
+    );
+
+    const rows = await readAudit(contestId, 'registration.checked_in_outside_window');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].actor_id).toBe(provider.id);
+    expect(rows[0].reason).toBe('CONTEST_LAB');
+    expect((rows[0].after_json as { bypass_source: string }).bypass_source).toBe('CONTEST_LAB');
+  });
+
+  it('không bỏ qua guard registration phải CONFIRMED', async () => {
+    const { cafeId, provider, registrationId } = await seedReadyRegistration(ContestStatus.CLOSED);
+    await AppDataSource.query(`UPDATE contest_registrations SET status = 'PENDING' WHERE id = $1`, [
+      registrationId,
+    ]);
+
+    await expect(
+      withBypass(false, () =>
+        checkInRegistration(
+          registrationId,
+          cafeId,
+          { userId: provider.id, role: UserRole.PROVIDER },
+          null,
+          true,
+          BYOC_INSPECTION,
+          { bypassWindow: true, bypassReason: 'CONTEST_LAB' },
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'REGISTRATION_NOT_CONFIRMED' });
+  });
+
+  it('không bỏ qua vòng đời contest: DRAFT vẫn chưa được điểm danh', async () => {
+    const { cafeId, provider, registrationId } = await seedReadyRegistration(ContestStatus.DRAFT);
+    await expect(
+      withBypass(false, () =>
+        checkInRegistration(
+          registrationId,
+          cafeId,
+          { userId: provider.id, role: UserRole.PROVIDER },
+          null,
+          true,
+          BYOC_INSPECTION,
+          { bypassWindow: true, bypassReason: 'CONTEST_LAB' },
+        ),
+      ),
+    ).rejects.toMatchObject({ code: 'CONTEST_NOT_CHECKIN_READY' });
+  });
+});
