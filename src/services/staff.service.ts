@@ -1971,7 +1971,88 @@ export async function submitInspection(
       // created. It is final for the running session and must not be replaced
       // by a later customer-side response.
       return existingInspection;
-    } else if (!existingInspection.customerConfirmedAt) {
+    } else if (
+      session.status === SessionStatus.CHECKING_OUT ||
+      !existingInspection.customerConfirmedAt
+    ) {
+      // Staff is updating the CHECK_OUT inspection (e.g. editing damage items/checklist/notes)
+      existingInspection.damageNoted = !!damageFlagged;
+      existingInspection.damageDescription = staffNotes || null;
+      await AppDataSource.getRepository(Inspection).save(existingInspection);
+
+      if (photos && Array.isArray(photos) && photos.length > 0) {
+        await AppDataSource.getRepository(InspectionPhoto).delete({
+          inspectionId: existingInspection.id,
+        });
+        for (const photo of photos) {
+          const p = new InspectionPhoto();
+          p.inspectionId = existingInspection.id;
+          p.angle = photo.angle || PhotoAngle.FRONT;
+          p.url = photo.url;
+          p.uploadedBy = staffUserId;
+          p.metadata = photo.metadata ?? (photo.notes ? { notes: photo.notes } : null);
+          await AppDataSource.getRepository(InspectionPhoto).save(p);
+        }
+      }
+
+      if (checklist && Array.isArray(checklist) && checklist.length > 0) {
+        await AppDataSource.getRepository(InspectionChecklist).delete({
+          inspectionId: existingInspection.id,
+        });
+        for (const item of checklist) {
+          const c = new InspectionChecklist();
+          c.inspectionId = existingInspection.id;
+          c.itemKey = item.itemKey;
+          const isOk =
+            !item.status || item.status === InspectionItemStatus.OK || item.status === 'OK';
+          c.status = isOk ? InspectionItemStatus.OK : (item.status as InspectionItemStatus);
+          c.note = isOk ? null : item.note || null;
+          await AppDataSource.getRepository(InspectionChecklist).save(c);
+        }
+      }
+
+      const lineItemRepo = AppDataSource.getRepository(DamageLineItem);
+      const existingItems = await lineItemRepo.find({
+        where: { inspectionId: existingInspection.id },
+      });
+      for (const it of existingItems) {
+        await lineItemRepo.softDelete(it.id);
+      }
+      if (damageFlagged && Array.isArray(damageLineItems) && damageLineItems.length > 0) {
+        for (const item of damageLineItems) {
+          const li = new DamageLineItem();
+          li.inspectionId = existingInspection.id;
+          li.partType = item.partType as DamagePartType;
+          li.customPartName =
+            item.partType === DamagePartType.OTHER ? (item.customPartName ?? null) : null;
+          li.partsPrice = Number(item.partsPrice) || 0;
+          li.laborPrice = Number(item.laborPrice) || 0;
+          await lineItemRepo.save(li);
+        }
+      }
+
+      const svRepo = AppDataSource.getRepository(SessionVehicle);
+      const sessionVehicles = await svRepo.find({ where: { sessionId } });
+      const activeSVs = sessionVehicles.filter((vehicle) => !vehicle.returnedAt);
+      if (activeSVs.length > 0) {
+        for (const sv of activeSVs) {
+          sv.status = damageFlagged ? SessionVehicleStatus.DAMAGED : SessionVehicleStatus.RETURNED;
+          await svRepo.save(sv);
+        }
+      }
+
+      await settleSessionCheckoutBilling(sessionId, existingInspection);
+
+      broadcastSessionUpdated({
+        cafeId: session.cafeId,
+        bookingId: session.bookingId,
+        sessionId,
+        sessionStatus: session.status,
+        action: 'INSPECTION_UPDATED',
+      });
+
+      return existingInspection;
+    } else {
       return existingInspection;
     }
   }
@@ -1985,7 +2066,9 @@ export async function submitInspection(
   }
   if (
     inspectionType === InspectionType.CHECK_OUT &&
-    ![SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(session.status)
+    ![SessionStatus.ACTIVE, SessionStatus.EXTENDING, SessionStatus.CHECKING_OUT].includes(
+      session.status,
+    )
   ) {
     throw new AppError(
       'Chỉ có thể lập biên bản trả xe khi phiên đang chạy',
@@ -2062,8 +2145,9 @@ export async function submitInspection(
       c.inspectionId = inspection.id;
       c.itemKey = item.itemKey;
       c.itemLabel = item.itemLabel;
-      c.status = item.status || InspectionItemStatus.OK;
-      c.note = item.note || '';
+      const isOk = !item.status || item.status === InspectionItemStatus.OK || item.status === 'OK';
+      c.status = isOk ? InspectionItemStatus.OK : (item.status as InspectionItemStatus);
+      c.note = isOk ? null : item.note || null;
       await AppDataSource.getRepository(InspectionChecklist).save(c);
     }
   }
@@ -2139,37 +2223,7 @@ export async function submitInspection(
     }
 
     if (booking) {
-      const compRepo = AppDataSource.getRepository(PaymentComponent);
-      const totalDamageCharge = Array.isArray(damageLineItems)
-        ? damageLineItems.reduce(
-            (sum, item) => sum + (Number(item.partsPrice) || 0) + (Number(item.laborPrice) || 0),
-            0,
-          )
-        : 0;
-
-      const damageComp = await compRepo.findOne({
-        where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
-      });
-
-      if (damageFlagged && totalDamageCharge > 0) {
-        if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
-          damageComp.amount = totalDamageCharge;
-          await compRepo.save(damageComp);
-        } else if (!damageComp) {
-          await compRepo.save(
-            compRepo.create({
-              bookingId: booking.id,
-              type: PaymentComponentType.DAMAGE_CHARGE,
-              amount: totalDamageCharge,
-              status: PaymentComponentStatus.PENDING,
-            }),
-          );
-        }
-      } else if (!damageFlagged || totalDamageCharge === 0) {
-        if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
-          await compRepo.remove(damageComp);
-        }
-      }
+      await settleSessionCheckoutBilling(sessionId, inspection);
     }
   }
 
@@ -4071,37 +4125,16 @@ export async function updateDamageLineItems(
       itemStatus = InspectionItemStatus.NEEDS_REVIEW;
     }
     c.status = itemStatus;
-    c.note = item.note ?? (item as any).notes ?? null;
+    c.note =
+      itemStatus === InspectionItemStatus.OK ? null : (item.note ?? (item as any).notes ?? null);
     updatedChecklist.push(await clRepo.save(c));
   }
 
-  // Sync the DAMAGE_CHARGE PENDING component amount to match updated line items
+  // Sync billing and DAMAGE_CHARGE component amount to match updated line items
+  await settleSessionCheckoutBilling(sessionId, inspection);
+
   const session = await AppDataSource.getRepository(Session).findOne({ where: { id: sessionId } });
   if (session) {
-    const compRepo = AppDataSource.getRepository(PaymentComponent);
-    const damageComp = await compRepo.findOne({
-      where: { bookingId: session.bookingId, type: PaymentComponentType.DAMAGE_CHARGE },
-    });
-    if (totalDamageCharge > 0) {
-      if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
-        damageComp.amount = totalDamageCharge;
-        await compRepo.save(damageComp);
-      } else if (!damageComp) {
-        await compRepo.save(
-          compRepo.create({
-            bookingId: session.bookingId,
-            type: PaymentComponentType.DAMAGE_CHARGE,
-            amount: totalDamageCharge,
-            status: PaymentComponentStatus.PENDING,
-          }),
-        );
-      }
-    } else {
-      if (damageComp && damageComp.status === PaymentComponentStatus.PENDING) {
-        await compRepo.remove(damageComp);
-      }
-    }
-
     broadcastSessionUpdated({
       cafeId: session.cafeId,
       bookingId: session.bookingId,
@@ -4109,6 +4142,21 @@ export async function updateDamageLineItems(
       sessionStatus: session.status,
       action: 'INSPECTION_UPDATED',
     });
+
+    const booking = await AppDataSource.getRepository(Booking).findOne({
+      where: { id: session.bookingId },
+    });
+    if (booking?.customerId) {
+      wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_INSPECTION', {
+        sessionId,
+        bookingId: session.bookingId,
+        inspectionId,
+        type: inspection.type,
+        action: 'INSPECTION_UPDATED',
+        totalDamageCharge,
+        damageFlagged: saved.length > 0,
+      });
+    }
   }
 
   return {
@@ -4274,9 +4322,18 @@ export async function settleSessionCheckoutBilling(
   }
 
   // Damage amount that exceeds deposit is billed separately at counter
+  const damageComp = existingComponents.find((c) => c.type === PaymentComponentType.DAMAGE_CHARGE);
   if (damageExceedingDeposit > 0) {
-    const exists = existingComponents.some((c) => c.type === PaymentComponentType.DAMAGE_CHARGE);
-    if (!exists) {
+    if (damageComp) {
+      if (
+        damageComp.status === PaymentComponentStatus.PENDING ||
+        damageComp.status === PaymentComponentStatus.DISBURSED
+      ) {
+        damageComp.amount = damageExceedingDeposit;
+        damageComp.status = PaymentComponentStatus.PENDING;
+        await compRepo.save(damageComp);
+      }
+    } else {
       newComponents.push({
         bookingId: booking.id,
         type: PaymentComponentType.DAMAGE_CHARGE,
@@ -4286,14 +4343,27 @@ export async function settleSessionCheckoutBilling(
     }
   } else if (damageCharge > 0 && damageExceedingDeposit === 0) {
     // Damage fully covered by deposit — still record the component for audit
-    const exists = existingComponents.some((c) => c.type === PaymentComponentType.DAMAGE_CHARGE);
-    if (!exists) {
+    if (damageComp) {
+      if (
+        damageComp.status === PaymentComponentStatus.PENDING ||
+        damageComp.status === PaymentComponentStatus.DISBURSED
+      ) {
+        damageComp.amount = damageCharge;
+        damageComp.status = PaymentComponentStatus.DISBURSED; // Covered by deposit, nothing more to pay
+        await compRepo.save(damageComp);
+      }
+    } else {
       newComponents.push({
         bookingId: booking.id,
         type: PaymentComponentType.DAMAGE_CHARGE,
         amount: damageCharge,
         status: PaymentComponentStatus.DISBURSED, // Covered by deposit, nothing more to pay
       });
+    }
+  } else if (damageCharge === 0 && damageComp) {
+    // Damage was removed or edited to 0
+    if (damageComp.status === PaymentComponentStatus.PENDING) {
+      await compRepo.remove(damageComp);
     }
   }
 
@@ -4586,17 +4656,21 @@ export async function initiateWalkInSettleBankTransfer(
   const booking = await bookingRepo.findOne({ where: { id: bookingId, cafeId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
-  const sessionForNotification = await AppDataSource.getRepository(Session).findOne({
-    where: { bookingId },
-    order: { createdAt: 'DESC' },
+  const uncompletedSession = await AppDataSource.getRepository(Session).findOne({
+    where: {
+      bookingId,
+      status: In([
+        SessionStatus.CHECKED_IN,
+        SessionStatus.ACTIVE,
+        SessionStatus.EXTENDING,
+        SessionStatus.CHECKING_OUT,
+      ]),
+    },
   });
 
-  if (
-    sessionForNotification &&
-    [SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(sessionForNotification.status)
-  ) {
+  if (uncompletedSession) {
     throw new AppError(
-      'Khách hàng đang trong ca chơi. Vui lòng thực hiện BƯỚC 1: KIỂM TRA TRẢ XE trước khi quyết toán thu tiền.',
+      'Vui lòng thực hiện BƯỚC 1: XÁC NHẬN TRẢ XE trước khi mở thanh toán chuyển khoản quyết toán.',
       400,
       'SESSION_NOT_CHECKED_OUT',
     );
