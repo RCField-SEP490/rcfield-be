@@ -13,8 +13,9 @@ function component(
   type: PaymentComponentType,
   amount: number,
   status: PaymentComponentStatus,
+  extra?: Partial<PaymentComponent>,
 ): PaymentComponent {
-  return { id, type, amount, status } as PaymentComponent;
+  return { id, type, amount, status, ...extra } as PaymentComponent;
 }
 
 function payment(id: string, amount: number, rawRequest: object): PaymentTransaction {
@@ -185,5 +186,51 @@ describe('buildBookingFinancialSummary', () => {
     expect(summary.netPaidAmount).toBe(50_000);
     expect(summary.outstandingAmount).toBe(0);
     expect(summary.isSettled).toBe(true);
+  });
+
+  it('deduplicates duplicate prepaid components for the same vehicle/slot', () => {
+    const summary = buildBookingFinancialSummary(
+      [
+        component('slot-1', PaymentComponentType.SLOT_FEE, 50_000, PaymentComponentStatus.HELD),
+        component(
+          'rental-1',
+          PaymentComponentType.RENTAL_FEE,
+          75_000,
+          PaymentComponentStatus.HELD,
+          {
+            bookingVehicleId: 'bv-1',
+          },
+        ),
+        // Duplicate records created accidentally or by double webhook
+        component('slot-2', PaymentComponentType.SLOT_FEE, 50_000, PaymentComponentStatus.HELD),
+        component(
+          'rental-2',
+          PaymentComponentType.RENTAL_FEE,
+          75_000,
+          PaymentComponentStatus.HELD,
+          {
+            bookingVehicleId: 'bv-1',
+          },
+        ),
+        component('fnb-1', PaymentComponentType.FB_PREORDER, 100_000, PaymentComponentStatus.HELD),
+      ],
+      [
+        payment('initial-payment', 225_000, {
+          components: [
+            { id: 'slot-1', type: PaymentComponentType.SLOT_FEE, amount: 50_000 },
+            { id: 'rental-1', type: PaymentComponentType.RENTAL_FEE, amount: 75_000 },
+            { id: 'fnb-1', type: PaymentComponentType.FB_PREORDER, amount: 100_000 },
+          ],
+        }),
+      ],
+    );
+
+    expect(summary.prepaidLines.map((l) => [l.label, l.amount])).toEqual([
+      ['Phí lịch chơi', 50_000],
+      ['Phí thuê xe', 75_000],
+      ['Đồ ăn & thức uống đặt trước', 100_000],
+    ]);
+    expect(summary.prepaidServiceTotal).toBe(225_000);
+    expect(summary.prepaidPaidAmount).toBe(225_000);
   });
 });
