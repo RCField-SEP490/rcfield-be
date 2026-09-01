@@ -80,6 +80,15 @@ if (env.bypassContestCheckInWindow) {
   );
 }
 
+if (env.bypassContestRegistrationWindow) {
+  logger.warn(
+    'ContestRegistration',
+    'DEV_BYPASS_CONTEST_REGISTRATION_WINDOW ĐANG BẬT — CUSTOMER đăng ký được ngoài ' +
+      'registration_opens_at/registration_closes_at khi contest vẫn OPEN. Mỗi lần dùng ghi ' +
+      'audit `registration.created_outside_window`. Tắt lại khi không còn demo.',
+  );
+}
+
 if (env.sandboxBank.enabled) {
   app.use('/api/v1/sandbox-bank', sandboxBankRouter);
   logger.warn(

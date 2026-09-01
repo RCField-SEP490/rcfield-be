@@ -260,6 +260,7 @@ export async function mapContestPayload(contests: Contest[]) {
        * Đọc từ đây thì hai bên luôn cùng một câu trả lời.
        */
       check_in_window_bypassed: env.bypassContestCheckInWindow,
+      registration_window_bypassed: env.bypassContestRegistrationWindow,
       registration_opens_at: contest.registrationOpensAt,
       registration_closes_at: contest.registrationClosesAt,
       capacity: contest.capacity,

@@ -68,11 +68,22 @@ export async function createContestRegistration(
     throw new AppError('Contest chưa mở đăng ký', 400, 'CONTEST_NOT_OPEN');
   }
   const now = new Date();
-  if (contest.registrationOpensAt && now < contest.registrationOpensAt) {
-    throw new AppError('Chưa tới thời gian mở đăng ký', 400, 'CONTEST_REGISTRATION_NOT_OPEN_YET');
-  }
-  if (contest.registrationClosesAt && now > contest.registrationClosesAt) {
-    throw new AppError('Contest đã đóng đăng ký', 400, 'CONTEST_REGISTRATION_CLOSED');
+  const outsideRegistrationWindow =
+    Boolean(contest.registrationOpensAt && now < contest.registrationOpensAt) ||
+    Boolean(contest.registrationClosesAt && now > contest.registrationClosesAt);
+  if (!env.bypassContestRegistrationWindow) {
+    if (contest.registrationOpensAt && now < contest.registrationOpensAt) {
+      throw new AppError('Chưa tới thời gian mở đăng ký', 400, 'CONTEST_REGISTRATION_NOT_OPEN_YET');
+    }
+    if (contest.registrationClosesAt && now > contest.registrationClosesAt) {
+      throw new AppError('Contest đã đóng đăng ký', 400, 'CONTEST_REGISTRATION_CLOSED');
+    }
+  } else if (outsideRegistrationWindow) {
+    logger.warn(
+      'ContestRegistration',
+      `DEV_BYPASS_CONTEST_REGISTRATION_WINDOW đang bật — cho phép đăng ký ngoài khung giờ contest ${contest.id}`,
+      { contestId: contest.id, userId: viewer.userId },
+    );
   }
   if (contest.providerId) {
     const activeBan = await getActiveContestBan(viewer.userId, contest.providerId, contest.id);
@@ -207,7 +218,10 @@ export async function createContestRegistration(
     registration.status = ContestRegistrationStatus.PENDING;
     registration.checkInCode = existing?.checkInCode ?? (await generateUniqueCheckInCode(manager));
     registration.entryFeeAmount = Number(contest.entryFee ?? 0);
-    registration.entryFeeDueAt = contest.registrationClosesAt ?? contest.startsAt;
+    registration.entryFeeDueAt =
+      env.bypassContestRegistrationWindow && outsideRegistrationWindow
+        ? new Date(now.getTime() + 30 * 60 * 1000)
+        : (contest.registrationClosesAt ?? contest.startsAt);
     registration.paymentStatus =
       Number(contest.entryFee ?? 0) > 0
         ? ContestEntryFeePaymentStatus.PENDING_PAYMENT
@@ -236,6 +250,22 @@ export async function createContestRegistration(
     eventType: 'registration.created',
     afterJson: { status: saved.status, paymentStatus: saved.paymentStatus },
   });
+  if (env.bypassContestRegistrationWindow && outsideRegistrationWindow) {
+    await writeContestAudit({
+      contestId,
+      registrationId: saved.id,
+      actorId: viewer.userId,
+      actorRole: viewer.role,
+      eventType: 'registration.created_outside_window',
+      afterJson: {
+        registration_opens_at: contest.registrationOpensAt,
+        registration_closes_at: contest.registrationClosesAt,
+        registered_at: new Date().toISOString(),
+        entry_fee_due_at: saved.entryFeeDueAt,
+      },
+      reason: 'DEV_BYPASS_CONTEST_REGISTRATION_WINDOW đang bật',
+    });
+  }
   await sendContestRegistrationCreatedSideEffects(saved);
   // Thuê xe của quán mà không còn lệ phí phải chờ thì vào thẳng danh sách thi đấu.
   await autoConfirmRentalRegistration(saved.id);
@@ -740,6 +770,11 @@ export async function checkInRegistration(
       note?: string;
     }>;
   },
+  options?: {
+    /** Internal-only escape hatch used by the authenticated Contest Lab route. */
+    bypassWindow?: boolean;
+    bypassReason?: 'CONTEST_LAB';
+  },
 ) {
   const repo = AppDataSource.getRepository(ContestRegistration);
   const registration = await repo.findOne({ where: { id: registrationId } });
@@ -771,14 +806,24 @@ export async function checkInRegistration(
   // thứ nguy hiểm: sáu tháng sau không ai dựng lại được vì sao một người được
   // điểm danh khi giải còn đang mở đăng ký. Có dòng nhật ký thì câu hỏi đó trả
   // lời được.
-  const bypassedWindow = env.bypassContestCheckInWindow;
+  const bypassedByContestLab = options?.bypassWindow === true;
+  const bypassedWindow = env.bypassContestCheckInWindow || bypassedByContestLab;
   if (bypassedWindow) {
     logger.warn(
       'ContestService',
-      `DEV_BYPASS_CONTEST_CHECKIN đang bật — bỏ qua kiểm tra thời gian điểm danh cho contest ${contest.id}`,
-      { contestId: contest.id, registrationId, actorId: viewer.userId, status: contest.status },
+      `${bypassedByContestLab ? 'Contest Lab' : 'DEV_BYPASS_CONTEST_CHECKIN'} — bỏ qua kiểm tra thời gian điểm danh cho contest ${contest.id}`,
+      {
+        contestId: contest.id,
+        registrationId,
+        actorId: viewer.userId,
+        status: contest.status,
+        reason: bypassedByContestLab ? options?.bypassReason : 'ENV_FLAG',
+      },
     );
-  } else {
+  }
+  // Contest Lab chỉ tua qua thời gian; người vận hành vẫn phải đóng đăng ký
+  // trước. Cờ toàn server cũ giữ nguyên hành vi để tương thích môi trường dev.
+  if (!env.bypassContestCheckInWindow) {
     if (![ContestStatus.CLOSED, ContestStatus.RUNNING].includes(contest.status)) {
       throw new AppError(
         'Check-in chỉ được thực hiện khi contest ở trạng thái CLOSED hoặc RUNNING',
@@ -786,6 +831,8 @@ export async function checkInRegistration(
         'CONTEST_NOT_CHECKIN_READY',
       );
     }
+  }
+  if (!bypassedWindow) {
     const now = new Date();
     if (contest.startsAt && now < contest.startsAt) {
       throw new AppError('Chưa tới giờ check-in của contest', 400, 'CONTEST_CHECKIN_NOT_STARTED');
@@ -997,8 +1044,11 @@ export async function checkInRegistration(
         contest_starts_at: contest.startsAt,
         contest_ends_at: contest.endsAt,
         checked_in_at: new Date().toISOString(),
+        bypass_source: bypassedByContestLab ? 'CONTEST_LAB' : 'ENV_FLAG',
       },
-      reason: 'DEV_BYPASS_CONTEST_CHECKIN đang bật',
+      reason: bypassedByContestLab
+        ? (options?.bypassReason ?? 'CONTEST_LAB')
+        : 'DEV_BYPASS_CONTEST_CHECKIN đang bật',
     });
   }
 
