@@ -464,8 +464,14 @@ export const bookingController = {
       ] = await Promise.all([
         AppDataSource.getRepository(BookingParticipant).find({ where: { bookingId } }),
         AppDataSource.getRepository(BookingVehicle).find({ where: { bookingId } }),
-        AppDataSource.getRepository(PaymentComponent).find({ where: { bookingId } }),
-        AppDataSource.getRepository(FnbOrder).find({ where: { bookingId } }),
+        AppDataSource.getRepository(PaymentComponent).find({
+          where: { bookingId },
+          order: { createdAt: 'ASC' },
+        }),
+        AppDataSource.getRepository(FnbOrder).find({
+          where: { bookingId },
+          order: { createdAt: 'ASC' },
+        }),
         AppDataSource.getRepository(Cafe).findOne({ where: { id: booking.cafeId } }),
         AppDataSource.getRepository(Session).findOne({ where: { bookingId } }),
         AppDataSource.getRepository(PaymentTransaction).find({
@@ -592,6 +598,7 @@ export const bookingController = {
         for (const order of historicalFnbOrders) {
           const items = await AppDataSource.getRepository(FnbOrderItem).find({
             where: { fnbOrderId: order.id },
+            order: { createdAt: 'ASC' },
           });
           allRawItems.push(...items);
           itemsByOrderId.set(order.id, items);
@@ -638,6 +645,7 @@ export const bookingController = {
           orderType: order.orderType,
           status: order.status,
           totalAmount: Number(order.totalAmount),
+          createdAt: order.createdAt,
           items: enrichedItemsByOrderId.get(order.id) ?? [],
         }));
 

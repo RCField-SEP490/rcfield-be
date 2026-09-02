@@ -2044,25 +2044,27 @@ export async function createCheckoutAdditionalPaymentUrl(
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
-  // Ràng buộc thứ tự: Bắt buộc hoàn tất kiểm tra và xác nhận trả xe (Session COMPLETED) mới được thanh toán phí phát sinh
-  const sessionRepo = AppDataSource.getRepository(Session);
-  const uncompletedSession = await sessionRepo.findOne({
-    where: {
-      bookingId,
-      status: In([
-        SessionStatus.CHECKED_IN,
-        SessionStatus.ACTIVE,
-        SessionStatus.EXTENDING,
-        SessionStatus.CHECKING_OUT,
-      ]),
-    },
-  });
-  if (uncompletedSession) {
-    throw new AppError(
-      'Vui lòng chờ Nhân viên xác nhận hoàn tất kiểm tra và trả xe tại quầy trước khi thực hiện thanh toán các khoản phí phát sinh.',
-      400,
-      'SESSION_NOT_CHECKED_OUT',
-    );
+  // Ràng buộc thứ tự: Bắt buộc hoàn tất kiểm tra và xác nhận trả xe (Session COMPLETED) mới được thanh toán phí phát sinh (đối với đơn RENTAL)
+  if (booking.playMode !== 'BYOC') {
+    const sessionRepo = AppDataSource.getRepository(Session);
+    const uncompletedSession = await sessionRepo.findOne({
+      where: {
+        bookingId,
+        status: In([
+          SessionStatus.CHECKED_IN,
+          SessionStatus.ACTIVE,
+          SessionStatus.EXTENDING,
+          SessionStatus.CHECKING_OUT,
+        ]),
+      },
+    });
+    if (uncompletedSession) {
+      throw new AppError(
+        'Vui lòng chờ Nhân viên xác nhận hoàn tất kiểm tra và trả xe tại quầy trước khi thực hiện thanh toán các khoản phí phát sinh.',
+        400,
+        'SESSION_NOT_CHECKED_OUT',
+      );
+    }
   }
 
   const gateway = getPaymentGateway(gatewayName);
