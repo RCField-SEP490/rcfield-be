@@ -293,6 +293,38 @@ export async function updateContest(contestId: string, viewer: Viewer, body: Upd
     );
   }
 
+  /*
+    Đã có người đăng ký thì thông tin giải chốt lại.
+
+    Cho sửa ở trạng thái OPEN là có lý do: chủ sân bấm mở rồi mới thấy sai chính
+    tả hay sai giờ, và lúc đó chưa ai đăng ký nên sửa chẳng ảnh hưởng tới ai.
+
+    Nhưng sau khi có người đăng ký thì mỗi trường đều là một lời hứa đã đưa ra:
+    đổi ngày là họ tới sai hôm, đổi sân là tới sai chỗ, hạ sức chứa là có người
+    mất suất, đổi lệ phí là người trả trước và người trả sau khác giá nhau. Không
+    có bước nào báo cho họ biết, vì không có luồng thông báo đổi lịch.
+
+    Nên chốt ở đây. Muốn đổi thì huỷ giải rồi mở giải khác — đường đó có chốt
+    chặn tiền và có thông báo cho từng người.
+  */
+  if (contest.status === ContestStatus.OPEN) {
+    const [row] = await AppDataSource.query<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+         FROM contest_registrations
+        WHERE contest_id = $1 AND status <> 'CANCELLED'`,
+      [contest.id],
+    );
+    const soNguoiDangKy = Number(row?.count ?? 0);
+    if (soNguoiDangKy > 0) {
+      throw new AppError(
+        `Không sửa được: đã có ${soNguoiDangKy} người đăng ký giải này. Thông tin giải là cam kết với họ — muốn đổi thì phải huỷ giải và mở giải mới.`,
+        409,
+        'CONTEST_HAS_REGISTRATIONS',
+        { registration_count: soNguoiDangKy },
+      );
+    }
+  }
+
   let trackType: TrackType | null = null;
   if (body.track_type_id) {
     trackType = await AppDataSource.getRepository(TrackType).findOne({

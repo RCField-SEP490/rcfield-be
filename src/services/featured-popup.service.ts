@@ -234,6 +234,26 @@ export async function reviewFeaturedPopup(
   popup.reviewNotes = body.notes ?? null;
   popup.updatedBy = viewer.userId;
 
+  /*
+    Đồng hồ hiển thị chạy từ lúc DUYỆT, không phải từ lúc thu tiền.
+
+    `createPendingFeaturedSlot` đặt `startsAt = new Date()` ngay khi tiền về, mà
+    suất quảng bá thì chỉ lên trang khi `review_status = APPROVED`. Nên mỗi ngày
+    admin chưa duyệt là một ngày chủ sân trả tiền mà không được hiện: mua 7 ngày,
+    duyệt vào ngày thứ ba, còn lại bốn. Duyệt sau ngày thứ bảy thì suất đó đã hết
+    hạn trước cả khi được bật — trả đủ tiền, hiện ra 0 ngày.
+
+    Giữ nguyên ĐỘ DÀI đã mua rồi neo lại vào hiện tại. Lấy độ dài từ chính cửa sổ
+    cũ thay vì đọc lại đơn hàng: hai giá trị đó luôn bằng nhau, mà đọc lại thì
+    thêm một truy vấn và thêm một chỗ có thể lệch.
+  */
+  if (body.approve) {
+    const thoiLuongMs = popup.endsAt.getTime() - popup.startsAt.getTime();
+    const now = new Date();
+    popup.startsAt = now;
+    popup.endsAt = new Date(now.getTime() + thoiLuongMs);
+  }
+
   const saved = await repo.save(popup);
   return mapFeaturedPopup(saved);
 }
