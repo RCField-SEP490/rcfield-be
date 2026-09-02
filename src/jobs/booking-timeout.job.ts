@@ -87,8 +87,8 @@ async function notifyOverdueSessions(): Promise<void> {
     if (alreadyNotified) continue;
 
     const shortSessionId = session.sessionId.slice(0, 8).toUpperCase();
-    const title = 'Phiên chạy quá giờ chưa trả xe';
-    const message = `Phiên #${shortSessionId} tại ${session.cafeName} đã quá giờ ${session.minutesOverdue} phút. Vui lòng kiểm tra và xử lý trả xe.`;
+    const title = 'Phiên chơi quá giờ chưa kết thúc';
+    const message = `Phiên #${shortSessionId} tại ${session.cafeName} đã quá giờ ${session.minutesOverdue} phút. Vui lòng kiểm tra và xử lý kết thúc phiên.`;
     const data = {
       sessionId: session.sessionId,
       bookingId: session.bookingId,
