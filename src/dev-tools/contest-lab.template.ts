@@ -495,12 +495,25 @@ function renderContestSnapshot(contest) {
   const labels = { BYOC_ONLY: 'Chỉ xe cá nhân (BYOC)', RENTAL_ONLY: 'Chỉ xe thuê', MIXED: 'Xe cá nhân hoặc xe thuê' };
   const branches = contestBranches(contest).map((c) => c.name).filter(Boolean).join(', ') || 'Chưa xác định';
   const fmt = (v) => v ? new Date(v).toLocaleString('vi-VN') : 'Không giới hạn';
+  const statusCount = (value) => (ctx.registrations || []).filter((r) => r.status === value).length;
+  const sourceCount = (value) => (ctx.registrations || []).filter((r) => r.source === value).length;
+  const feeCounts = (ctx.registrations || []).reduce((acc, r) => {
+    const key = r.paymentStatus || 'CHƯA XÁC ĐỊNH'; acc[key] = (acc[key] || 0) + 1; return acc;
+  }, {});
+  const feeSummary = Object.keys(feeCounts).map((k) => k + ': ' + feeCounts[k]).join(', ');
   box.textContent = [
     contest.name + ' [' + contest.status + ']',
     'Chính sách xe: ' + (labels[contestPolicy(contest)] || contestPolicy(contest)),
     'Đăng ký: ' + (ctx.registrations || []).length + '/' + contest.capacity +
       ' · Phí: ' + Number(contest.entry_fee || 0).toLocaleString('vi-VN') + 'đ',
+    'Trạng thái VĐV: PENDING ' + statusCount('PENDING') + ' · CONFIRMED ' +
+      statusCount('CONFIRMED') + ' · CHECKED_IN ' + statusCount('CHECKED_IN'),
+    'Xe: BYOC ' + sourceCount('BYOC') + ' · RENTAL ' + sourceCount('RENTAL') +
+      (feeSummary ? ' · Tình trạng phí: ' + feeSummary : ''),
     'Khung đăng ký: ' + fmt(contest.registration_opens_at) + ' → ' + fmt(contest.registration_closes_at),
+    'Đăng ký demo: ' + (contest.registration_window_bypassed
+      ? 'ĐANG BẬT — giải OPEN nhận VĐV ngay, thao tác có audit log'
+      : 'ĐANG TẮT — VĐV phải nằm trong khung đăng ký'),
     'Thi đấu: ' + fmt(contest.starts_at) + ' → ' + fmt(contest.ends_at),
     'Chi nhánh: ' + branches,
     'Điểm danh demo: ' + (contest.check_in_window_bypassed
@@ -679,7 +692,7 @@ function parseAthlete(line) {
  * Chép thành hai bản thì sớm muộn cũng lệch nhau, và bản trong kịch bản sẽ là
  * bản lặng lẽ sai.
  */
-async function checkInOne(r) {
+async function checkInOne(r, demoNow) {
   const body = { checked_in_cafe_id: ctx.cafeId };
   // Xét theo TỪNG đăng ký, không theo chính sách của giải: giải hỗn hợp có cả
   // người thuê xe lẫn người mang xe riêng, mỗi loại cần dữ liệu khác nhau.
@@ -710,7 +723,157 @@ async function checkInOne(r) {
     const unit = Array.isArray(rows) ? rows[0] : null;
     if (unit) body.rental_vehicle_id = unit.vehicle_id || unit.id;
   }
-  await call('POST', '/contest-registrations/' + r.id + '/check-in', body, ctx.providerToken);
+  if (demoNow) {
+    await callDevPost('/dev-tools/contest-registrations/' + r.id + '/check-in-now',
+      body, ctx.providerToken);
+  } else {
+    await call('POST', '/contest-registrations/' + r.id + '/check-in', body, ctx.providerToken);
+  }
+}
+
+function stableHash(text) {
+  let h = 2166136261;
+  for (let i = 0; i < String(text).length; i++) {
+    h ^= String(text).charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function registrationIdOf(participant) {
+  return participant.registration_id || participant.registrationId;
+}
+
+function participantLabel(participant) {
+  return participant.participant_name || participant.full_name || participant.email ||
+    registrationIdOf(participant);
+}
+
+function matchTypeOf(match) { return match.match_type || match.matchType || ''; }
+function matchMeta(match) { return match.metadata || {}; }
+function isCompletedMatch(match) { return match.status === 'COMPLETED' || match.status === 'CANCELLED'; }
+
+function contestFormatCode() {
+  const c = ctx.contestSnapshot || {};
+  return (c.contest_format && c.contest_format.code) ||
+    (c.contestFormat && c.contestFormat.code) || c.format_code || c.formatCode || '';
+}
+
+function resultPhaseOf(match) {
+  if (matchTypeOf(match) === 'TIME_ATTACK') return 'QUALIFYING';
+  return 'FINAL';
+}
+
+function resultRowsForMatch(match) {
+  const participants = (match.participants || []).filter((p) => registrationIdOf(p));
+  if (!participants.length) return [];
+  if (matchTypeOf(match) === 'TIME_ATTACK') {
+    return participants.map((p) => {
+      const id = registrationIdOf(p);
+      const runNo = Number(matchMeta(match).run_no || match.round_no || 1);
+      const athleteBase = 38 + (stableHash(ctx.contestId + ':' + id) % 11000) / 1000;
+      const variation = [0.72, -0.41, 0.18, -0.09][(runNo - 1) % 4];
+      const best = Number((athleteBase + variation).toFixed(3));
+      const total = Number((best * 3 + 3 + (stableHash(match.id + ':' + id) % 3500) / 1000).toFixed(3));
+      return { registration_id: id, label: participantLabel(p), finish_position: 1,
+        is_winner: false, best_lap_seconds: best, total_time_seconds: total };
+    });
+  }
+  const winnerIndex = stableHash(ctx.contestId + ':' + match.id) % participants.length;
+  const ordered = [participants[winnerIndex]].concat(participants.filter((_p, i) => i !== winnerIndex));
+  return ordered.map((p, i) => {
+    const id = registrationIdOf(p);
+    const best = Number((42 + i * 1.7 + (stableHash(match.id + ':' + id) % 900) / 1000).toFixed(3));
+    return { registration_id: id, label: participantLabel(p), finish_position: i + 1,
+      is_winner: i === 0, best_lap_seconds: best,
+      total_time_seconds: Number((best * 3 + 4 + i * 2.25).toFixed(3)) };
+  });
+}
+
+function executableMatches(matches, phase) {
+  let rows = matches.filter((m) => !isCompletedMatch(m) && (m.participants || []).length &&
+    resultPhaseOf(m) === phase);
+  if (phase === 'FINAL' && rows.length) {
+    const firstRound = Math.min.apply(null, rows.map((m) => Number(m.round_no || 0)));
+    rows = rows.filter((m) => Number(m.round_no || 0) === firstRound);
+  }
+  return rows.sort((a, b) => Number(a.round_no || 0) - Number(b.round_no || 0) ||
+    Number(a.match_no || 0) - Number(b.match_no || 0));
+}
+
+function resultFingerprint(matches) {
+  return matches.map((m) => m.id + ':' + m.status + ':' +
+    (m.participants || []).map(registrationIdOf).join(',')).join('|');
+}
+
+function renderResultPreview(draft) {
+  const target = $('resultPreview');
+  if (!target) return;
+  if (!draft || !draft.matches.length) {
+    target.innerHTML = '<span class="muted">Không có trận sẵn sàng để xem trước.</span>';
+    return;
+  }
+  const rows = [];
+  draft.matches.forEach((m) => m.results.forEach((r) => rows.push(
+    '<tr><td>' + (m.roundNo || '-') + '/' + (m.matchNo || '-') + '</td><td>' +
+    r.label + '</td><td>' + r.best_lap_seconds.toFixed(3) + 's</td><td>' +
+    r.total_time_seconds.toFixed(3) + 's</td><td>' + r.finish_position + '</td><td>' +
+    (r.is_winner ? 'Thắng' : '') + '</td></tr>')));
+  target.innerHTML = '<div class="muted">' + draft.label + '</div><table><thead><tr>' +
+    '<th>Vòng/trận</th><th>VĐV</th><th>Best lap</th><th>Total</th><th>Vị trí</th><th></th>' +
+    '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+}
+
+async function createResultPreview(phase) {
+  const matches = await fetchMatches();
+  const executable = executableMatches(matches, phase);
+  ctx.resultDraft = {
+    phase,
+    fingerprint: resultFingerprint(executable),
+    label: phase === 'QUALIFYING' ? 'Vòng tính giờ / vòng loại' : 'Vòng knockout đang sẵn sàng',
+    matches: executable.map((m) => ({ id: m.id, roundNo: m.round_no, matchNo: m.match_no,
+      results: resultRowsForMatch(m) })),
+  };
+  renderResultPreview(ctx.resultDraft);
+  saveState();
+  return 'đã tạo preview ' + ctx.resultDraft.matches.length + ' trận';
+}
+
+async function submitResultMatch(match) {
+  const results = resultRowsForMatch(match).map((r) => ({
+    registration_id: r.registration_id,
+    finish_position: r.finish_position,
+    is_winner: r.is_winner,
+    best_lap_seconds: r.best_lap_seconds,
+    total_time_seconds: r.total_time_seconds,
+  }));
+  await call('POST', '/contest-matches/' + match.id + '/results',
+    { results, reason: 'Kết quả xác định từ Contest Lab' }, ctx.providerToken);
+}
+
+async function confirmResultPreview() {
+  if (!ctx.resultDraft) throw new Error('Hãy tạo dữ liệu xem trước trước khi ghi kết quả.');
+  const phase = ctx.resultDraft.phase;
+  let matches = await fetchMatches();
+  let current = executableMatches(matches, phase);
+  if (resultFingerprint(current) !== ctx.resultDraft.fingerprint) {
+    ctx.resultDraft = null; renderResultPreview(null); saveState();
+    throw new Error('Danh sách trận đã thay đổi. Preview cũ đã huỷ; hãy tạo lại.');
+  }
+  let done = 0;
+  let guard = 0;
+  while (current.length && guard++ < 100) {
+    for (const match of current) { await submitResultMatch(match); done++; }
+    matches = await fetchMatches();
+    const next = executableMatches(matches, phase);
+    if (next.length && resultFingerprint(next) === resultFingerprint(current)) {
+      throw new Error('Vòng đấu không tiến triển sau khi ghi kết quả; đã dừng để tránh lặp vô hạn.');
+    }
+    current = next;
+  }
+  if (guard >= 100) throw new Error('Vượt giới hạn an toàn khi xử lý các vòng đấu.');
+  ctx.matches = matches; ctx.resultDraft = null; renderResultPreview(null); saveState();
+  return 'đã ghi kết quả ' + done + ' trận; backend tự đưa người thắng đi tiếp';
 }
 
 /**
@@ -989,6 +1152,7 @@ const STEPS = [
         email: (r.participant && r.participant.email) || r.user_id,
         status: r.status,
         source: r.vehicle_source || r.vehicleSource,
+        paymentStatus: r.payment_status || r.entry_fee_status || r.entryFeeStatus,
       }));
 
       // Hội đồng không thể chờ mở hàng chục tài khoản. Ô danh sách là phần
@@ -1008,14 +1172,15 @@ const STEPS = [
       }
       let generatedNo = 1;
       const contestKey = String(contest.id).replace(/-/g, '').slice(0, 10);
-      while (candidateLines.length < remaining) {
+      const importTarget = remaining + (ctx.expectCapacity ? 1 : 0);
+      while (candidateLines.length < importTarget) {
         const email = 'contest.lab.' + contestKey + '.' + generatedNo + '@gmail.com';
         generatedNo += 1;
         if (seen.has(email)) continue;
         candidateLines.push(email);
         seen.add(email);
       }
-      const lines = candidateLines.slice(0, remaining);
+      const lines = candidateLines.slice(0, importTarget);
       const activeEmails = activeRows
         .map((r) => r.participant && r.participant.email).filter(Boolean);
       $('athletes').value = activeEmails.concat(lines).join('\n');
@@ -1124,7 +1289,8 @@ const STEPS = [
           throw e;
         }
         ctx.registrations.push({ id: r.id, email, status: r.status,
-          source: r.vehicle_source || r.vehicleSource });
+          source: r.vehicle_source || r.vehicleSource,
+          paymentStatus: r.payment_status || r.entry_fee_status || r.entryFeeStatus });
       }
       const finalRes = await call('GET', '/contests/' + ctx.contestId + '/registrations',
         null, ctx.providerToken);
@@ -1132,7 +1298,8 @@ const STEPS = [
       ctx.registrations = (Array.isArray(finalRows) ? finalRows : [])
         .filter((r) => !['CANCELLED', 'REJECTED'].includes(r.status))
         .map((r) => ({ id: r.id, email: (r.participant && r.participant.email) || r.user_id,
-          status: r.status, source: r.vehicle_source || r.vehicleSource }));
+          status: r.status, source: r.vehicle_source || r.vehicleSource,
+          paymentStatus: r.payment_status || r.entry_fee_status || r.entryFeeStatus }));
       renderContestSnapshot(contest);
       const byocCount = ctx.registrations.filter((r) => r.source === 'BYOC').length;
       const rentalCount = ctx.registrations.filter((r) => r.source === 'RENTAL').length;
@@ -1168,7 +1335,11 @@ const STEPS = [
       const path = mode === 'waived' ? '/waive-entry-fee' : '/mark-entry-fee-paid';
       const note = mode === 'waived' ? 'Miễn phí từ Contest Lab' : 'Đã thu phí dự thi';
       for (const r of ctx.registrations) {
+        if (['MARKED_PAID', 'WAIVED', 'PENDING_REVIEW', 'NOT_REQUIRED'].includes(r.paymentStatus)) {
+          continue;
+        }
         await call('POST', '/contest-registrations/' + r.id + path, { note }, ctx.providerToken);
+        r.paymentStatus = mode === 'waived' ? 'WAIVED' : 'MARKED_PAID';
       }
       const tong = effectiveEntryFee() * ctx.registrations.length;
       return mode === 'waived'
@@ -1183,7 +1354,9 @@ const STEPS = [
     run: async () => {
       assertCoDangKy('duyệt');
       for (const r of ctx.registrations) {
+        if (['CONFIRMED', 'CHECKED_IN'].includes(r.status)) continue;
         await call('POST', '/contest-registrations/' + r.id + '/approve', {}, ctx.providerToken);
+        r.status = 'CONFIRMED';
       }
       return 'đã duyệt ' + ctx.registrations.length + ' người';
     },
@@ -1206,8 +1379,12 @@ const STEPS = [
     api: 'POST /contest-registrations/:id/check-in',
     run: async () => {
       assertCoDangKy('điểm danh');
-      for (const r of ctx.registrations) await checkInOne(r);
-      return 'đã điểm danh ' + ctx.registrations.length + ' người';
+      let done = 0;
+      for (const r of ctx.registrations) {
+        if (r.status === 'CHECKED_IN') continue;
+        await checkInOne(r); done++;
+      }
+      return 'đã điểm danh đúng thời gian ' + done + ' người';
     },
   },
   {
@@ -1223,32 +1400,10 @@ const STEPS = [
   },
   {
     name: 'Nhập kết quả từng trận',
-    api: 'POST /contest-matches/:id/results  →  /advance',
+    api: 'Xem trước → POST /contest-matches/:id/results (backend tự advance)',
     run: async () => {
-      const all = await call('GET', '/contests/' + ctx.contestId + '/matches',
-        null, ctx.providerToken);
-      const rows = all.data || all;
-      let done = 0;
-      for (const m of rows) {
-        const parts = m.participants || [];
-        if (!parts.length) continue;
-        if (m.status === 'COMPLETED') continue;
-        const results = parts.map((p, i) => ({
-          registration_id: p.registration_id || p.registrationId,
-          finish_position: i + 1,
-          is_winner: i === 0,
-          total_time_seconds: 60 + i * 3,
-        }));
-        // Trường reason là BẮT BUỘC trong schema nhập kết quả — mọi lần ghi kết
-        // quả đều phải nêu căn cứ, để sau này còn truy được ai ghi và ghi theo gì.
-        await call('POST', '/contest-matches/' + m.id + '/results',
-          { results, reason: 'Kết quả dựng bằng Contest Lab' }, ctx.providerToken);
-        try {
-          await call('POST', '/contest-matches/' + m.id + '/advance', {}, ctx.providerToken);
-        } catch (e) { log('dim', '  (trận cuối không có vòng sau — bỏ qua advance)'); }
-        done++;
-      }
-      return 'đã nhập kết quả ' + done + ' trận';
+      const phase = contestFormatCode() === 'KNOCKOUT' ? 'FINAL' : 'QUALIFYING';
+      return createResultPreview(phase);
     },
   },
   {
@@ -1279,8 +1434,79 @@ function renderSteps() {
     btn.textContent = 'Chạy';
     btn.onclick = () => runOne(i);
     el.appendChild(btn);
+    if (i === STEP.CHECKIN) {
+      const demo = document.createElement('button');
+      demo.className = 'danger';
+      demo.textContent = 'Demo — điểm danh ngay';
+      demo.onclick = () => runDemoCheckIn(i);
+      el.appendChild(demo);
+    }
+    if (i === STEP.RESULTS) {
+      btn.textContent = 'Tạo dữ liệu xem trước';
+      const confirm = document.createElement('button');
+      confirm.className = 'primary';
+      confirm.textContent = 'Xác nhận ghi kết quả';
+      confirm.onclick = () => runConfirmResults(i);
+      el.appendChild(confirm);
+      if (contestFormatCode() === 'QUALIFYING_FINAL') {
+        const finals = document.createElement('button');
+        finals.className = 'ghost';
+        finals.textContent = 'Sinh bracket chung kết';
+        finals.onclick = () => runGenerateFinalBracket(i);
+        el.appendChild(finals);
+        const previewFinal = document.createElement('button');
+        previewFinal.className = 'ghost';
+        previewFinal.textContent = 'Tạo xem trước chung kết';
+        previewFinal.onclick = () => runFinalPreview(i);
+        el.appendChild(previewFinal);
+      }
+      const preview = document.createElement('div');
+      preview.id = 'resultPreview';
+      preview.className = 'picker';
+      preview.style.marginTop = '12px';
+      preview.style.overflowX = 'auto';
+      el.querySelector('.t').appendChild(preview);
+    }
     box.appendChild(el);
+    if (i === STEP.RESULTS) renderResultPreview(ctx.resultDraft);
   });
+}
+
+async function runDemoCheckIn(i) {
+  mark(i, 'run', 'đang điểm danh bằng quyền Contest Lab…');
+  try {
+    assertCoDangKy('điểm danh');
+    let done = 0;
+    for (const r of ctx.registrations) {
+      if (r.status === 'CHECKED_IN') continue;
+      await checkInOne(r, true); done++;
+    }
+    mark(i, 'ok', 'đã điểm danh ngay ' + done + ' người; mỗi lượt đều có audit CONTEST_LAB');
+    await adoptContest(ctx.contestId);
+  } catch (e) { mark(i, 'err', e.message); }
+}
+
+async function runConfirmResults(i) {
+  mark(i, 'run', 'đang ghi kết quả đã xem trước…');
+  try { mark(i, 'ok', await confirmResultPreview()); showCtx(); }
+  catch (e) { mark(i, 'err', e.message); }
+}
+
+async function runGenerateFinalBracket(i) {
+  mark(i, 'run', 'đang kiểm tra vòng loại và sinh bracket chung kết…');
+  try {
+    const result = await call('POST', '/contests/' + ctx.contestId +
+      '/matches/generate-final-bracket', {}, ctx.providerToken);
+    ctx.matches = result.data || result.matches || result;
+    ctx.resultDraft = null; renderResultPreview(null); saveState();
+    mark(i, 'ok', 'đã sinh bracket chung kết');
+  } catch (e) { mark(i, 'err', e.message); }
+}
+
+async function runFinalPreview(i) {
+  mark(i, 'run', 'đang tạo preview chung kết…');
+  try { mark(i, 'ok', await createResultPreview('FINAL')); }
+  catch (e) { mark(i, 'err', e.message); }
 }
 
 function mark(i, cls, msg) {
@@ -1297,10 +1523,30 @@ function showCtx() {
   $('ctxBox').textContent = bits.join('  ·  ');
 }
 
-async function runOne(i) {
+async function runOne(i, automated) {
   mark(i, 'run', 'đang chạy…');
   try {
-    const msg = await STEPS[i].run();
+    let msg;
+    if (automated && i === STEP.CHECKIN) {
+      let done = 0;
+      for (const r of ctx.registrations) {
+        if (r.status === 'CHECKED_IN') continue;
+        await checkInOne(r, true); done++;
+      }
+      msg = 'đã điểm danh ngay ' + done + ' người bằng Contest Lab';
+    } else if (automated && i === STEP.RESULTS) {
+      const format = contestFormatCode();
+      await createResultPreview(format === 'KNOCKOUT' ? 'FINAL' : 'QUALIFYING');
+      const first = await confirmResultPreview();
+      if (format === 'QUALIFYING_FINAL') {
+        await call('POST', '/contests/' + ctx.contestId + '/matches/generate-final-bracket',
+          {}, ctx.providerToken);
+        await createResultPreview('FINAL');
+        msg = first + '; ' + await confirmResultPreview();
+      } else msg = first;
+    } else {
+      msg = await STEPS[i].run();
+    }
     mark(i, 'ok', msg);
     showCtx(); showResume(); saveState();
     return true;
@@ -1312,7 +1558,7 @@ async function runOne(i) {
 
 async function runTo(n) {
   for (let i = 0; i < n; i++) {
-    const ok = await runOne(i);
+    const ok = await runOne(i, true);
     if (!ok) { log('err', 'Dừng ở bước ' + (i + 1) + '.'); return; }
   }
   log('ok', '── Xong ' + n + ' bước ──');
@@ -1339,7 +1585,7 @@ const STEP = {
 /** Chạy các bước [from, to) — hỏng bước nào thì dừng và ném lỗi ra ngoài. */
 async function runRange(from, to) {
   for (let i = from; i < to; i++) {
-    const ok = await runOne(i);
+    const ok = await runOne(i, true);
     if (!ok) throw new Error('dừng ở bước ' + (i + 1) + ' — ' + STEPS[i].name);
   }
 }
@@ -1347,6 +1593,7 @@ async function runRange(from, to) {
 /** Bỏ giải hiện tại khỏi phiên để lượt sau dựng một giải mới hoàn toàn. */
 function resetContest() {
   ctx.contestId = null; ctx.tplName = null; ctx.registrations = []; ctx.matches = [];
+  ctx.resultDraft = null;
   ctx.feeOrderId = null; ctx.feeSkipped = false;
   ctx.overrides = null; ctx.nameSuffix = ''; ctx.expectCapacity = false;
   ctx.capacityRejected = [];
@@ -1978,6 +2225,7 @@ async function adoptContest(contestId) {
     email: (r.participant && r.participant.email) || r.user_id,
     status: r.status,
     source: r.vehicle_source || r.vehicleSource,
+    paymentStatus: r.payment_status || r.entry_fee_status || r.entryFeeStatus,
   }));
   syncContestForm(contest);
 

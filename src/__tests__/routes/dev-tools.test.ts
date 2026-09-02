@@ -17,8 +17,9 @@ import { createTestUser, generateToken } from '../helpers';
 const KEY = 'khoa-thu-nghiem';
 
 /** Dựng app tối giản chỉ gắn router dev-tools, với khoá cho trước. */
-function buildApp(token: string) {
+function buildApp(token: string, nodeEnv = 'test') {
   jest.resetModules();
+  process.env.NODE_ENV = nodeEnv;
   process.env.DEV_TOOLS_ENABLED = 'true';
   process.env.DEV_TOOLS_TOKEN = token;
 
@@ -142,5 +143,21 @@ describe('cửa vào /dev-tools khi bỏ trống khoá', () => {
     // Không khai khoá thì trang không gắn `?key=` vào đâu cả.
     expect(page.text).toContain('<script src="/dev-tools/contest-lab.js">');
     await request(a).get('/dev-tools/contest-lab.css').expect(200);
+  });
+
+  it('production thiếu DEV_TOOLS_TOKEN không làm lộ endpoint điểm danh ngay', async () => {
+    const a = buildApp('', 'production');
+    await request(a)
+      .post('/dev-tools/contest-registrations/00000000-0000-4000-8000-000000000000/check-in-now')
+      .send({ checked_in_cafe_id: '00000000-0000-4000-8000-000000000000' })
+      .expect(404);
+  });
+
+  it('ở local vẫn bắt buộc đăng nhập trước khi điểm danh ngay', async () => {
+    const a = buildApp('', 'test');
+    await request(a)
+      .post('/dev-tools/contest-registrations/00000000-0000-4000-8000-000000000000/check-in-now')
+      .send({ checked_in_cafe_id: '00000000-0000-4000-8000-000000000000' })
+      .expect(401);
   });
 });
