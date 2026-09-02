@@ -108,6 +108,17 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
         )
       : [];
 
+  const feeOrderRows =
+    contestIds.length > 0
+      ? await AppDataSource.query<{ contest_id: string; amount: string }[]>(
+          `SELECT contest_id, amount::text
+             FROM contest_fee_orders
+            WHERE contest_id = ANY($1::uuid[])
+              AND status = 'PAID'`,
+          [contestIds],
+        )
+      : [];
+
   const cafeIds = Array.from(new Set(contestCafes.map((item) => item.cafeId)));
   const staffIds = Array.from(new Set(directAssignments.map((item) => item.staffId)));
   const cafes =
@@ -116,6 +127,7 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
     staffIds.length > 0 ? await AppDataSource.getRepository(User).findBy({ id: In(staffIds) }) : [];
 
   return {
+    providerFeeMap: new Map(feeOrderRows.map((row) => [row.contest_id, Number(row.amount)])),
     matchStatsByContest: new Map(
       matchStatsRows.map((row) => [
         row.contest_id,
@@ -182,6 +194,7 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
 
 export async function mapContestPayload(contests: Contest[]) {
   const {
+    providerFeeMap,
     trackTypeMap,
     typeMap,
     formatMap,
@@ -259,9 +272,12 @@ export async function mapContestPayload(contests: Contest[]) {
       running: 0,
     };
 
+    const providerFeeAmount = providerFeeMap.get(contest.id) ?? 0;
+
     return {
       id: contest.id,
       provider_id: contest.providerId,
+      provider_fee_amount: providerFeeAmount,
       match_stats: {
         total: matchStats.total,
         total_rounds: matchStats.rounds,
