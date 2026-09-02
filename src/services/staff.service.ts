@@ -1365,7 +1365,7 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
   const session = new Session();
   session.bookingId = bookingId;
   session.cafeId = booking.cafeId;
-  session.status = isByoc ? SessionStatus.ACTIVE : SessionStatus.CHECKED_IN;
+  session.status = SessionStatus.CHECKED_IN;
   session.checkedInBy = staffUserId;
   session.actualStartAt = new Date();
   session.plannedEndAt = booking.slotEnd;
@@ -1469,6 +1469,21 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
     sessionStatus: session.status,
     action: 'CHECK_IN_STARTED',
   });
+
+  if (booking.customerId) {
+    wsService.pushToUser(booking.customerId, 'BOOKING_CHECKED_IN', {
+      bookingId: booking.id,
+      sessionId: session.id,
+      sessionStatus: session.status,
+      action: 'CHECK_IN_STARTED',
+    });
+    wsService.pushToUser(booking.customerId, 'SESSION_UPDATED', {
+      bookingId: booking.id,
+      sessionId: session.id,
+      sessionStatus: session.status,
+      action: 'CHECK_IN_STARTED',
+    });
+  }
 
   return session;
 }
