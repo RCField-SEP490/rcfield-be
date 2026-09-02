@@ -138,12 +138,32 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
     }, new Map()),
     cafeMap: new Map(cafes.map((item) => [item.id, item])),
     registrationStatsByContest: registrations.reduce<
-      Map<string, { total: number; checkedIn: number; confirmed: number }>
+      Map<string, { total: number; checkedIn: number; confirmed: number; feePaid: number }>
     >((map, item) => {
-      const current = map.get(item.contestId) ?? { total: 0, checkedIn: 0, confirmed: 0 };
+      const current = map.get(item.contestId) ?? {
+        total: 0,
+        checkedIn: 0,
+        confirmed: 0,
+        feePaid: 0,
+      };
       if (item.status !== ContestRegistrationStatus.CANCELLED) current.total += 1;
       if (item.status === ContestRegistrationStatus.CHECKED_IN) current.checkedIn += 1;
       if (item.status === ContestRegistrationStatus.CONFIRMED) current.confirmed += 1;
+      /*
+        Số người ĐÃ NỘP lệ phí — cùng điều kiện với `assertNoCollectedEntryFees`
+        ở `contests-crud.ts`, vì giao diện dùng nó để quyết định có hiện nút Huỷ
+        hay không.
+
+        Hai bên lệch điều kiện thì nút hiện ra rồi bấm vào bị từ chối, hoặc tệ
+        hơn là nút bị ẩn trong khi thật ra huỷ được — chủ sân không có cách nào
+        biết vì sao.
+      */
+      if (
+        item.status !== ContestRegistrationStatus.CANCELLED &&
+        item.paymentStatus === ContestEntryFeePaymentStatus.MARKED_PAID
+      ) {
+        current.feePaid += 1;
+      }
       map.set(item.contestId, current);
       return map;
     }, new Map()),
@@ -211,6 +231,7 @@ export async function mapContestPayload(contests: Contest[]) {
       total: 0,
       checkedIn: 0,
       confirmed: 0,
+      feePaid: 0,
     };
     const resourceLocks = Array.isArray(contest.config?.resource_locks)
       ? (contest.config.resource_locks as unknown[])
@@ -320,6 +341,8 @@ export async function mapContestPayload(contests: Contest[]) {
         registration_count: registrationStats.total,
         confirmed_count: registrationStats.confirmed,
         checked_in_count: registrationStats.checkedIn,
+        /** Đã nộp lệ phí — có người thì không huỷ được giải. */
+        entry_fee_paid_count: registrationStats.feePaid,
         capacity_remaining:
           contest.capacity && contest.capacity > 0
             ? Math.max(0, contest.capacity - registrationStats.total)

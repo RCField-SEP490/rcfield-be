@@ -268,7 +268,7 @@ export async function markContestFeeOrderPaidViaPayOS(order: ContestFeeOrder) {
   await repo.save(order);
 
   if (order.featuredDays > 0) {
-    await createPendingFeaturedSlot(order, order.providerId);
+    await createPendingFeaturedSlot(order, order.providerId, false);
   }
 
   await notifyProvider(
@@ -358,6 +358,12 @@ export async function listContestFeeOrdersForAdmin(options: {
     data: rows.map((row) => ({
       ...mapOrder(row, planMap.get(row.planId)),
       contest_name: contestMap.get(row.contestId)?.name ?? null,
+      // Ảnh và mô tả gửi kèm để admin XEM ĐƯỢC nội dung ngay tại bước đối soát
+      // tiền. Đây là lúc duy nhất có người nhìn vào đơn chuyển khoản, nên nội
+      // dung phải hiện ra ở đây — nếu không thì việc bỏ bước duyệt riêng đồng
+      // nghĩa với không ai xem gì cả.
+      contest_banner_url: contestMap.get(row.contestId)?.bannerImageUrl ?? null,
+      contest_description: contestMap.get(row.contestId)?.description ?? null,
     })),
     meta: { total, page: options.page, limit: options.limit },
   };
@@ -386,14 +392,14 @@ export async function confirmContestFeeOrder(orderId: string, adminId: string, n
   await repo.save(order);
 
   if (order.featuredDays > 0) {
-    await createPendingFeaturedSlot(order, adminId);
+    await createPendingFeaturedSlot(order, adminId, true);
   }
 
   await notifyProvider(
     order,
     'Đã xác nhận phí tổ chức giải',
     order.featuredDays > 0
-      ? 'Giải của bạn đã sẵn sàng mở đăng ký. Suất quảng bá đang chờ đội ngũ RCField duyệt nội dung.'
+      ? 'Giải của bạn đã sẵn sàng mở đăng ký, và suất quảng bá đã lên trang chủ.'
       : 'Giải của bạn đã sẵn sàng mở đăng ký.',
   );
 
@@ -422,7 +428,24 @@ export async function rejectContestFeeOrder(orderId: string, adminId: string, re
   return mapOrder(order);
 }
 
-async function createPendingFeaturedSlot(order: ContestFeeOrder, adminId: string): Promise<void> {
+/**
+ * Tạo suất quảng bá cho một đơn phí đã thu.
+ *
+ * `daDuyetNoiDung` phân biệt hai đường tiền vào, và khác biệt đó là thật:
+ *
+ *   • CHUYỂN KHOẢN — admin ngồi đối soát từng đơn, nhìn thấy ảnh và tiêu đề
+ *     ngay trên thẻ trước khi bấm xác nhận. Bắt duyệt thêm một lần nữa ở màn
+ *     khác là hỏi cùng một người đúng một câu hỏi hai lần.
+ *
+ *   • PayOS — tiền về tự động, KHÔNG ai nhìn. Cho đăng thẳng lên trang chủ
+ *     nghĩa là bất kỳ ai trả tiền cũng tự đẩy được ảnh của mình lên trang chủ
+ *     RCField, không qua mắt người nào. Đường này vẫn phải chờ duyệt.
+ */
+async function createPendingFeaturedSlot(
+  order: ContestFeeOrder,
+  adminId: string,
+  daDuyetNoiDung: boolean,
+): Promise<void> {
   const contest = await AppDataSource.getRepository(Contest).findOne({
     where: { id: order.contestId },
   });
@@ -445,9 +468,10 @@ async function createPendingFeaturedSlot(order: ContestFeeOrder, adminId: string
       audienceScope: FeaturedPopupAudienceScope.ALL,
       startsAt,
       endsAt,
-      // Chưa hiện cho tới khi admin duyệt nội dung.
-      isActive: false,
-      reviewStatus: FeaturedPopupReviewStatus.PENDING,
+      isActive: daDuyetNoiDung,
+      reviewStatus: daDuyetNoiDung
+        ? FeaturedPopupReviewStatus.APPROVED
+        : FeaturedPopupReviewStatus.PENDING,
       priority: 100,
       createdBy: adminId,
     }),
