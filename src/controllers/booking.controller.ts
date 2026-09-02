@@ -5,6 +5,7 @@ import {
   AppError,
   AuthRequest,
   UserRole,
+  BookingStatus,
   SessionStatus,
   InspectionType,
   PaymentComponentStatus,
@@ -101,10 +102,15 @@ export const bookingController = {
     }
   },
 
-  // POST /api/v1/bookings/:id/checkout  [auth CUSTOMER]
+  // POST /api/v1/bookings/:id/checkout  [auth CUSTOMER, PROVIDER, STAFF]
   async createCheckout(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const bookingId = req.params.id;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(bookingId)) {
+        throw new AppError('Invalid booking ID format', 400, 'VALIDATION_ERROR');
+      }
+
       const forwardedFor = req.headers['x-forwarded-for'];
       const ipAddr =
         (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : null) ||
@@ -112,13 +118,40 @@ export const bookingController = {
         req.socket.remoteAddress ||
         '127.0.0.1';
 
-      // Ownership check: verify booking belongs to this customer
+      // Ownership check: verify booking belongs to this customer OR staff/provider of this cafe
       const booking = await AppDataSource.getRepository(Booking).findOne({
         where: { id: bookingId },
       });
       if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-      if (booking.customerId !== req.user!.userId) {
+
+      const role = req.user!.role;
+      if (role === UserRole.CUSTOMER && booking.customerId !== req.user!.userId) {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+      if (role === UserRole.PROVIDER) {
+        const ownsCafe = await AppDataSource.getRepository(Cafe).exist({
+          where: { id: booking.cafeId, providerId: req.user!.userId },
+        });
+        if (!ownsCafe) {
+          throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
+        }
+      }
+      if (role === UserRole.STAFF) {
+        const [assignment] = await AppDataSource.query<{ exists: boolean }[]>(
+          `SELECT EXISTS(
+             SELECT 1
+             FROM staff_cafe_assignments assignment
+             JOIN users staff ON staff.id = assignment.staff_id
+             WHERE assignment.staff_id = $1
+               AND assignment.cafe_id = $2
+               AND staff.is_active = true
+               AND staff.deleted_at IS NULL
+           ) AS exists`,
+          [req.user!.userId, booking.cafeId],
+        );
+        if (!assignment?.exists) {
+          throw new AppError('Access denied', 403, 'STAFF_NOT_ASSIGNED_TO_CAFE');
+        }
       }
 
       // `payment_method` vắng mặt nghĩa là VNPay — hành vi y hệt trước khi có
@@ -140,7 +173,7 @@ export const bookingController = {
     }
   },
 
-  // POST /api/v1/bookings/:id/checkout-additional-payment  [auth CUSTOMER]
+  // POST /api/v1/bookings/:id/checkout-additional-payment  [auth CUSTOMER, PROVIDER, STAFF]
   async createCheckoutAdditionalPayment(
     req: AuthRequest,
     res: Response,
@@ -148,6 +181,11 @@ export const bookingController = {
   ): Promise<void> {
     try {
       const bookingId = req.params.id;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(bookingId)) {
+        throw new AppError('Invalid booking ID format', 400, 'VALIDATION_ERROR');
+      }
+
       const forwardedFor = req.headers['x-forwarded-for'];
       const ipAddr =
         (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : null) ||
@@ -159,8 +197,35 @@ export const bookingController = {
         where: { id: bookingId },
       });
       if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
-      if (booking.customerId !== req.user!.userId) {
+
+      const role = req.user!.role;
+      if (role === UserRole.CUSTOMER && booking.customerId !== req.user!.userId) {
         throw new AppError('Access denied', 403, 'NOT_BOOKING_OWNER');
+      }
+      if (role === UserRole.PROVIDER) {
+        const ownsCafe = await AppDataSource.getRepository(Cafe).exist({
+          where: { id: booking.cafeId, providerId: req.user!.userId },
+        });
+        if (!ownsCafe) {
+          throw new AppError('Access denied', 403, 'BOOKING_CAFE_FORBIDDEN');
+        }
+      }
+      if (role === UserRole.STAFF) {
+        const [assignment] = await AppDataSource.query<{ exists: boolean }[]>(
+          `SELECT EXISTS(
+             SELECT 1
+             FROM staff_cafe_assignments assignment
+             JOIN users staff ON staff.id = assignment.staff_id
+             WHERE assignment.staff_id = $1
+               AND assignment.cafe_id = $2
+               AND staff.is_active = true
+               AND staff.deleted_at IS NULL
+           ) AS exists`,
+          [req.user!.userId, booking.cafeId],
+        );
+        if (!assignment?.exists) {
+          throw new AppError('Access denied', 403, 'STAFF_NOT_ASSIGNED_TO_CAFE');
+        }
       }
 
       // Dùng đúng bộ kiểm của luồng đặt lịch: chi nhánh chưa cấu hình xong tài
@@ -700,10 +765,37 @@ export const bookingController = {
             ? {
                 id: review.id,
                 overallScore: review.overallScore,
+                vehicleScore: review.vehicleScore,
+                staffScore: review.staffScore,
+                facilityScore: review.facilityScore,
                 note: review.note,
                 createdAt: review.createdAt,
               }
             : null,
+          can_review:
+            (booking.status === BookingStatus.COMPLETED || session?.status === 'COMPLETED') &&
+            !review &&
+            !booking.reviewDismissedAt &&
+            !(
+              (booking.completedAt || session?.actualEndAt || booking.slotEnd) &&
+              new Date().getTime() -
+                new Date(booking.completedAt || session?.actualEndAt || booking.slotEnd).getTime() >
+                5 * 24 * 60 * 60 * 1000
+            ),
+          is_review_expired:
+            !!(booking.completedAt || session?.actualEndAt || booking.slotEnd) &&
+            new Date().getTime() -
+              new Date(booking.completedAt || session?.actualEndAt || booking.slotEnd).getTime() >
+              5 * 24 * 60 * 60 * 1000,
+          review_deadline:
+            booking.completedAt || session?.actualEndAt || booking.slotEnd
+              ? new Date(
+                  new Date(
+                    booking.completedAt || session?.actualEndAt || booking.slotEnd,
+                  ).getTime() +
+                    5 * 24 * 60 * 60 * 1000,
+                ).toISOString()
+              : null,
         },
       });
     } catch (err) {

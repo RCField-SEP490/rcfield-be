@@ -38,7 +38,7 @@ bookingRouter.get(
 bookingRouter.get(
   '/:id/cancellation-quote',
   authenticate,
-  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.STAFF),
   bookingController.getCancellationQuote,
 );
 
@@ -47,27 +47,27 @@ bookingRouter.get('/:id', authenticate, bookingController.getBooking);
 bookingRouter.post(
   '/:id/checkout',
   authenticate,
-  authorize(UserRole.CUSTOMER),
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.STAFF),
   bookingController.createCheckout,
 );
 
 bookingRouter.post(
   '/:id/checkout-additional-payment',
   authenticate,
-  authorize(UserRole.CUSTOMER),
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.STAFF),
   bookingController.createCheckoutAdditionalPayment,
 );
 
 bookingRouter.post(
   '/:id/mock-checkout',
   authenticate,
-  authorize(UserRole.CUSTOMER),
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.STAFF),
   bookingController.mockCheckout,
 );
 
 bookingRouter.post(
   '/:id/cancel',
   authenticate,
-  authorize(UserRole.CUSTOMER, UserRole.PROVIDER),
+  authorize(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.STAFF),
   bookingController.cancelBooking,
 );

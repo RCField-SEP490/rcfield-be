@@ -949,6 +949,31 @@ export async function createPaymentComponents(
   snapshot: BookingSnapshot,
   bookingVehicles: BookingVehicle[],
 ): Promise<void> {
+  const compRepo = AppDataSource.getRepository(PaymentComponent);
+  const existingComponents = await compRepo.find({ where: { bookingId: booking.id } });
+  const existingPrepaid = existingComponents.filter((c) =>
+    [
+      PaymentComponentType.SLOT_FEE,
+      PaymentComponentType.RENTAL_FEE,
+      PaymentComponentType.FB_PREORDER,
+      PaymentComponentType.CONTEST_ENTRY_FEE,
+    ].includes(c.type),
+  );
+
+  // If prepaid components already exist (e.g. from walk-in booking creation),
+  // update any PENDING status to HELD and avoid inserting duplicate records.
+  if (existingPrepaid.length > 0) {
+    await AppDataSource.transaction(async (em) => {
+      for (const comp of existingPrepaid) {
+        if (comp.status === PaymentComponentStatus.PENDING) {
+          comp.status = PaymentComponentStatus.HELD;
+          await em.save(comp);
+        }
+      }
+    });
+    return;
+  }
+
   const slotFeeTotal = Number(
     snapshot.slot_fee_total ?? (snapshot as unknown as Record<string, unknown>).slot_fee ?? 0,
   );
@@ -988,7 +1013,6 @@ export async function createPaymentComponents(
     });
   }
 
-  const compRepo = AppDataSource.getRepository(PaymentComponent);
   await AppDataSource.transaction(async (em) => {
     for (const comp of components) {
       await em.save(compRepo.create(comp));
@@ -1174,8 +1198,10 @@ export async function processConfirmationResult(
     return { rspCode: '01', message: 'Order not found' };
   }
 
-  // Idempotency: already processed
-  if (tx.status === PaymentTransactionStatus.SUCCESS) {
+  // Chỉ transaction đang chờ mới được xác nhận. Một registration có thể bị huỷ
+  // rồi đăng ký lại với cùng id; callback SUCCESS về muộn cho transaction đã bị
+  // huỷ (FAILED) không được phép đánh dấu lượt đăng ký mới là đã thanh toán.
+  if (tx.status !== PaymentTransactionStatus.PENDING) {
     return { rspCode: '02', message: 'Order already confirmed' };
   }
 
@@ -1466,7 +1492,7 @@ export async function processMockConfirmation(
     return { rspCode: '01', message: 'Order not found' };
   }
 
-  if (tx.status === PaymentTransactionStatus.SUCCESS) {
+  if (tx.status !== PaymentTransactionStatus.PENDING) {
     return { rspCode: '02', message: 'Order already confirmed' };
   }
 
@@ -2004,14 +2030,9 @@ export async function confirmRefund(
 }
 
 /**
- * Mã QR tất toán sống bao lâu.
- *
- * Khác luồng đặt lịch: ở đó mã chết theo hạn giữ chỗ, vì quá hạn là mất chỗ.
- * Ở đây xe đã trả, khách đã về — không còn gì để nhả, nên cho hạn rộng để khách
- * ra khỏi quán vẫn trả được. Hết hạn cũng chỉ nghĩa là lần bấm sau sẽ cấp mã
- * mới, giao dịch cũ vẫn PENDING nên tiền về muộn vẫn khớp được.
+ * Thời hạn mã QR cho khoản phát sinh cuối phiên: 15 phút.
  */
-const ADDITIONAL_PAYMENT_QR_TTL_MS = 24 * 60 * 60 * 1000;
+const ADDITIONAL_PAYMENT_QR_TTL_MS = 15 * 60 * 1000;
 
 export async function createCheckoutAdditionalPaymentUrl(
   bookingId: string,
@@ -2023,14 +2044,22 @@ export async function createCheckoutAdditionalPaymentUrl(
   const booking = await bookingRepo.findOne({ where: { id: bookingId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
-  // Ràng buộc thứ tự: Chặn khởi tạo thanh toán phát sinh khi phiên chơi chưa hoàn tất kiểm tra trả xe
+  // Ràng buộc thứ tự: Bắt buộc hoàn tất kiểm tra và xác nhận trả xe (Session COMPLETED) mới được thanh toán phí phát sinh
   const sessionRepo = AppDataSource.getRepository(Session);
-  const activeSession = await sessionRepo.findOne({
-    where: { bookingId, status: In([SessionStatus.ACTIVE, SessionStatus.EXTENDING]) },
+  const uncompletedSession = await sessionRepo.findOne({
+    where: {
+      bookingId,
+      status: In([
+        SessionStatus.CHECKED_IN,
+        SessionStatus.ACTIVE,
+        SessionStatus.EXTENDING,
+        SessionStatus.CHECKING_OUT,
+      ]),
+    },
   });
-  if (activeSession) {
+  if (uncompletedSession) {
     throw new AppError(
-      'Vui lòng hoàn tất kiểm tra và trả xe tại quầy với Nhân viên trước khi thực hiện thanh toán các khoản phát sinh.',
+      'Vui lòng chờ Nhân viên xác nhận hoàn tất kiểm tra và trả xe tại quầy trước khi thực hiện thanh toán các khoản phí phát sinh.',
       400,
       'SESSION_NOT_CHECKED_OUT',
     );

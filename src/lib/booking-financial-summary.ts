@@ -214,7 +214,19 @@ export function buildBookingFinancialSummary(
     (component) => !isPrepaidComponent(component),
   );
 
-  const persistedPrepaidLines = prepaidComponents.map((component) => ({
+  const seenPrepaidKeys = new Set<string>();
+  const uniquePrepaidComponents = prepaidComponents.filter((component) => {
+    const key = component.bookingVehicleId
+      ? `${component.type}_${component.bookingVehicleId}`
+      : `${component.type}`;
+    if (seenPrepaidKeys.has(key)) {
+      return false;
+    }
+    seenPrepaidKeys.add(key);
+    return true;
+  });
+
+  const persistedPrepaidLines = uniquePrepaidComponents.map((component) => ({
     componentId: component.id,
     type: component.type,
     label: componentLabel(component),

@@ -58,8 +58,8 @@ async function seedRegistration(minutesAgo = 0) {
 
   const [reg] = await AppDataSource.query<{ id: string }[]>(
     `INSERT INTO contest_registrations
-       (contest_id, user_id, status, payment_status, entry_fee_amount, vehicle_source, created_at)
-     VALUES ($1,$2,$3,$4,150000,'BYOC', NOW() - ($5 || ' minutes')::interval)
+        (contest_id, user_id, participant_role_snapshot, status, payment_status, entry_fee_amount, vehicle_source, check_in_code, created_at)
+      VALUES ($1,$2,'CUSTOMER',$3,$4,150000,'BYOC', CONCAT('TEST-', gen_random_uuid()), NOW() - ($5 || ' minutes')::interval)
      RETURNING id`,
     [
       contest.id,
@@ -136,6 +136,28 @@ describe('khách bấm huỷ ở cổng thanh toán', () => {
     const reg = await readRegistration(registrationId);
     expect(reg.status).toBe(ContestRegistrationStatus.PENDING);
     expect(reg.payment_status).toBe(ContestEntryFeePaymentStatus.PENDING_PAYMENT);
+  });
+});
+
+describe('callback thanh toán đến muộn', () => {
+  it('không xác nhận lại transaction đã FAILED sau khi đăng ký được tạo lại', async () => {
+    const { registrationId } = await seedRegistration();
+    const txnRef = `contest_late_${Date.now()}`;
+    await seedTransaction(registrationId, txnRef);
+    await AppDataSource.query(`UPDATE payment_transactions SET status = $2 WHERE txn_ref = $1`, [
+      txnRef,
+      PaymentTransactionStatus.FAILED,
+    ]);
+
+    const res = await processConfirmationResult({
+      ...vnpayResult(txnRef, '00'),
+      isSuccess: true,
+    });
+
+    expect(res).toEqual({ rspCode: '02', message: 'Order already confirmed' });
+    expect((await readRegistration(registrationId)).payment_status).toBe(
+      ContestEntryFeePaymentStatus.PENDING_PAYMENT,
+    );
   });
 });
 

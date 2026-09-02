@@ -194,3 +194,139 @@ describe('UpdateDamageItemsSchema', () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ── settleSessionCheckoutBilling & damage update ─────────────────────────────
+
+import { settleSessionCheckoutBilling } from '../../services/staff.service';
+import { AppDataSource } from '../../config/database';
+import { Session } from '../../models/session.entity';
+import { Booking } from '../../models/booking.entity';
+import { Inspection } from '../../models/inspection.entity';
+import { DamageLineItem } from '../../models/damage-line-item.entity';
+import { PaymentComponent } from '../../models/payment-component.entity';
+import { User } from '../../models/user.entity';
+import { Cafe } from '../../models/cafe.entity';
+import {
+  BookingMode,
+  BookingStatus,
+  BookingSource,
+  InspectionType,
+  InspectionSubjectType,
+  PaymentComponentType,
+  PaymentComponentStatus,
+  SessionStatus,
+  UserRole,
+} from '../../types';
+import { createTestUser, createTestCafe } from '../helpers';
+
+describe('settleSessionCheckoutBilling — damage updates and deposit reconciliation', () => {
+  let staffUser: User;
+  let customer: User;
+  let cafe: Cafe;
+  let booking: Booking;
+  let session: Session;
+  let checkoutInspection: Inspection;
+
+  beforeEach(async () => {
+    staffUser = await createTestUser({ role: UserRole.STAFF });
+    customer = await createTestUser({ role: UserRole.CUSTOMER });
+    cafe = await createTestCafe();
+
+    const [trackType] = await AppDataSource.query(`SELECT id FROM track_types LIMIT 1`);
+    const now = new Date();
+    const later = new Date(now.getTime() + 3600000);
+
+    // Create booking
+    const bookingRepo = AppDataSource.getRepository(Booking);
+    booking = bookingRepo.create({
+      customerId: customer.id,
+      cafeId: cafe.id,
+      trackTypeId: trackType?.id || customer.id,
+      source: BookingSource.APP,
+      status: BookingStatus.CONFIRMED,
+      playMode: BookingMode.RENTAL,
+      slotStart: now,
+      slotEnd: later,
+      paymentExpiresAt: later,
+      snapshot: {},
+    });
+    booking = await bookingRepo.save(booking);
+
+    // Create session
+    const sessionRepo = AppDataSource.getRepository(Session);
+    session = sessionRepo.create({
+      bookingId: booking.id,
+      cafeId: cafe.id,
+      checkedInBy: staffUser.id,
+      actualStartAt: now,
+      plannedEndAt: later,
+      status: SessionStatus.CHECKING_OUT,
+    });
+    session = await sessionRepo.save(session);
+
+    // Create checkout inspection
+    const inspRepo = AppDataSource.getRepository(Inspection);
+    checkoutInspection = inspRepo.create({
+      sessionId: session.id,
+      type: InspectionType.CHECK_OUT,
+      subjectType: InspectionSubjectType.RENTAL_VEHICLE,
+      performedBy: staffUser.id,
+      damageNoted: true,
+      damageDescription: 'Hỏng bánh xe',
+      customerConfirmed: false,
+    });
+    checkoutInspection = await inspRepo.save(checkoutInspection);
+  });
+
+  it('tạo và cập nhật đúng tiền bồi thường sửa xe khi staff chỉnh sửa giá phụ tùng', async () => {
+    const compRepo = AppDataSource.getRepository(PaymentComponent);
+    const liRepo = AppDataSource.getRepository(DamageLineItem);
+
+    // Initial damage = 50.000đ
+    const item1 = liRepo.create({
+      inspectionId: checkoutInspection.id,
+      partType: DamagePartType.SHELL,
+      partsPrice: 50000,
+      laborPrice: 0,
+    });
+    await liRepo.save(item1);
+
+    await settleSessionCheckoutBilling(session.id, checkoutInspection);
+
+    let damageComp = await compRepo.findOne({
+      where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
+    });
+    expect(damageComp?.status).toBe(PaymentComponentStatus.PENDING);
+    expect(Number(damageComp?.amount)).toBe(50000);
+
+    // Staff edits damage price to 120.000đ
+    await liRepo.delete({ inspectionId: checkoutInspection.id });
+    const item2 = liRepo.create({
+      inspectionId: checkoutInspection.id,
+      partType: DamagePartType.SHELL,
+      partsPrice: 120000,
+      laborPrice: 0,
+    });
+    await liRepo.save(item2);
+
+    await settleSessionCheckoutBilling(session.id, checkoutInspection);
+
+    damageComp = await compRepo.findOne({
+      where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
+    });
+    expect(damageComp?.status).toBe(PaymentComponentStatus.PENDING);
+    expect(Number(damageComp?.amount)).toBe(120000); // Updated to 120k!
+
+    // Staff removes all damage items (price = 0đ)
+    await liRepo.delete({ inspectionId: checkoutInspection.id });
+    checkoutInspection.damageNoted = false;
+    await AppDataSource.getRepository(Inspection).save(checkoutInspection);
+
+    await settleSessionCheckoutBilling(session.id, checkoutInspection);
+
+    damageComp = await compRepo.findOne({
+      where: { bookingId: booking.id, type: PaymentComponentType.DAMAGE_CHARGE },
+    });
+    expect(damageComp).toBeNull(); // Cleaned up!
+  });
+});
