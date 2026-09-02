@@ -507,6 +507,21 @@ export const staffController = {
     }
   },
 
+  // POST /api/v1/staff/sessions/:sessionId/complete-byoc [auth]
+  async completeByocSession(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await staffService.completeByocSession(req.params.sessionId, req.user.userId);
+      logger.info('Staff', 'completeByocSession', {
+        staffId: req.user.userId,
+        sessionId: req.params.sessionId,
+      });
+      res.json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
+
   // PUT /api/v1/staff/sessions/:sessionId/inspections/:inspectionId/damage-items [auth]
   async updateDamageItems(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
