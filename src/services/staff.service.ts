@@ -1361,10 +1361,11 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
     return existing;
   }
 
+  const isByoc = booking.playMode === 'BYOC';
   const session = new Session();
   session.bookingId = bookingId;
   session.cafeId = booking.cafeId;
-  session.status = SessionStatus.CHECKED_IN;
+  session.status = isByoc ? SessionStatus.ACTIVE : SessionStatus.CHECKED_IN;
   session.checkedInBy = staffUserId;
   session.actualStartAt = new Date();
   session.plannedEndAt = booking.slotEnd;
@@ -1429,7 +1430,7 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
       sv.status = SessionVehicleStatus.ASSIGNED;
       await AppDataSource.getRepository(SessionVehicle).save(sv);
     }
-  } else if (booking.playMode === 'BYOC') {
+  } else if (isByoc) {
     // One BYOC vehicle slot per participant — link via assigned_to_participant_id for labeling
     const sessionParticipants = await AppDataSource.getRepository(SessionParticipant).find({
       where: { sessionId: session.id },
@@ -1439,7 +1440,7 @@ export async function startCheckIn(bookingId: string, staffUserId: string): Prom
       const sv = new SessionVehicle();
       sv.sessionId = session.id;
       sv.vehicleSource = VehicleSource.BYOC;
-      sv.status = SessionVehicleStatus.ASSIGNED;
+      sv.status = SessionVehicleStatus.IN_USE;
       if (sp) sv.assignedToParticipantId = sp.id;
       await AppDataSource.getRepository(SessionVehicle).save(sv);
     }
@@ -1744,11 +1745,13 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
   // Include both on-site session orders AND the booking's pre-order
   const fnbOrders = await AppDataSource.getRepository(FnbOrder).find({
     where: [{ sessionId }, { bookingId: session.bookingId, orderType: FnbOrderType.PRE_ORDER }],
+    order: { createdAt: 'ASC' },
   });
   const mappedFnbOrders = [];
   for (const order of fnbOrders) {
     const items = await AppDataSource.getRepository(FnbOrderItem).find({
       where: { fnbOrderId: order.id },
+      order: { createdAt: 'ASC' },
     });
     const itemDetails = [];
     for (const item of items) {
@@ -1769,6 +1772,7 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       status: order.status,
       items: itemDetails,
       total: Number(order.totalAmount),
+      createdAt: order.createdAt,
     });
   }
 
@@ -2630,7 +2634,7 @@ async function buildExtensionPricingOptions(
       additionalFee: roundExtensionFee(ratePerMinute, extraMinutes),
       newPlannedEnd: new Date(session.plannedEndAt.getTime() + extraMinutes * 60000).toISOString(),
       available: false,
-      blockedReason: 'Phiên đã quá giờ; cần xử lý trả xe trước',
+      blockedReason: 'Phiên đã quá giờ; cần xử lý kết thúc phiên trước',
     }));
   }
 
@@ -2669,7 +2673,7 @@ export async function proposeExtension(
   const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
   if (!timing.canExtend) {
     throw new AppError(
-      'Phiên đã quá giờ. Hãy xử lý trả xe; hệ thống không tự tính phí quá giờ theo thời điểm nhân viên checkout.',
+      'Phiên đã quá giờ. Hãy xử lý kết thúc phiên; hệ thống không tự tính phí quá giờ theo thời điểm nhân viên đóng ca.',
       409,
       'LATE_EXTENSION_REQUIRES_CHECKOUT',
     );
@@ -2950,7 +2954,7 @@ export async function addSessionFnbOrder(
   const timing = getSessionOperationalTiming(session.plannedEndAt, session.status);
   if (!timing.canExtend) {
     throw new AppError(
-      'Phiên đã quá giờ; cần xử lý trả xe trước khi thêm dịch vụ mới.',
+      'Phiên đã quá giờ; cần xử lý kết thúc phiên trước khi thêm dịch vụ mới.',
       409,
       'ON_SITE_ORDER_NOT_ALLOWED_AFTER_OVERDUE',
     );
@@ -3613,7 +3617,7 @@ async function respondExtensionAs(
     throw new AppError(
       timing.canExtend
         ? 'Đề xuất gia hạn đã hết hạn'
-        : 'Phiên đã quá giờ; cần xử lý trả xe trước khi xem xét phụ phí.',
+        : 'Phiên đã quá giờ; cần xử lý kết thúc phiên trước khi xem xét phụ phí.',
       400,
       timing.canExtend ? 'EXTENSION_EXPIRED' : 'LATE_EXTENSION_REQUIRES_CHECKOUT',
     );
@@ -3991,6 +3995,86 @@ export async function staffConfirmCheckout(
     sessionStatus: SessionStatus.COMPLETED,
     alreadyCompleted: completion.alreadyCompleted,
   };
+}
+
+// ── STAFF COMPLETE BYOC SESSION (Ends active BYOC session manually) ───────────
+
+export async function completeByocSession(
+  sessionId: string,
+  staffUserId: string,
+): Promise<{ success: boolean; message: string; session: Session }> {
+  const sessionRepo = AppDataSource.getRepository(Session);
+  const session = await sessionRepo.findOne({ where: { id: sessionId } });
+  if (!session) throw new AppError('Phiên chơi không tồn tại', 404, 'SESSION_NOT_FOUND');
+
+  const booking = await AppDataSource.getRepository(Booking).findOne({
+    where: { id: session.bookingId },
+  });
+  if (!booking) throw new AppError('Đơn đặt không tồn tại', 404, 'BOOKING_NOT_FOUND');
+
+  if (booking.playMode !== 'BYOC') {
+    throw new AppError(
+      'Chức năng này chỉ áp dụng cho đơn mang xe cá nhân (BYOC)',
+      400,
+      'NOT_BYOC_BOOKING',
+    );
+  }
+
+  if (session.status === SessionStatus.COMPLETED) {
+    return { success: true, message: 'Phiên chơi đã hoàn tất từ trước', session };
+  }
+
+  // Check if there are any pending payment components
+  const pendingCount = await AppDataSource.getRepository(PaymentComponent).count({
+    where: { bookingId: booking.id, status: PaymentComponentStatus.PENDING },
+  });
+  if (pendingCount > 0) {
+    throw new AppError(
+      'Còn chi phí phát sinh chưa thanh toán. Vui lòng quyết toán trước khi kết thúc phiên chơi.',
+      400,
+      'PENDING_PAYMENTS_EXIST',
+    );
+  }
+
+  session.status = SessionStatus.COMPLETED;
+  session.actualEndAt = new Date();
+  session.checkedOutBy = staffUserId;
+  await sessionRepo.save(session);
+
+  // Mark all session vehicles as RETURNED
+  const svRepo = AppDataSource.getRepository(SessionVehicle);
+  const sessionVehicles = await svRepo.find({ where: { sessionId: session.id } });
+  for (const sv of sessionVehicles) {
+    sv.status = SessionVehicleStatus.RETURNED;
+    sv.returnedAt = new Date();
+    await svRepo.save(sv);
+  }
+
+  // Reconcile booking status
+  await reconcileBookingAfterCheckout(booking);
+  void pushCheckoutCompletedEvents(booking, session.id, staffUserId);
+
+  const shortRef = booking.id.substring(0, 8).toUpperCase();
+  if (booking.customerId) {
+    await createNotification(
+      booking.customerId,
+      NotificationType.CUSTOMER_CHECKOUT_CONFIRMED,
+      'Phiên chơi đã kết thúc',
+      `Phiên chơi cho đơn đặt #${shortRef} đã được hoàn tất thành công. Cảm ơn bạn đã trải nghiệm tại RCField!`,
+      {
+        bookingId: booking.id,
+        sessionId: session.id,
+        route: `/booking/${booking.id}`,
+      },
+    ).catch(() => {});
+    wsService.pushToUser(booking.customerId, 'SESSION_CHECKOUT_COMPLETED', {
+      bookingId: booking.id,
+      sessionId: session.id,
+      completedAt: session.actualEndAt,
+    });
+  }
+
+  return { success: true, message: 'Kết thúc phiên chơi thành công', session };
 }
 
 // ── UPDATE DAMAGE LINE ITEMS (staff edits before confirming) ─────────────────
@@ -4405,9 +4489,10 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     order: { createdAt: 'DESC' },
   });
 
-  // Ràng buộc thứ tự: Chặn Staff thu tiền khi ca chơi chưa hoàn tất kiểm tra trả xe
+  // Ràng buộc thứ tự: Chặn Staff thu tiền khi ca chơi chưa hoàn tất kiểm tra trả xe (đối với đơn RENTAL)
   if (
     sessionForNotification &&
+    booking.playMode !== 'BYOC' &&
     [SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(sessionForNotification.status)
   ) {
     throw new AppError(
@@ -4559,12 +4644,23 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
   // ── NOTIFICATIONS ─────────────────────────────────────────────────────────
   try {
     const shortRef = booking.id.substring(0, 8).toUpperCase();
+    const isSessionFinished =
+      !sessionForNotification || sessionForNotification.status === SessionStatus.COMPLETED;
+    const customerTitle = isSessionFinished ? 'Thanh toán thành công' : 'Ghi nhận thanh toán';
+    const customerMessage = isSessionFinished
+      ? `Đơn đặt #${shortRef} đã được quyết toán hoàn tất tại quầy.`
+      : `Đã ghi nhận thanh toán ${totalCounterBill.toLocaleString('vi-VN')} đ phí phát sinh tại quầy cho đơn đặt #${shortRef}. Chúc bạn tiếp tục có trải nghiệm chơi vui vẻ!`;
+    const staffTitle = isSessionFinished ? 'Quyết toán hoàn tất' : 'Đã thu phí phát sinh';
+    const staffMessage = isSessionFinished
+      ? `Đơn đặt #${shortRef} đã được quyết toán thành công.`
+      : `Đã ghi nhận thu ${totalCounterBill.toLocaleString('vi-VN')} đ phí phát sinh cho đơn đặt #${shortRef}. Phiên chơi đang tiếp tục.`;
+
     if (booking.customerId) {
       await createNotification(
         booking.customerId,
         NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
-        'Thanh toán thành công',
-        `Đơn đặt #${shortRef} đã được quyết toán hoàn tất tại quầy.`,
+        customerTitle,
+        customerMessage,
         {
           bookingId,
           totalCounterBill,
@@ -4583,8 +4679,8 @@ export async function settlePendingPayments(bookingId: string, staffUserId: stri
     await createNotification(
       staffUserId,
       NotificationType.CUSTOMER_PAYMENT_CONFIRMED,
-      'Quyết toán hoàn tất',
-      `Đơn đặt #${shortRef} đã được quyết toán thành công.`,
+      staffTitle,
+      staffMessage,
       {
         bookingId,
         ...(sessionForNotification
@@ -4656,24 +4752,26 @@ export async function initiateWalkInSettleBankTransfer(
   const booking = await bookingRepo.findOne({ where: { id: bookingId, cafeId } });
   if (!booking) throw new AppError('Booking not found', 404, 'BOOKING_NOT_FOUND');
 
-  const uncompletedSession = await AppDataSource.getRepository(Session).findOne({
-    where: {
-      bookingId,
-      status: In([
-        SessionStatus.CHECKED_IN,
-        SessionStatus.ACTIVE,
-        SessionStatus.EXTENDING,
-        SessionStatus.CHECKING_OUT,
-      ]),
-    },
-  });
+  if (booking.playMode !== 'BYOC') {
+    const uncompletedSession = await AppDataSource.getRepository(Session).findOne({
+      where: {
+        bookingId,
+        status: In([
+          SessionStatus.CHECKED_IN,
+          SessionStatus.ACTIVE,
+          SessionStatus.EXTENDING,
+          SessionStatus.CHECKING_OUT,
+        ]),
+      },
+    });
 
-  if (uncompletedSession) {
-    throw new AppError(
-      'Vui lòng thực hiện BƯỚC 1: XÁC NHẬN TRẢ XE trước khi mở thanh toán chuyển khoản quyết toán.',
-      400,
-      'SESSION_NOT_CHECKED_OUT',
-    );
+    if (uncompletedSession) {
+      throw new AppError(
+        'Vui lòng thực hiện BƯỚC 1: XÁC NHẬN TRẢ XE trước khi mở thanh toán chuyển khoản quyết toán.',
+        400,
+        'SESSION_NOT_CHECKED_OUT',
+      );
+    }
   }
 
   const compRepo = AppDataSource.getRepository(PaymentComponent);
@@ -4773,6 +4871,7 @@ export async function confirmWalkInBankTransfer(
 
   if (
     sessionForNotification &&
+    booking.playMode !== 'BYOC' &&
     [SessionStatus.ACTIVE, SessionStatus.EXTENDING].includes(sessionForNotification.status)
   ) {
     throw new AppError(

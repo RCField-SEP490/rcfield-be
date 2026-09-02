@@ -27,6 +27,7 @@ staffRouter.get('/sessions/:sessionId', staffController.getSessionDetail);
 // Session Operations
 staffRouter.post('/sessions/:sessionId/inspections', staffController.submitInspection);
 staffRouter.post('/sessions/:sessionId/confirm-checkout', staffController.confirmCheckout);
+staffRouter.post('/sessions/:sessionId/complete-byoc', staffController.completeByocSession);
 staffRouter.put(
   '/sessions/:sessionId/inspections/:inspectionId/damage-items',
   staffController.updateDamageItems,
