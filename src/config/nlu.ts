@@ -2,6 +2,10 @@ import { logger } from './logger';
 
 const NLU_URL = process.env.NLU_SERVICE_URL ?? 'http://nlu-service:8000';
 const NLU_TIMEOUT = parseInt(process.env.NLU_TIMEOUT_MS ?? '2000', 10);
+// Rỗng khi NLU chạy chung mạng nội bộ Docker — dịch vụ đó cũng bỏ qua việc
+// kiểm tra khi biến này rỗng ở phía nó. Đặt cùng giá trị ở cả hai bên khi NLU
+// chuyển sang chạy trên một VPS riêng.
+const NLU_API_KEY = process.env.NLU_API_KEY ?? '';
 
 export interface NluResult {
   intent: string;
@@ -44,7 +48,10 @@ export async function classifyIntent(text: string): Promise<NluResult> {
   try {
     const res = await fetch(`${NLU_URL}/classify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(NLU_API_KEY ? { 'X-Api-Key': NLU_API_KEY } : {}),
+      },
       body: JSON.stringify({ text }),
       signal: controller.signal,
     });
