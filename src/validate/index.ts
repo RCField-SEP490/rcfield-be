@@ -580,6 +580,10 @@ export const CreateContestSchema = ContestUpsertBaseSchema.refine(
     path: ['ends_at'],
   },
 )
+  .refine((value) => value.registration_opens_at.getTime() > Date.now(), {
+    message: 'registration_opens_at phải sau thời điểm hiện tại',
+    path: ['registration_opens_at'],
+  })
   .refine((value) => value.registration_opens_at < value.registration_closes_at, {
     message: 'registration_closes_at phải sau registration_opens_at',
     path: ['registration_closes_at'],

@@ -11,6 +11,7 @@ import { TrackType } from '../../models/track-type.entity';
 import { AppError, ContestStatus, UserRole } from '../../types';
 import {
   assertContestOperator,
+  assertContestOwner,
   assertProviderViewer,
   getContestOrThrow,
   isStaffAssignedToContest,
@@ -564,6 +565,44 @@ export async function changeContestStatus(
           ? 'contest.closed'
           : 'contest.cancelled',
     afterJson: { status: nextStatus },
+  });
+
+  return getContestDetail(contest.id, viewer);
+}
+
+/**
+ * Mở sớm cổng đăng ký của đúng một giải phục vụ Contest Lab.
+ *
+ * Đây không phải bypass của API đăng ký: contest vẫn phải OPEN và mọi guard
+ * capacity, policy, ban, phí vẫn chạy như production. Dev-tool chỉ đưa mốc mở
+ * đăng ký về hiện tại; lùi một phút để tránh lệch đồng hồ nhỏ giữa FE và BE.
+ */
+export async function openContestRegistrationForDemo(contestId: string, viewer: Viewer) {
+  const contest = await assertContestOwner(contestId, viewer);
+  if (contest.status !== ContestStatus.OPEN) {
+    throw new AppError('Chỉ contest OPEN mới có thể mở đăng ký ngay', 400, 'CONTEST_NOT_OPEN');
+  }
+
+  const now = new Date();
+  if (contest.registrationClosesAt && contest.registrationClosesAt <= now) {
+    throw new AppError('Contest đã qua thời gian đóng đăng ký', 400, 'CONTEST_REGISTRATION_CLOSED');
+  }
+
+  if (contest.registrationOpensAt && contest.registrationOpensAt <= now) {
+    return getContestDetail(contest.id, viewer);
+  }
+
+  const previousOpensAt = contest.registrationOpensAt;
+  contest.registrationOpensAt = new Date(now.getTime() - 60_000);
+  await AppDataSource.getRepository(Contest).save(contest);
+  await writeContestAudit({
+    contestId: contest.id,
+    actorId: viewer.userId,
+    actorRole: viewer.role,
+    eventType: 'contest.registration_opened_early_for_demo',
+    beforeJson: { registration_opens_at: previousOpensAt },
+    afterJson: { registration_opens_at: contest.registrationOpensAt },
+    reason: 'CONTEST_LAB',
   });
 
   return getContestDetail(contest.id, viewer);

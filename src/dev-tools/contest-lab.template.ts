@@ -397,7 +397,7 @@ contest.customer4@gmail.com</textarea>
 
     <div class="panel">
       <details>
-        <summary>Từng bước một — 17 bước, mở ra khi cần chạy lẻ</summary>
+        <summary>Từng bước một — 18 bước, mở ra khi cần chạy lẻ</summary>
         <div id="steps"></div>
       </details>
     </div>
@@ -501,6 +501,11 @@ function renderContestSnapshot(contest) {
     const key = r.paymentStatus || 'CHƯA XÁC ĐỊNH'; acc[key] = (acc[key] || 0) + 1; return acc;
   }, {});
   const feeSummary = Object.keys(feeCounts).map((k) => k + ': ' + feeCounts[k]).join(', ');
+  const now = Date.now();
+  const opensAt = contest.registration_opens_at ? new Date(contest.registration_opens_at).getTime() : null;
+  const closesAt = contest.registration_closes_at ? new Date(contest.registration_closes_at).getTime() : null;
+  const registrationOpenNow = contest.status === 'OPEN' &&
+    (!opensAt || opensAt <= now) && (!closesAt || now <= closesAt);
   box.textContent = [
     contest.name + ' [' + contest.status + ']',
     'Chính sách xe: ' + (labels[contestPolicy(contest)] || contestPolicy(contest)),
@@ -513,7 +518,9 @@ function renderContestSnapshot(contest) {
     'Khung đăng ký: ' + fmt(contest.registration_opens_at) + ' → ' + fmt(contest.registration_closes_at),
     'Đăng ký demo: ' + (contest.registration_window_bypassed
       ? 'ĐANG BẬT — giải OPEN nhận VĐV ngay, thao tác có audit log'
-      : 'ĐANG TẮT — VĐV phải nằm trong khung đăng ký'),
+      : registrationOpenNow
+        ? 'ĐANG MỞ — thời điểm hiện tại nằm trong khung đăng ký'
+        : 'ĐANG TẮT — VĐV phải nằm trong khung đăng ký'),
     'Thi đấu: ' + fmt(contest.starts_at) + ' → ' + fmt(contest.ends_at),
     'Chi nhánh: ' + branches,
     'Điểm danh demo: ' + (contest.check_in_window_bypassed
@@ -1057,10 +1064,9 @@ const STEPS = [
         participating_cafe_ids: [$('cCafe').value],
         starts_at: isoIn(days, 9),
         ends_at: isoIn(days, 18),
-        // Mốc mở đăng ký phải nằm trong QUÁ KHỨ, nếu không vận động viên đăng ký
-        // ngay sau đó sẽ ăn CONTEST_REGISTRATION_NOT_OPEN_YET — công cụ dựng dữ
-        // liệu thì không ai muốn ngồi chờ tới đúng giờ.
-        registration_opens_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        // Luồng tạo thật yêu cầu mốc mở nằm trong tương lai. Bước dev-tool riêng
+        // phía sau sẽ mở sớm đúng contest này để khách đăng ký ngay khi demo.
+        registration_opens_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         registration_closes_at: isoIn(days - 1 > 0 ? days - 1 : 1, 20),
         capacity: ov.capacity !== undefined ? ov.capacity : Number($('cCap').value),
         entry_fee: ov.entry_fee !== undefined ? ov.entry_fee : Number($('cFee').value),
@@ -1119,8 +1125,27 @@ const STEPS = [
     name: 'Mở đăng ký — DRAFT sang OPEN',
     api: 'POST /contests/:id/open',
     run: async () => {
+      const current = await call('GET', '/contests/' + ctx.contestId, null, ctx.providerToken);
+      syncContestForm(current);
+      if (current.status === 'OPEN') {
+        return 'giải đã OPEN — không mở đăng ký lần hai';
+      }
+      if (current.status !== 'DRAFT') {
+        throw new Error('Không thể mở đăng ký: giải đang ở trạng thái ' + current.status +
+          '. Contest Lab không tự lùi trạng thái của giải thật.');
+      }
       const c = await call('POST', '/contests/' + ctx.contestId + '/open', {}, ctx.providerToken);
       return 'trạng thái ' + c.status;
+    },
+  },
+  {
+    name: 'Cho phép vận động viên đăng ký ngay',
+    api: 'POST /dev-tools/contests/:id/open-registration-now',
+    run: async () => {
+      const c = await callDevPost('/dev-tools/contests/' + ctx.contestId +
+        '/open-registration-now', {}, ctx.providerToken);
+      syncContestForm(c);
+      return 'đã mở cổng đăng ký ngay cho contest ' + ctx.contestId.slice(0, 8) + '…';
     },
   },
   {
@@ -1572,14 +1597,15 @@ const STEP = {
   CREATE: 4,
   FEE_ORDER: 5, FEE_TRANSFER: 6, FEE_CONFIRM: 7,
   OPEN: 8,
-  REGISTER: 9,
-  ENTRY_FEE: 10,
-  APPROVE: 11,
-  CLOSE: 12,
-  CHECKIN: 13,
-  GENERATE: 14,
-  RESULTS: 15,
-  PUBLISH: 16,
+  ENABLE_REGISTRATION_NOW: 9,
+  REGISTER: 10,
+  ENTRY_FEE: 11,
+  APPROVE: 12,
+  CLOSE: 13,
+  CHECKIN: 14,
+  GENERATE: 15,
+  RESULTS: 16,
+  PUBLISH: 17,
 };
 
 /** Chạy các bước [from, to) — hỏng bước nào thì dừng và ném lỗi ra ngoài. */
@@ -1686,7 +1712,7 @@ async function runBatch() {
 }
 
 // ── Kịch bản lệch đường ──────────────────────────────────────────────────────
-// Mười bảy bước ở trên đều đi đường hạnh phúc, mà lỗi hiếm khi nằm ở đó. Bốn
+// Mười tám bước ở trên đều đi đường hạnh phúc, mà lỗi hiếm khi nằm ở đó. Bốn
 // kịch bản dưới đây cố ý đẩy giải chệch khỏi luồng chuẩn và ghi lại hệ thống
 // phản ứng ra sao.
 //
