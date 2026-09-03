@@ -1,5 +1,5 @@
 import { AppDataSource } from '../config/database';
-import { PaymentRequestStatus, SubscriptionStatus, SessionStatus } from '../types';
+import { PaymentRequestStatus, SubscriptionStatus, ContestFeeOrderStatus } from '../types';
 
 export interface AdminKpi {
   totalCafes: {
@@ -10,7 +10,11 @@ export interface AdminKpi {
     value: string;
     helper: string;
   };
-  monthlyRevenue: {
+  totalRevenue: {
+    value: string;
+    helper: string;
+  };
+  monthlyRevenue?: {
     value: string;
     helper: string;
   };
@@ -50,139 +54,333 @@ export interface AdminDashboardSummary {
   kpi: AdminKpi;
   cafeGrowth: CafeGrowthItem[];
   revenueByPlan: SaaSRevenueItem[];
+  revenueByContestPlan: SaaSRevenueItem[];
   activeSessionsTrend: ActiveSessionsTrendItem[];
   recentCafes: RecentCafeItem[];
 }
 
-export async function getAdminDashboardSummary(): Promise<AdminDashboardSummary> {
-  // 1. KPI - Tổng số đối tác (Cafes)
-  const cafesKpi = await AppDataSource.query<[{ total: string; active: string }]>(
-    `SELECT 
-      COUNT(id)::int AS "total",
-      COUNT(CASE WHEN status = 'ACTIVE' THEN 1 END)::int AS "active"
-     FROM cafes`,
-  );
-  const totalCafes = {
-    value: String(cafesKpi[0]?.total ?? 0),
-    helper: `${cafesKpi[0]?.active ?? 0} đang hoạt động`,
-  };
+export async function getAdminDashboardSummary(
+  period: string = 'monthly',
+  from?: string,
+  to?: string,
+): Promise<AdminDashboardSummary> {
+  // Xác định khoảng thời gian lọc dữ liệu cho các biểu đồ & tăng trưởng trong kỳ
+  let filterFromDate: string = from || '';
+  let filterToDate: string = to || '';
 
-  // 2. KPI - Tổng người dùng (Users)
-  const usersKpi = await AppDataSource.query<[{ total: string; newThisWeek: string }]>(
-    `SELECT 
-      COUNT(id)::int AS "total",
-      COUNT(CASE WHEN created_at >= (NOW() - INTERVAL '7 days') THEN 1 END)::int AS "newThisWeek"
-     FROM users`,
-  );
-  const totalUsers = {
-    value: Number(usersKpi[0]?.total ?? 0).toLocaleString('vi-VN'),
-    helper: `+${usersKpi[0]?.newThisWeek ?? 0} đăng ký mới tuần này`,
-  };
+  if (!filterFromDate || !filterToDate) {
+    const nowObj = new Date();
+    filterToDate = nowObj.toISOString();
 
-  // 3. KPI - Doanh thu nền tảng tháng này
-  const now = new Date();
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
-  const previousMonthEnd = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    0,
-    23,
-    59,
-    59,
-    999,
-  ).toISOString();
-
-  const currentRevenueRes = await AppDataSource.query<[{ total: string }]>(
-    `SELECT COALESCE(SUM(transfer_amount), 0)::float AS "total"
-     FROM payment_requests
-     WHERE status = $1
-       AND created_at >= $2::timestamptz`,
-    [PaymentRequestStatus.CONFIRMED, currentMonthStart],
-  );
-
-  const prevRevenueRes = await AppDataSource.query<[{ total: string }]>(
-    `SELECT COALESCE(SUM(transfer_amount), 0)::float AS "total"
-     FROM payment_requests
-     WHERE status = $1
-       AND created_at >= $2::timestamptz
-       AND created_at <= $3::timestamptz`,
-    [PaymentRequestStatus.CONFIRMED, previousMonthStart, previousMonthEnd],
-  );
-
-  const currentRevenue = currentRevenueRes[0]?.total ? Number(currentRevenueRes[0].total) : 0;
-  const prevRevenue = prevRevenueRes[0]?.total ? Number(prevRevenueRes[0].total) : 0;
-  let revenueHelper = '0% so với tháng trước';
-  if (prevRevenue > 0) {
-    const diffPct = ((currentRevenue - prevRevenue) / prevRevenue) * 100;
-    revenueHelper = `${diffPct >= 0 ? '+' : ''}${diffPct.toFixed(1)}% so với tháng trước`;
-  } else if (currentRevenue > 0) {
-    revenueHelper = '+100% so với tháng trước';
+    if (period === 'daily') {
+      const d = new Date(nowObj);
+      d.setDate(d.getDate() - 13);
+      d.setHours(0, 0, 0, 0);
+      filterFromDate = d.toISOString();
+    } else if (period === 'weekly') {
+      const d = new Date(nowObj);
+      d.setDate(d.getDate() - 11 * 7);
+      d.setHours(0, 0, 0, 0);
+      filterFromDate = d.toISOString();
+    } else {
+      // monthly: 12 tháng qua
+      const d = new Date(nowObj);
+      d.setMonth(d.getMonth() - 11);
+      d.setDate(1);
+      d.setHours(0, 0, 0, 0);
+      filterFromDate = d.toISOString();
+    }
   }
 
-  const monthlyRevenue = {
-    value: `${currentRevenue.toLocaleString('vi-VN')} ₫`,
-    helper: revenueHelper,
-  };
-
-  // 4. KPI - Phiên chơi đang hoạt động
-  const activeSessionsKpi = await AppDataSource.query<[{ total: string; cafeCount: string }]>(
+  // 1. KPI - Số đối tác đăng ký mới trong kỳ lọc
+  const cafesKpi = await AppDataSource.query<
+    [{ total: string; active: string; newInPeriod: string }]
+  >(
     `SELECT 
       COUNT(id)::int AS "total",
-      COUNT(DISTINCT cafe_id)::int AS "cafeCount"
-     FROM sessions
-     WHERE status IN ($1, $2, $3)`,
-    [SessionStatus.ACTIVE, SessionStatus.EXTENDING, SessionStatus.CHECKING_OUT],
+      COUNT(CASE WHEN status = 'ACTIVE' THEN 1 END)::int AS "active",
+      COUNT(CASE WHEN created_at >= $1::timestamptz AND created_at <= $2::timestamptz THEN 1 END)::int AS "newInPeriod"
+     FROM cafes
+     WHERE deleted_at IS NULL`,
+    [filterFromDate, filterToDate],
   );
-  const activeSessions = {
-    value: String(activeSessionsKpi[0]?.total ?? 0),
-    helper: `Từ ${activeSessionsKpi[0]?.cafeCount ?? 0} chi nhánh`,
+  const totalCafesVal = cafesKpi[0]?.total ?? 0;
+  const activeCafesVal = cafesKpi[0]?.active ?? 0;
+  const newCafesInPeriod = cafesKpi[0]?.newInPeriod ?? 0;
+
+  const totalCafes = {
+    value: String(newCafesInPeriod),
+    helper: `${activeCafesVal} đang hoạt động (Tổng: ${totalCafesVal} cơ sở)`,
   };
 
-  // 5. Chart 1: Sự tăng trưởng của Đối tác (6 tháng gần nhất)
-  const cafeGrowth = await AppDataSource.query<CafeGrowthItem[]>(
+  // 2. KPI - Số người dùng đăng ký mới trong kỳ lọc
+  const usersKpi = await AppDataSource.query<[{ total: string; newInPeriod: string }]>(
     `SELECT 
-      'Thg ' || TO_CHAR(created_at, 'MM') AS "name",
-      COUNT(id)::int AS "value"
-     FROM cafes
-     WHERE created_at >= (NOW() - INTERVAL '6 months')
-     GROUP BY TO_CHAR(created_at, 'MM')
-     ORDER BY TO_CHAR(created_at, 'MM') ASC`,
+      COUNT(id)::int AS "total",
+      COUNT(CASE WHEN created_at >= $1::timestamptz AND created_at <= $2::timestamptz THEN 1 END)::int AS "newInPeriod"
+     FROM users
+     WHERE deleted_at IS NULL`,
+    [filterFromDate, filterToDate],
+  );
+  const totalUsersVal = Number(usersKpi[0]?.total ?? 0);
+  const newUsersInPeriod = Number(usersKpi[0]?.newInPeriod ?? 0);
+
+  const totalUsers = {
+    value: newUsersInPeriod.toLocaleString('vi-VN'),
+    helper: `Tổng tích lũy: ${totalUsersVal.toLocaleString('vi-VN')} thành viên`,
+  };
+
+  // 3. KPI - Doanh thu phát sinh trong kỳ lọc
+  const totalRevenueAllTimeRes = await AppDataSource.query<[{ total: string }]>(
+    `SELECT (
+       COALESCE((
+         SELECT SUM(transfer_amount)
+         FROM payment_requests
+         WHERE status = $1
+       ), 0) +
+       COALESCE((
+         SELECT SUM(COALESCE(transfer_amount, amount))
+         FROM contest_fee_orders
+         WHERE status = $2
+       ), 0)
+     )::float AS "total"`,
+    [PaymentRequestStatus.CONFIRMED, ContestFeeOrderStatus.PAID],
   );
 
-  // 6. Chart 2: Doanh thu theo gói SaaS
+  const periodRevenueRes = await AppDataSource.query<[{ total: string }]>(
+    `SELECT (
+       COALESCE((
+         SELECT SUM(transfer_amount)
+         FROM payment_requests
+         WHERE status = $1 AND created_at >= $3::timestamptz AND created_at <= $4::timestamptz
+       ), 0) +
+       COALESCE((
+         SELECT SUM(COALESCE(transfer_amount, amount))
+         FROM contest_fee_orders
+         WHERE status = $2 AND (
+           (reviewed_at >= $3::timestamptz AND reviewed_at <= $4::timestamptz)
+           OR (reviewed_at IS NULL AND created_at >= $3::timestamptz AND created_at <= $4::timestamptz)
+         )
+       ), 0)
+     )::float AS "total"`,
+    [PaymentRequestStatus.CONFIRMED, ContestFeeOrderStatus.PAID, filterFromDate, filterToDate],
+  );
+
+  const totalRevenueVal = totalRevenueAllTimeRes[0]?.total
+    ? Number(totalRevenueAllTimeRes[0].total)
+    : 0;
+  const periodRevenueVal = periodRevenueRes[0]?.total ? Number(periodRevenueRes[0].total) : 0;
+
+  const totalRevenueObj = {
+    value: `${periodRevenueVal.toLocaleString('vi-VN')} ₫`,
+    helper: `Tổng tích lũy: ${totalRevenueVal.toLocaleString('vi-VN')} ₫`,
+  };
+
+  // 4. KPI - Lượt / Phiên chơi trong kỳ lọc
+  const periodSessionsKpi = await AppDataSource.query<
+    [{ totalInPeriod: string; cafeCount: string }]
+  >(
+    `SELECT 
+      COUNT(id)::int AS "totalInPeriod",
+      COUNT(DISTINCT cafe_id)::int AS "cafeCount"
+     FROM sessions
+     WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz`,
+    [filterFromDate, filterToDate],
+  );
+  const totalSessionsInPeriod = periodSessionsKpi[0]?.totalInPeriod ?? 0;
+  const cafeCountInPeriod = periodSessionsKpi[0]?.cafeCount ?? 0;
+
+  const activeSessions = {
+    value: String(totalSessionsInPeriod),
+    helper: `Từ ${cafeCountInPeriod} chi nhánh sân`,
+  };
+
+  // 5. Chart 1: Sự tăng trưởng của Đối tác (Hỗ trợ daily, weekly, monthly và custom range từ ngày - đến ngày)
+  let cafeGrowth: CafeGrowthItem[];
+  if (from && to) {
+    cafeGrowth = await AppDataSource.query<CafeGrowthItem[]>(
+      `WITH dates AS (
+         SELECT generate_series(
+           DATE_TRUNC('day', $1::timestamptz),
+           DATE_TRUNC('day', $2::timestamptz),
+           '1 day'::interval
+         ) AS d
+       )
+       SELECT 
+         TO_CHAR(d.d, 'DD/MM') AS "name",
+         COUNT(c.id)::int AS "value"
+        FROM dates d
+        LEFT JOIN cafes c ON DATE_TRUNC('day', c.created_at) = d.d AND c.deleted_at IS NULL
+        GROUP BY d.d
+        ORDER BY d.d ASC`,
+      [from, to],
+    );
+  } else if (period === 'daily') {
+    cafeGrowth = await AppDataSource.query<CafeGrowthItem[]>(
+      `WITH dates AS (
+         SELECT generate_series(
+           DATE_TRUNC('day', CURRENT_DATE) - INTERVAL '13 days',
+           DATE_TRUNC('day', CURRENT_DATE),
+           '1 day'::interval
+         ) AS d
+       )
+       SELECT 
+         TO_CHAR(d.d, 'DD/MM') AS "name",
+         COUNT(c.id)::int AS "value"
+        FROM dates d
+        LEFT JOIN cafes c ON DATE_TRUNC('day', c.created_at) = d.d AND c.deleted_at IS NULL
+        GROUP BY d.d
+        ORDER BY d.d ASC`,
+    );
+  } else if (period === 'weekly') {
+    cafeGrowth = await AppDataSource.query<CafeGrowthItem[]>(
+      `WITH weeks AS (
+         SELECT generate_series(
+           DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '11 weeks',
+           DATE_TRUNC('week', CURRENT_DATE),
+           '1 week'::interval
+         ) AS w
+       )
+       SELECT 
+         'T' || TO_CHAR(w.w, 'IW') AS "name",
+         COUNT(c.id)::int AS "value"
+        FROM weeks w
+        LEFT JOIN cafes c ON DATE_TRUNC('week', c.created_at) = w.w AND c.deleted_at IS NULL
+        GROUP BY w.w
+        ORDER BY w.w ASC`,
+    );
+  } else {
+    // monthly: 12 tháng qua
+    cafeGrowth = await AppDataSource.query<CafeGrowthItem[]>(
+      `WITH months AS (
+         SELECT generate_series(
+           DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months',
+           DATE_TRUNC('month', CURRENT_DATE),
+           '1 month'::interval
+         ) AS m
+       )
+       SELECT 
+         'Thg ' || TO_CHAR(m.m, 'MM') AS "name",
+         COUNT(c.id)::int AS "value"
+        FROM months m
+        LEFT JOIN cafes c ON DATE_TRUNC('month', c.created_at) = m.m AND c.deleted_at IS NULL
+        GROUP BY m.m
+        ORDER BY m.m ASC`,
+    );
+  }
+
+  // 6. Chart 2: Doanh thu theo gói SaaS (Lọc theo thời gian)
   const revenueByPlanRows = await AppDataSource.query<SaaSRevenueItem[]>(
     `SELECT 
-      sp.name::text AS "name",
-      COUNT(DISTINCT ps.provider_id)::int AS "count",
+      CASE
+        WHEN UPPER(sp.name::text) = 'TRIAL' THEN 'Free'
+        ELSE INITCAP(sp.name::text)
+      END AS "name",
+      COUNT(DISTINCT pr.provider_id)::int AS "count",
       COALESCE(SUM(pr.transfer_amount), 0)::float AS "revenue"
      FROM subscription_plans sp
-     LEFT JOIN provider_subscriptions ps ON ps.plan_id = sp.id AND ps.status = $1
-     LEFT JOIN payment_requests pr ON pr.plan_id = sp.id AND pr.status = $2
-     GROUP BY sp.id, sp.name`,
-    [SubscriptionStatus.ACTIVE, PaymentRequestStatus.CONFIRMED],
+     LEFT JOIN payment_requests pr 
+       ON pr.plan_id = sp.id 
+      AND pr.status = $1
+      AND pr.created_at >= $2::timestamptz
+      AND pr.created_at <= $3::timestamptz
+     GROUP BY sp.id, sp.name, sp.price_per_month
+     ORDER BY sp.price_per_month ASC`,
+    [PaymentRequestStatus.CONFIRMED, filterFromDate, filterToDate],
   );
 
-  // 7. Chart 3: Lượng truy cập sân chơi (7 ngày qua)
-  const activeSessionsTrend = await AppDataSource.query<ActiveSessionsTrendItem[]>(
+  // 6b. Chart 2b: Doanh thu theo gói tạo giải đấu (Lọc theo thời gian)
+  const revenueByContestPlanRows = await AppDataSource.query<SaaSRevenueItem[]>(
     `SELECT 
-      CASE 
-        WHEN EXTRACT(ISODOW FROM d.day) = 1 THEN 'T2'
-        WHEN EXTRACT(ISODOW FROM d.day) = 2 THEN 'T3'
-        WHEN EXTRACT(ISODOW FROM d.day) = 3 THEN 'T4'
-        WHEN EXTRACT(ISODOW FROM d.day) = 4 THEN 'T5'
-        WHEN EXTRACT(ISODOW FROM d.day) = 5 THEN 'T6'
-        WHEN EXTRACT(ISODOW FROM d.day) = 6 THEN 'T7'
-        WHEN EXTRACT(ISODOW FROM d.day) = 7 THEN 'CN'
-      END AS "name",
-      COUNT(s.id)::int AS "value"
-     FROM (
-       SELECT generate_series(NOW() - INTERVAL '6 days', NOW(), '1 day')::date AS day
-     ) d
-     LEFT JOIN sessions s ON s.actual_start_at::date = d.day
-     GROUP BY d.day
-     ORDER BY d.day ASC`,
+      cfp.name::text AS "name",
+      COUNT(DISTINCT cfo.provider_id)::int AS "count",
+      COALESCE(SUM(COALESCE(cfo.transfer_amount, cfo.amount)), 0)::float AS "revenue"
+     FROM contest_fee_plans cfp
+     LEFT JOIN contest_fee_orders cfo 
+       ON cfo.plan_id = cfp.id 
+      AND cfo.status = $1
+      AND (
+        (cfo.reviewed_at >= $2::timestamptz AND cfo.reviewed_at <= $3::timestamptz)
+        OR (cfo.reviewed_at IS NULL AND cfo.created_at >= $2::timestamptz AND cfo.created_at <= $3::timestamptz)
+      )
+     GROUP BY cfp.id, cfp.name`,
+    [ContestFeeOrderStatus.PAID, filterFromDate, filterToDate],
   );
+
+  // 7. Chart 3: Lượng truy cập sân chơi (Theo bộ lọc thời gian: daily / weekly / monthly / custom range)
+  let activeSessionsTrend: ActiveSessionsTrendItem[];
+
+  if (from && to) {
+    activeSessionsTrend = await AppDataSource.query<ActiveSessionsTrendItem[]>(
+      `WITH dates AS (
+         SELECT generate_series(
+           DATE_TRUNC('day', $1::timestamptz),
+           DATE_TRUNC('day', $2::timestamptz),
+           '1 day'::interval
+         ) AS d
+       )
+       SELECT 
+         TO_CHAR(d.d, 'DD/MM') AS "name",
+         COUNT(s.id)::int AS "value"
+        FROM dates d
+        LEFT JOIN sessions s ON DATE_TRUNC('day', s.actual_start_at) = d.d
+        GROUP BY d.d
+        ORDER BY d.d ASC`,
+      [from, to],
+    );
+  } else if (period === 'daily') {
+    activeSessionsTrend = await AppDataSource.query<ActiveSessionsTrendItem[]>(
+      `WITH dates AS (
+         SELECT generate_series(
+           DATE_TRUNC('day', CURRENT_DATE) - INTERVAL '13 days',
+           DATE_TRUNC('day', CURRENT_DATE),
+           '1 day'::interval
+         ) AS d
+       )
+       SELECT 
+         TO_CHAR(d.d, 'DD/MM') AS "name",
+         COUNT(s.id)::int AS "value"
+        FROM dates d
+        LEFT JOIN sessions s ON DATE_TRUNC('day', s.actual_start_at) = d.d
+        GROUP BY d.d
+        ORDER BY d.d ASC`,
+    );
+  } else if (period === 'weekly') {
+    activeSessionsTrend = await AppDataSource.query<ActiveSessionsTrendItem[]>(
+      `WITH weeks AS (
+         SELECT generate_series(
+           DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '11 weeks',
+           DATE_TRUNC('week', CURRENT_DATE),
+           '1 week'::interval
+         ) AS w
+       )
+       SELECT 
+         'T' || TO_CHAR(w.w, 'IW') AS "name",
+         COUNT(s.id)::int AS "value"
+        FROM weeks w
+        LEFT JOIN sessions s ON DATE_TRUNC('week', s.actual_start_at) = w.w
+        GROUP BY w.w
+        ORDER BY w.w ASC`,
+    );
+  } else {
+    // monthly: 12 tháng qua (12 điểm đại diện cho 12 tháng)
+    activeSessionsTrend = await AppDataSource.query<ActiveSessionsTrendItem[]>(
+      `WITH months AS (
+         SELECT generate_series(
+           DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months',
+           DATE_TRUNC('month', CURRENT_DATE),
+           '1 month'::interval
+         ) AS m
+       )
+       SELECT 
+         'Thg ' || TO_CHAR(m.m, 'MM') AS "name",
+         COUNT(s.id)::int AS "value"
+        FROM months m
+        LEFT JOIN sessions s ON DATE_TRUNC('month', s.actual_start_at) = m.m
+        GROUP BY m.m
+        ORDER BY m.m ASC`,
+    );
+  }
 
   // 8. Table: Đối tác đăng ký gần đây
   const recentCafesRows = await AppDataSource.query<RecentCafeItem[]>(
@@ -204,15 +402,29 @@ export async function getAdminDashboardSummary(): Promise<AdminDashboardSummary>
     [SubscriptionStatus.ACTIVE],
   );
 
+  const formattedRevenueByPlan = revenueByPlanRows.map((r) => ({
+    name: r.name,
+    count: Number(r.count || 0),
+    revenue: Number(r.revenue || 0),
+  }));
+
+  const formattedRevenueByContestPlan = revenueByContestPlanRows.map((r) => ({
+    name: r.name,
+    count: Number(r.count || 0),
+    revenue: Number(r.revenue || 0),
+  }));
+
   return {
     kpi: {
       totalCafes,
       totalUsers,
-      monthlyRevenue,
+      totalRevenue: totalRevenueObj,
+      monthlyRevenue: totalRevenueObj,
       activeSessions,
     },
     cafeGrowth,
-    revenueByPlan: revenueByPlanRows,
+    revenueByPlan: formattedRevenueByPlan,
+    revenueByContestPlan: formattedRevenueByContestPlan,
     activeSessionsTrend,
     recentCafes: recentCafesRows,
   };
