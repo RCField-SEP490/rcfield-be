@@ -844,14 +844,14 @@ export async function getProviderBranchOperations(
              COUNT(DISTINCT b.id)::int AS booking_count
            FROM bookings b
            JOIN cafes c ON c.id = b.cafe_id
-           LEFT JOIN payment_components pc ON pc.booking_id = b.id
-             AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
-             AND pc.type != 'SECURITY_DEPOSIT'
+           JOIN payment_components pc ON pc.booking_id = b.id
            WHERE c.provider_id = $1
              AND c.deleted_at IS NULL
              AND b.deleted_at IS NULL
-             AND b.slot_start >= $2::timestamptz
-             AND b.slot_start < $3::timestamptz
+             AND pc.status IN ('HELD', 'DISBURSED', 'PARTIALLY_REFUNDED')
+             AND pc.type != 'SECURITY_DEPOSIT'
+             AND pc.created_at >= $2::timestamptz
+             AND pc.created_at < $3::timestamptz
            GROUP BY b.cafe_id
          ), package_revenue AS (
            SELECT
@@ -865,14 +865,29 @@ export async function getProviderBranchOperations(
              AND cp.created_at >= $2::timestamptz
              AND cp.created_at < $3::timestamptz
            GROUP BY cp.cafe_id
+         ), contest_revenue AS (
+           SELECT
+             ct.cafe_id AS cafe_id,
+             COALESCE(SUM(cr.entry_fee_amount), 0)::float AS total_revenue
+           FROM contest_registrations cr
+           JOIN contests ct ON ct.id = cr.contest_id
+           JOIN cafes c ON c.id = ct.cafe_id
+           WHERE c.provider_id = $1
+             AND c.deleted_at IS NULL
+             AND cr.payment_status = 'MARKED_PAID'
+             AND cr.entry_fee_amount > 0
+             AND cr.entry_fee_marked_paid_at >= $2::timestamptz
+             AND cr.entry_fee_marked_paid_at < $3::timestamptz
+           GROUP BY ct.cafe_id
          )
          SELECT
            c.id AS "cafeId",
-           (COALESCE(br.total_revenue, 0) + COALESCE(pr.total_revenue, 0))::float AS "totalRevenue",
+           (COALESCE(br.total_revenue, 0) + COALESCE(pr.total_revenue, 0) + COALESCE(cx.total_revenue, 0))::float AS "totalRevenue",
            COALESCE(br.booking_count, 0)::int AS "bookingCount"
          FROM cafes c
          LEFT JOIN booking_revenue br ON br.cafe_id = c.id
          LEFT JOIN package_revenue pr ON pr.cafe_id = c.id
+         LEFT JOIN contest_revenue cx ON cx.cafe_id = c.id
          WHERE c.provider_id = $1
            AND c.deleted_at IS NULL`,
         [providerId, fromDate, toDate],
