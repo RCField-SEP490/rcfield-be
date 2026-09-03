@@ -144,7 +144,7 @@ async function createContestPayload(
     starts_at: startsAt,
     ends_at: endsAt,
     registration_opens_at:
-      overrides?.registration_opens_at ?? new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      overrides?.registration_opens_at ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     registration_closes_at:
       overrides?.registration_closes_at ?? new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
     capacity: 32,

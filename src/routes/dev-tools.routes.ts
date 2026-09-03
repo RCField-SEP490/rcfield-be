@@ -6,7 +6,7 @@ import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { AppDataSource } from '../config/database';
 import { AppError, AuthRequest, UserRole } from '../types';
 import { ContestCheckInSchema } from '../validate';
-import { checkInRegistration } from '../services/contest';
+import { checkInRegistration, openContestRegistrationForDemo } from '../services/contest';
 import {
   executeContestPurge,
   hardDeleteUsers,
@@ -86,6 +86,30 @@ router.post(
         body.byoc_inspection,
         { bypassWindow: true, bypassReason: 'CONTEST_LAB' },
       );
+      res.json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+// POST /dev-tools/contests/:contestId/open-registration-now [provider]
+//
+// Chỉ đổi mốc mở đăng ký của đúng contest đang demo. API đăng ký thật vẫn chạy
+// toàn bộ guard production; endpoint này không bật bypass toàn máy chủ.
+router.post(
+  '/contests/:contestId/open-registration-now',
+  requireProductionDevToolsToken,
+  authenticate,
+  authorize(UserRole.PROVIDER),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const authReq = req as AuthRequest;
+      if (!authReq.user) throw new AppError('Unauthorized', 401, 'UNAUTHORIZED');
+      const data = await openContestRegistrationForDemo(req.params.contestId, {
+        userId: authReq.user.userId,
+        role: authReq.user.role,
+      });
       res.json({ success: true, data });
     } catch (error) {
       next(error);

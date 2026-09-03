@@ -5,6 +5,7 @@ export {
   createContest,
   updateContest,
   changeContestStatus,
+  openContestRegistrationForDemo,
   uploadContestBanner,
 } from './contests-crud';
 export {
