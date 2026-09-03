@@ -86,8 +86,8 @@ interface Probe {
 describe('phần JS của Contest Lab', () => {
   const probe = loadScript();
 
-  it('có đủ 17 bước, mỗi bước đều nêu rõ endpoint nó gọi', () => {
-    expect(probe.STEPS).toHaveLength(17);
+  it('có đủ 18 bước, mỗi bước đều nêu rõ endpoint nó gọi', () => {
+    expect(probe.STEPS).toHaveLength(18);
     probe.STEPS.forEach((s) => {
       expect(typeof s.name).toBe('string');
       expect(s.api.length).toBeGreaterThan(0);
@@ -106,6 +106,7 @@ describe('phần JS của Contest Lab', () => {
     expect(at(probe.STEP.FEE_TRANSFER)).toContain('chuyển khoản');
     expect(at(probe.STEP.FEE_CONFIRM)).toContain('xác nhận');
     expect(at(probe.STEP.OPEN)).toContain('mở đăng ký');
+    expect(at(probe.STEP.ENABLE_REGISTRATION_NOW)).toContain('đăng ký ngay');
     expect(at(probe.STEP.REGISTER)).toContain('đăng ký');
     expect(at(probe.STEP.ENTRY_FEE)).toContain('phí dự thi');
     expect(at(probe.STEP.APPROVE)).toContain('duyệt đăng ký');

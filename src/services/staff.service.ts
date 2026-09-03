@@ -1512,6 +1512,14 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
     where: { id: booking.trackTypeId },
   });
 
+  // Chỉ cần biết CÓ mật khẩu hay không, không lấy chuỗi băm ra khỏi cơ sở dữ
+  // liệu — thứ đó không có lý do gì để đi qua tầng API.
+  const [chuDon] = await AppDataSource.query<{ co_mat_khau: boolean }[]>(
+    `SELECT (password_hash IS NOT NULL) AS co_mat_khau FROM users WHERE id = $1`,
+    [booking.customerId],
+  );
+  const customerHasPassword = Boolean(chuDon?.co_mat_khau);
+
   const participants = await AppDataSource.getRepository(SessionParticipant).find({
     where: { sessionId },
   });
@@ -1922,6 +1930,21 @@ export async function getSessionDetail(sessionId: string): Promise<any> {
       bookingMode: 'SINGLE',
       playMode: booking.playMode,
       source: booking.source,
+      /*
+        Khách này có tự bấm xác nhận được không.
+
+        Tài khoản mềm (đặt qua Messenger, hoặc khách vãng lai do nhân viên tạo)
+        không có mật khẩu nên KHÔNG đăng nhập được. Những bước bắt buộc khách
+        xác nhận — biên bản nhận xe, biên bản trả xe, đồng ý gia hạn — vì vậy
+        phải đi qua đường thao tác hộ.
+
+        Giao diện nhân viên cần biết điều này để hiện đúng nút. Không có cờ này
+        thì màn hình chỉ có thể đoán theo `source`, mà đoán sẽ sai với khách
+        vãng lai tạo tại quầy — cũng là tài khoản mềm nhưng `source` khác.
+
+        Điều kiện trùng với `assertActingOnBehalfAllowed` ở tầng dịch vụ.
+      */
+      customerCanSelfServe: customerHasPassword,
       status: booking.status,
       slotStart: booking.slotStart.toISOString(),
       slotEnd: booking.slotEnd.toISOString(),

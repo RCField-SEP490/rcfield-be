@@ -116,7 +116,7 @@ export async function loadContestCatalogMaps(contests: Contest[]) {
             WHERE contest_id = ANY($1::uuid[])
               AND status = 'PAID'`,
           [contestIds],
-        )
+        ).catch(() => [])
       : [];
 
   const cafeIds = Array.from(new Set(contestCafes.map((item) => item.cafeId)));

@@ -222,7 +222,16 @@ describe('nạp giải có sẵn và import vận động viên', () => {
     expect(CLIENT_SCRIPT).toContain('contest.check_in_window_bypassed');
     expect(CLIENT_SCRIPT).toContain('contest.registration_window_bypassed');
     expect(CLIENT_SCRIPT).toContain('Đăng ký demo:');
+    expect(CLIENT_SCRIPT).toContain('ĐANG MỞ — thời điểm hiện tại nằm trong khung đăng ký');
     expect(CLIENT_SCRIPT).toContain("['CLOSED', 'RUNNING', 'COMPLETED'].includes(current.status)");
     expect(CLIENT_SCRIPT).toContain('không đóng đăng ký lần hai');
+  });
+
+  it('mở trạng thái và cổng đăng ký demo theo cách idempotent', () => {
+    expect(CLIENT_SCRIPT).toContain('giải đã OPEN — không mở đăng ký lần hai');
+    expect(CLIENT_SCRIPT).toContain('/open-registration-now');
+    expect(CLIENT_SCRIPT).toContain('Cho phép vận động viên đăng ký ngay');
+    expect(CLIENT_SCRIPT).toContain('Date.now() + 30 * 60 * 1000');
+    expect(CLIENT_SCRIPT).not.toContain('Date.now() - 60 * 60 * 1000');
   });
 });

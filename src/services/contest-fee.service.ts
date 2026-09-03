@@ -392,14 +392,14 @@ export async function confirmContestFeeOrder(orderId: string, adminId: string, n
   await repo.save(order);
 
   if (order.featuredDays > 0) {
-    await createPendingFeaturedSlot(order, adminId, true);
+    await createPendingFeaturedSlot(order, adminId, false);
   }
 
   await notifyProvider(
     order,
     'Đã xác nhận phí tổ chức giải',
     order.featuredDays > 0
-      ? 'Giải của bạn đã sẵn sàng mở đăng ký, và suất quảng bá đã lên trang chủ.'
+      ? 'Giải của bạn đã sẵn sàng mở đăng ký. Suất quảng bá đang chờ đội ngũ RCField duyệt nội dung.'
       : 'Giải của bạn đã sẵn sàng mở đăng ký.',
   );
 
