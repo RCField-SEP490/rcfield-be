@@ -181,7 +181,19 @@ Return only a pure JSON array, no markdown, no explanation:
 # If user ask with vietnamese, return quick replies in vietnamese, if user ask with english, return quick replies in english.`;
 
     const response = await ai.models.generateContent({
-      model: env.ai.model,
+      /*
+        Ba câu gợi ý luôn dùng Flash, không bao giờ Pro.
+
+        Đây là việc dễ nhất trong cả luồng: đọc một câu hỏi rồi đặt ba câu hỏi
+        ngắn cùng chủ đề — không truy hồi, không suy luận, không đọc tài liệu.
+        Pro không làm việc này tốt hơn Flash đủ để đáng chờ thêm.
+
+        Mà cái giá thì thật: hàm này chạy SONG SONG với lượt sinh câu trả lời
+        chính (`Promise.all` bên dưới), nên toàn bộ phản hồi phải đợi lượt chậm
+        nhất trong hai. Ghim Pro ở đây biến mấy chữ gợi ý phụ thành thứ quyết
+        định khách phải chờ bao lâu mới thấy câu trả lời.
+      */
+      model: env.ai.supportModel,
       contents: prompt,
     });
 
@@ -317,12 +329,20 @@ function buildSystemPrompt(
   return parts.join('\n');
 }
 
-// Rephrases a cached answer using Flash so repeated questions feel natural, not robotic
+/*
+  Viết lại câu đã có trong cache bằng Flash, để câu hỏi lặp không nghe như máy.
+
+  Ghim Flash chứ không phải Pro — giống hệt bản streaming ở `ragChatStream`.
+  Đây đáng lẽ là đường NHANH NHẤT của cả luồng: câu trả lời đã nằm sẵn trong
+  cache, không truy hồi, không suy luận, chỉ đổi cách diễn đạt. Gọi Pro ở đây
+  khiến cache TRÚNG lại chậm hơn cache TRƯỢT — đúng ngược điều cache sinh ra để
+  làm.
+*/
 async function rephraseAnswer(answer: string, cafeId?: string): Promise<string> {
-  logger.info('RAG', `cache rephrase via ${env.ai.model}`, { cafeId });
+  logger.info('RAG', `cache rephrase via ${env.ai.supportModel}`, { cafeId });
   try {
     const response = await ai.models.generateContent({
-      model: env.ai.model,
+      model: env.ai.supportModel,
       contents: `Câu trả lời gốc: "${answer}"
 Viết lại câu này với cách diễn đạt khác nhưng giữ nguyên đầy đủ thông tin. Ngắn gọn, tự nhiên, bằng tiếng Việt.
 Chỉ trả về câu viết lại, không thêm tiêu đề hay giải thích.`,

@@ -895,25 +895,9 @@ export async function checkInRegistration(
         'CONTEST_BYOC_CONFIRMATION_REQUIRED',
       );
     }
-    const byocPhotos = byocInspection?.photos ?? [];
-    const byocChecklist = byocInspection?.checklist ?? [];
-    const requiredChecklistKeys = new Set(['body', 'power_system', 'wheels']);
-    const providedKeys = new Set(byocChecklist.map((item) => item.itemKey));
-    const missingKeys = Array.from(requiredChecklistKeys).filter((key) => !providedKeys.has(key));
-    if (byocPhotos.length < 2 || missingKeys.length > 0) {
-      throw new AppError(
-        `Check-in BYOC cần ít nhất 2 ảnh và kiểm tra đầy đủ các hạng mục: ${Array.from(requiredChecklistKeys).join(', ')}`,
-        400,
-        'CONTEST_BYOC_INSPECTION_REQUIRED',
-      );
-    }
-    if (byocChecklist.some((item) => item.status === 'NOT_OK')) {
-      throw new AppError(
-        'Xe không đạt hạng mục kiểm tra, không thể check-in',
-        400,
-        'CONTEST_BYOC_INSPECTION_FAILED',
-      );
-    }
+    // Checklist + ảnh kiểm tra tại quầy không còn bắt buộc — chỉ cần tick xác
+    // nhận đạt chuẩn ở trên. `byocInspection` vẫn nhận vào (không xoá tham
+    // số) để không phá request cũ, nhưng không còn gì đọc từ nó nữa.
   }
 
   // VĐV thuê xe của quán: phải chọn chiếc cụ thể để giao ngay tại quầy. Kiểm

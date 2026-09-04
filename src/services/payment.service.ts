@@ -1301,7 +1301,10 @@ export async function processConfirmationResult(
     registration.paymentStatus = ContestEntryFeePaymentStatus.MARKED_PAID;
     registration.entryFeeMarkedPaidAt = new Date();
     registration.entryFeeMarkedPaidBy = null;
-    registration.status = ContestRegistrationStatus.CONFIRMED;
+    // Không gán status = CONFIRMED ở đây — xe BYOC vẫn phải chờ provider bấm
+    // "Duyệt xe" sau khi xem ảnh xe khai báo. autoConfirmRentalRegistration()
+    // ngay bên dưới mới là nơi quyết định: tự duyệt cho RENTAL, giữ nguyên
+    // PENDING cho BYOC.
     registration.cancelledAt = null;
     registration.cancellationReason = null;
     registration.metadata = {

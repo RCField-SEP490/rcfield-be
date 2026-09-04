@@ -29,20 +29,14 @@ function contestBody(registrationOpensAt: Date) {
 }
 
 describe('CreateContestSchema — thời gian mở đăng ký', () => {
-  it('từ chối tạo giải có thời gian mở đăng ký trong quá khứ', () => {
+  // Cố tình cho phép quá khứ: dùng để demo một giải "đã mở đăng ký sẵn" mà
+  // không phải tạo trước rồi sửa lại. Chỉ registration_opens_at được nới —
+  // starts_at (khởi tranh) vẫn phải là tương lai, kiểm ở bước "schedule" của
+  // wizard (contest-wizard.ts), không nằm trong schema này.
+  it('chấp nhận thời gian mở đăng ký trong quá khứ', () => {
     const result = CreateContestSchema.safeParse(contestBody(new Date(Date.now() - 60_000)));
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: ['registration_opens_at'],
-            message: 'registration_opens_at phải sau thời điểm hiện tại',
-          }),
-        ]),
-      );
-    }
+    expect(result.success).toBe(true);
   });
 
   it('chấp nhận thời gian mở đăng ký trong tương lai', () => {
