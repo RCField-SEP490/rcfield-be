@@ -580,10 +580,9 @@ export const CreateContestSchema = ContestUpsertBaseSchema.refine(
     path: ['ends_at'],
   },
 )
-  .refine((value) => value.registration_opens_at.getTime() > Date.now(), {
-    message: 'registration_opens_at phải sau thời điểm hiện tại',
-    path: ['registration_opens_at'],
-  })
+  // Cho phép registration_opens_at ở quá khứ ngay cả lúc tạo mới — dùng để
+  // demo một giải "đã mở đăng ký sẵn" mà không phải tạo trước rồi sửa lại.
+  // starts_at (khởi tranh) không bị đụng ở đây, vẫn phải là tương lai.
   .refine((value) => value.registration_opens_at < value.registration_closes_at, {
     message: 'registration_closes_at phải sau registration_opens_at',
     path: ['registration_closes_at'],
